@@ -4,9 +4,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git && rm 
 
 WORKDIR /app
 
+ARG GITHUB_TOKEN
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+        git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir ".[suite]"
+RUN pip install --no-cache-dir ".[suite]" && \
+    (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
 RUN useradd -m -d /data clanker && mkdir -p /data/.agents && chown -R clanker:clanker /data
 
