@@ -10,7 +10,9 @@ RUN pip install --no-cache-dir ".[suite]"
 
 RUN useradd -m -d /data clanker && mkdir -p /data/.agents && chown -R clanker:clanker /data
 
-USER clanker
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 ENV HOME=/data \
     PYTHONUNBUFFERED=1 \
     GATEWAY_HOST=0.0.0.0 \
@@ -19,5 +21,6 @@ ENV HOME=/data \
 
 EXPOSE 8000
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "clanker", "serve"]
 
