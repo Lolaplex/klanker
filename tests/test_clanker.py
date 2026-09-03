@@ -33,11 +33,24 @@ class TestClanker(unittest.TestCase):
         self.assertIn("python_version", sense)
 
     def test_cli_parser(self):
-        parser = build_parser()
-        args = parser.parse_args(["sense", "--json"])
+        from clanker.__main__ import parse_cli_args
+        args, direct_prompt = parse_cli_args(["sense", "--json"])
         self.assertEqual(args.command, "sense")
         self.assertTrue(args.json)
+        self.assertEqual(direct_prompt, "")
+
+        # Direct prompt argument test
+        args, direct_prompt = parse_cli_args(["Wer bist du?"])
+        self.assertIsNone(args.command)
+        self.assertEqual(direct_prompt, "Wer bist du?")
+
+        # Empty prompt test (triggers REPL)
+        args, direct_prompt = parse_cli_args([])
+        self.assertIsNone(args.command)
+        self.assertEqual(direct_prompt, "")
 
 
 if __name__ == "__main__":
+
+
     unittest.main()

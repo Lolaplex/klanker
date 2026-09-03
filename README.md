@@ -20,15 +20,19 @@ pip install -e ".[suite]"
 # 1. Umgebung & Fühler prüfen
 clanker sense
 
-# 2. Direkter Turn im Terminal (nutzt agents-harness runner.loop)
-clanker chat "ping"
+# 2. Interaktiver Chat (REPL wie Claude/Ollama)
+clanker
 
-# 3. I/O-Gateway starten (erfordert agents-gateway)
+# 3. Direkter Turn im Terminal
+clanker "Wer bist du?"
+
+# 4. I/O-Gateway starten (erfordert agents-gateway)
 clanker serve
 
-# 4. Geplante Koru-Harness-Flows ausführen
+# 5. Geplante Koru-Harness-Flows ausführen
 clanker cron
 ```
+
 
 ## Die 3-Ebenen-Architektur
 

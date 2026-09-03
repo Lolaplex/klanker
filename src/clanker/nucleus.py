@@ -27,6 +27,7 @@ class Nucleus:
         *,
         message: str,
         user: str = "default",
+        session: str | None = None,
         channel: str = "local",
         provider: str | None = None,
         deliver: str = "buffered",
@@ -52,6 +53,9 @@ class Nucleus:
                 "--deliver",
                 deliver,
             ]
+            if session:
+                cmd.extend(["--session", session])
+
             res = subprocess.run(cmd)
             return res.returncode
         else:

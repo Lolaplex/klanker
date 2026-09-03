@@ -15,16 +15,23 @@ log = logging.getLogger("clanker")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="clanker", description="Clanker — Universal Adaptive Slimemold AI Agent")
+    parser = argparse.ArgumentParser(
+        prog="clanker",
+        description="Clanker — Adaptive Agent Shell on the Lolaplex Suite",
+    )
+    parser.add_argument("--user", type=str, default="user", help="User alias")
+    parser.add_argument("--provider", type=str, default=None, help="LLM provider")
+
     sub = parser.add_subparsers(dest="command")
 
+
     # 1. Sense host capabilities
-    sense_p = sub.add_parser("sense", help="Probe host environment and available plugs")
+    sense_p = sub.add_parser("sense", help="Probe host environment and available feelers")
     sense_p.add_argument("--json", action="store_true", help="Output JSON format")
 
-    # 2. Interactive or one-turn chat
+    # 2. Interactive or one-turn chat (alias)
     chat_p = sub.add_parser("chat", help="Chat with Clanker (spawns harness turn)")
-    chat_p.add_argument("message", type=str, nargs="?", default="", help="Message content (or interactive if omitted)")
+    chat_p.add_argument("message", type=str, nargs="?", default="", help="Message content")
     chat_p.add_argument("--user", type=str, default="user", help="User alias")
     chat_p.add_argument("--provider", type=str, default=None, help="LLM provider")
 
@@ -39,9 +46,50 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def run_repl(nucleus: Nucleus, *, user: str = "user", provider: str | None = None) -> int:
+    """Run an interactive multi-turn REPL loop retaining conversation session."""
+    import uuid
+    session_id = f"ses_{uuid.uuid4().hex[:12]}"
+    print("clanker (v0.1.0) — interactive chat. Type 'exit' or Ctrl+C to quit.\n")
+
+    while True:
+        try:
+            prompt = input("clanker> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if not prompt:
+            continue
+        if prompt.lower() in ("exit", "quit", ":q"):
+            break
+
+        nucleus.run_turn(message=prompt, user=user, session=session_id, provider=provider)
+        print()
+
+    return 0
+
+
+KNOWN_SUBCOMMANDS = {"sense", "serve", "cron", "chat", "-h", "--help"}
+
+
+def parse_cli_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, str]:
+    """Parse CLI arguments allowing both subcommands and direct prompts."""
+    raw_args = list(sys.argv[1:] if argv is None else argv)
+    direct_prompt = ""
+
+    # If first positional argument is not a known subcommand or flag, treat it as direct prompt
+    if raw_args and not raw_args[0].startswith("-") and raw_args[0] not in KNOWN_SUBCOMMANDS:
+        direct_prompt = raw_args.pop(0)
+
+    parser = build_parser()
+    parsed = parser.parse_args(raw_args)
+    return parsed, direct_prompt
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    args = build_parser().parse_args(argv)
+    args, direct_prompt = parse_cli_args(argv)
     nucleus = Nucleus()
 
     if args.command == "sense":
@@ -53,20 +101,6 @@ def main(argv: list[str] | None = None) -> int:
             for k, v in summary.items():
                 print(f"  * {k}: {v}")
         return 0
-
-    elif args.command == "chat":
-        msg = args.message
-        if not msg:
-            if not sys.stdin.isatty():
-                msg = sys.stdin.read().strip()
-            else:
-                try:
-                    msg = input("clanker> ").strip()
-                except (EOFError, KeyboardInterrupt):
-                    return 0
-        if not msg:
-            return 0
-        return nucleus.run_turn(message=msg, user=args.user, provider=args.provider)
 
     elif args.command == "serve":
         if not nucleus.caps.has_gateway:
@@ -88,8 +122,25 @@ def main(argv: list[str] | None = None) -> int:
         return executor_main(["--all"])
 
     else:
-        build_parser().print_help()
-        return 0
+        # Chat mode: either explicit 'chat', direct prompt argument, stdin pipe, or interactive REPL
+        msg = direct_prompt or getattr(args, "message", None) or ""
+        user = getattr(args, "user", "user")
+        provider = getattr(args, "provider", None)
+
+        if msg:
+            return nucleus.run_turn(message=msg, user=user, provider=provider)
+
+        # If piped input via stdin (e.g. echo "hi" | clanker)
+        if not sys.stdin.isatty():
+            piped_msg = sys.stdin.read().strip()
+            if piped_msg:
+                return nucleus.run_turn(message=piped_msg, user=user, provider=provider)
+            return 0
+
+        # Interactive REPL
+        return run_repl(nucleus, user=user, provider=provider)
+
+
 
 
 if __name__ == "__main__":
