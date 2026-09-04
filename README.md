@@ -10,13 +10,13 @@ Clanker ist eine schlanke, adaptive Agenten-Distribution auf Basis des **Slimemo
 ## Quickstart
 
 ```bash
-# Clone & install (installiert nur agents-harness als minimalen Kern)
+# Clone & install (installiert den Core Brain Stack: harness, gateway, memory, traces, docs)
 pip install -e .
 
-# Optional: Fühler nach Bedarf aktivieren
-pip install -e ".[gateway]"   # Telegram & HTTP Gateway
-pip install -e ".[memory]"    # Lokales Gedächtnis & Fakten
-pip install -e ".[suite]"     # Volle Lolaplex Suite
+# Optional: Host-spezifische Fühler nach Bedarf aktivieren
+pip install -e ".[browser]"   # Minimaler CDP-Browser
+pip install -e ".[keys]"      # Ed25519 Host-Key-Minting & Challenge-Response
+pip install -e ".[suite]"     # Alle Fühler
 
 # 1. Umgebung & Fühler prüfen
 clanker sense
@@ -30,18 +30,24 @@ clanker
 # 4. Direkter Turn im Terminal
 clanker "Wer bist du?"
 
-# 5. I/O-Gateway starten (erfordert agents-gateway)
+# 5. I/O-Gateway starten (Telegram & HTTP)
 clanker serve
 
 # 6. Geplante Koru-Harness-Flows ausführen
 clanker cron
 ```
 
+## Die Architektur
 
-## Die 3-Ebenen-Architektur
+1. **Core Brain Stack (Standard):**
+   - `agents-harness` — Runner-Loop, LLM-Streaming, Cordis Tools, Koru-Schedules.
+   - `agents-gateway` — Telegram Long-Poll & HTTP I/O Gateway.
+   - `agents-memory` — Lokales Markdown-Gedächtnis & Fakten-Extraktion.
+   - `agents-traces` — Append-Only JSONL Tracing & Session/Identitäts-Reconstruction.
+   - `agents-docs` — Ultra-schnelles lokales BM25 Dokumentations-RAG.
 
-1. **Ebene 1: Essentieller Kern (`agents-harness`)** — Runner-Loop, LLM-Streaming, Tool-Dispatch, Koru-Schedules.
-2. **Ebene 2: Fast immer sinnvoll (`agents-gateway`, `agents-memory`)** — Telegram/HTTP-Zugriff und persönliches Gedächtnis/Fakten.
-3. **Ebene 3: Rein optional (`agents-docs`, `agents-traces`, `agents-browser`)** — Schnelles RAG, JSONL-Tracing, Browser-Automation.
+2. **Adaptive Host-Fühler (Slimemold):**
+   - `agents-browser` — Lokale Chrome/Edge Steuerung via CDP.
+   - `agents-keys` — Ed25519 Host Agent Key Minting & Board-Proofing.
 
 

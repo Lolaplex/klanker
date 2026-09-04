@@ -11,7 +11,7 @@ RUN if [ -n "$GITHUB_TOKEN" ]; then \
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir ".[gateway]" && \
+RUN pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
 RUN useradd -m -d /data clanker && mkdir -p /data/.agents && chown -R clanker:clanker /data
