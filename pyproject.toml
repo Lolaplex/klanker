@@ -9,14 +9,12 @@ description = "Universal, adaptive slimemold AI agent shell on the Lolaplex suit
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [
-    { name = "Felix Kempf" },
-]
+authors = [{ name = "Lolaplex" }]
 requires-python = ">=3.10"
 dependencies = [
     "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@main",
     "agents-gateway @ git+https://github.com/Lolaplex/agents-gateway.git@main",
-    "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@main",
+    "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev",
     "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@main",
     "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@main",
 ]
