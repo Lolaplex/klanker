@@ -37,6 +37,10 @@ class Nucleus:
 
         # If agents-harness is installed, invoke runner.loop directly
         if self.caps.has_harness:
+            from .prompt import build_system_prompt
+
+            system_prompt = build_system_prompt(self.caps)
+
             cmd = [
                 "python",
                 "-m",
@@ -47,6 +51,8 @@ class Nucleus:
                 user,
                 "--message",
                 message,
+                "--system",
+                system_prompt,
                 "--complete",
                 "--provider",
                 selected_provider,

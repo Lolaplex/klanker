@@ -13,25 +13,31 @@ authors = [
     { name = "Felix Kempf" },
 ]
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@main",
+]
 
 [project.optional-dependencies]
-harness = [
-    "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@dev",
-]
 gateway = [
-    "agents-gateway @ git+https://github.com/Lolaplex/agents-gateway.git",
+    "agents-gateway @ git+https://github.com/Lolaplex/agents-gateway.git@main",
 ]
 memory = [
-    "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev",
+    "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@main",
+]
+docs = [
+    "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@main",
+]
+traces = [
+    "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@main",
+]
+browser = [
+    "agents-browser @ git+https://github.com/Lolaplex/agents-browser.git@main",
+]
+all = [
+    "clanker[gateway,memory,docs,traces,browser]",
 ]
 suite = [
-    "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@main",
-    "agents-gateway @ git+https://github.com/Lolaplex/agents-gateway.git",
-    "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev",
-    "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git",
-    "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git",
-    "agents-browser @ git+https://github.com/Lolaplex/agents-browser.git",
+    "clanker[gateway,memory,docs,traces,browser]",
 ]
 
 

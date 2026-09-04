@@ -10,26 +10,30 @@ Clanker ist eine schlanke, adaptive Agenten-Distribution auf Basis des **Slimemo
 ## Quickstart
 
 ```bash
-# Clone & install (installiert automatisch agents-harness als Kern)
+# Clone & install (installiert nur agents-harness als minimalen Kern)
 pip install -e .
 
-# Optional: Gateway (Telegram/HTTP) oder volle Suite installieren
-pip install -e ".[gateway]"
-pip install -e ".[suite]"
+# Optional: Fühler nach Bedarf aktivieren
+pip install -e ".[gateway]"   # Telegram & HTTP Gateway
+pip install -e ".[memory]"    # Lokales Gedächtnis & Fakten
+pip install -e ".[suite]"     # Volle Lolaplex Suite
 
 # 1. Umgebung & Fühler prüfen
 clanker sense
 
-# 2. Interaktiver Chat (REPL wie Claude/Ollama)
+# 2. Dynamischen System-Prompt einsehen
+clanker prompt
+
+# 3. Interaktiver Chat (REPL)
 clanker
 
-# 3. Direkter Turn im Terminal
+# 4. Direkter Turn im Terminal
 clanker "Wer bist du?"
 
-# 4. I/O-Gateway starten (erfordert agents-gateway)
+# 5. I/O-Gateway starten (erfordert agents-gateway)
 clanker serve
 
-# 5. Geplante Koru-Harness-Flows ausführen
+# 6. Geplante Koru-Harness-Flows ausführen
 clanker cron
 ```
 

@@ -29,6 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
     sense_p = sub.add_parser("sense", help="Probe host environment and available feelers")
     sense_p.add_argument("--json", action="store_true", help="Output JSON format")
 
+    # 1b. Dump system prompt
+    sub.add_parser("prompt", help="Print the dynamic Clanker system prompt")
+
     # 2. Interactive or one-turn chat (alias)
     chat_p = sub.add_parser("chat", help="Chat with Clanker (spawns harness turn)")
     chat_p.add_argument("message", type=str, nargs="?", default="", help="Message content")
@@ -70,7 +73,7 @@ def run_repl(nucleus: Nucleus, *, user: str = "user", provider: str | None = Non
     return 0
 
 
-KNOWN_SUBCOMMANDS = {"sense", "serve", "cron", "chat", "-h", "--help"}
+KNOWN_SUBCOMMANDS = {"sense", "prompt", "serve", "cron", "chat", "-h", "--help"}
 
 
 def parse_cli_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, str]:
@@ -102,10 +105,24 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  * {k}: {v}")
         return 0
 
+    elif args.command == "prompt":
+        from .prompt import build_system_prompt
+        print(build_system_prompt(nucleus.caps))
+        return 0
+
     elif args.command == "serve":
         if not nucleus.caps.has_gateway:
             print("Error: agents-gateway is not installed. Install via pip install agents-gateway", file=sys.stderr)
             return 1
+
+        # If LOOP_CMD is default and harness is present, inject Clanker's dynamic system prompt
+        if "LOOP_CMD" not in os.environ and nucleus.caps.has_harness:
+            from .prompt import build_system_prompt
+            prompt_text = build_system_prompt(nucleus.caps)
+            # Use single quotes or clean escaping for LOOP_CMD
+            import shlex
+            os.environ["LOOP_CMD"] = f"python -m runner.loop --system {shlex.quote(prompt_text)}"
+
         from agents_gateway.__main__ import main as gateway_main
         sub_argv = ["serve"]
         if getattr(args, "no_telegram", False):
