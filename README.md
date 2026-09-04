@@ -40,7 +40,9 @@ clanker cron
 
 ## Die Architektur
 
-1. **Das Paket / Brain (`clanker` Base)** — Der komplette Kern: `agents-harness` (Motor/Loop), `agents-gateway` (I/O, HTTP & Telegram), `agents-memory` (Gedächtnis), `agents-traces` (JSONL-Observability & Chat-Rekonstruktion), `agents-docs` (Local Markdown RAG).
-2. **Optionale Fühler (`[browser]`, `[keys]`)** — Browser-Steuerung (`agents-browser`), Ed25519 DID Key-Minting (`agents-keys`).
+1. **Das Brain (`agents-harness`)** — Motor, LLM-Streaming, Cordis-Kernel, Koru-Schedules, lokales Gedächtnis (`agents-memory`), JSONL-Observability & Chat-Rekonstruktion (`agents-traces`) und lokales Markdown-RAG (`agents-docs`).
+2. **Die I/O-Schicht (`agents-gateway`)** — Universelle Ein- und Ausgabe via HTTP (`/v1/turn`) und Telegram Long-Poll.
+3. **Die User-App (`clanker`)** — Verbindet Brain & Gateway zu einer adaptiven Slimemold-Shell.
+4. **Optionale Tools & Fühler** — Externe Fähigkeiten wie CDP-Browser (`agents-browser`), Ed25519-Keys (`agents-keys`), Jailed Terminal (`agents-terminal`) oder beliebige MCP-Tools, die Clanker bei Bedarf vorschlägt oder einbindet.
 
 
