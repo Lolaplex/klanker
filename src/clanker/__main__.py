@@ -117,11 +117,9 @@ def main(argv: list[str] | None = None) -> int:
 
         # If LOOP_CMD is default and harness is present, inject Clanker's dynamic system prompt
         if "LOOP_CMD" not in os.environ and nucleus.caps.has_harness:
-            from .prompt import build_system_prompt
-            prompt_text = build_system_prompt(nucleus.caps)
-            # Use single quotes or clean escaping for LOOP_CMD
-            import shlex
-            os.environ["LOOP_CMD"] = f"python -m runner.loop --system {shlex.quote(prompt_text)}"
+            from .prompt import save_system_prompt
+            prompt_file = save_system_prompt(nucleus.caps)
+            os.environ["LOOP_CMD"] = f"python -m runner.loop --system {prompt_file.as_posix()}"
 
         from agents_gateway.__main__ import main as gateway_main
         sub_argv = ["serve"]

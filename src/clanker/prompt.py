@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from .sensing import HostCapabilities
 
@@ -44,3 +45,13 @@ def build_system_prompt(caps: HostCapabilities) -> str:
     ]
 
     return "\n".join(lines).strip()
+
+
+def save_system_prompt(caps: HostCapabilities) -> Path:
+    """Save dynamic Clanker prompt to ~/.agents/clanker_prompt.txt and return path."""
+    agents_dir = Path(os.environ.get("AGENTS_DIR", Path.home() / ".agents"))
+    agents_dir.mkdir(parents=True, exist_ok=True)
+    prompt_file = agents_dir / "clanker_prompt.txt"
+    prompt_text = build_system_prompt(caps)
+    prompt_file.write_text(prompt_text, encoding="utf-8")
+    return prompt_file
