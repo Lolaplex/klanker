@@ -26,7 +26,7 @@ memory = [
     "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev",
 ]
 suite = [
-    "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@47cc1f512ed738e2a422bbfb785e953dbd655284",
+    "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@6a52aad6774e1d32fe544c0aa0f551b9201f98bc",
     "agents-gateway @ git+https://github.com/Lolaplex/agents-gateway.git",
     "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev",
     "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git",
