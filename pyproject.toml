@@ -3,8 +3,8 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "clanker"
-version = "0.1.0"
+name = "klanker"
+version = "0.0.1"
 description = "Universal, adaptive slimemold AI agent shell on the Lolaplex suite"
 readme = "README.md"
 license = "MIT"
@@ -27,21 +27,19 @@ keys = [
     "agents-keys @ git+https://github.com/Lolaplex/agents-keys.git@main",
 ]
 all = [
-    "clanker[browser,keys]",
+    "klanker[browser,keys]",
 ]
 suite = [
-    "clanker[browser,keys]",
+    "klanker[browser,keys]",
 ]
 
-
-
 [project.urls]
-Homepage = "https://github.com/Lolaplex/clanker"
-Repository = "https://github.com/Lolaplex/clanker"
-"Bug Tracker" = "https://github.com/Lolaplex/clanker/issues"
+Homepage = "https://github.com/Lolaplex/klanker"
+Repository = "https://github.com/Lolaplex/klanker"
+"Bug Tracker" = "https://github.com/Lolaplex/klanker/issues"
 
 [project.scripts]
-clanker = "clanker.__main__:main"
+klanker = "klanker.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

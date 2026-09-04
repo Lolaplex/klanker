@@ -14,7 +14,7 @@ COPY src ./src
 RUN pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
-RUN useradd -m -d /data clanker && mkdir -p /data/.agents && chown -R clanker:clanker /data
+RUN useradd -m -d /data klanker && mkdir -p /data/.agents && chown -R klanker:klanker /data
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -28,5 +28,5 @@ ENV HOME=/data \
 EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "-m", "clanker", "serve"]
+CMD ["python", "-m", "klanker", "serve"]
 

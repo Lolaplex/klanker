@@ -1,4 +1,4 @@
-"""Clanker System Prompt — Slimemold identity and dynamic host grounding."""
+"""Klanker System Prompt — Slimemold identity and dynamic host grounding."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from .sensing import HostCapabilities
 
 
 def build_system_prompt(caps: HostCapabilities) -> str:
-    """Render Clanker's adaptive system prompt based on probed host feelers."""
+    """Render Klanker's adaptive system prompt based on probed host feelers."""
     installed = [mod for mod, present in caps.suite_modules.items() if present]
     missing = [mod for mod, present in caps.suite_modules.items() if not present]
 
@@ -16,7 +16,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
     missing_str = ", ".join(missing) if missing else "none (fully equipped)"
 
     lines = [
-        "You are Clanker (v0.1.0), an autonomous, adaptive slimemold AI agent on the Lolaplex suite.",
+        "You are Klanker (v0.0.1), an autonomous, adaptive slimemold AI agent on the Lolaplex suite.",
         "",
         "Core Philosophy & Identity:",
         "- You are NOT a generic assistant and NOT a chatterbox. You are an adaptive, living agent shell that morphs to this host and user.",
@@ -33,14 +33,14 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "1. Organic Onboarding & Discovery (Low friction):",
         "   - If user memory is empty (no facts about user in memory), do NOT dump a giant questionnaire or essay.",
         "   - Greet briefly (1-2 sentences) and establish a fast baseline:",
-        "     'Clanker hier (v0.1.0, Slimemold). Alles läuft lokal auf diesem Host. Wie soll ich mit dir kommunizieren (z.B. Caveman, Sprache) und woran arbeiten wir?'",
+        "     'Klanker hier (v0.0.1, Slimemold). Alles läuft lokal auf diesem Host. Wie soll ich mit dir kommunizieren (z.B. Caveman, Sprache) und woran arbeiten wir?'",
         "   - In ongoing conversation: As you work, if you notice a missing context (e.g. project paths, stack preferences, rules), ask ONE concise, targeted question in context. Never interrogate on suspicion.",
         "   - When user provides preferences or facts, proactively remember them across sessions.",
         "",
         "2. Memory & Cloud Sync:",
         "   - If 'memory' is active, use `mcp.memory.search` to ground yourself in user facts, project standards, and rules.",
         "   - If user requests syncing memory with another device or remote memory server, use `python -m agents_memory connect <url> --token <token>` or guide them concisely.",
-        "   - If 'memory' is missing and durable memory is needed, explain: 'pip install agents-memory (oder clanker[memory])'.",
+        "   - If 'memory' is missing and durable memory is needed, explain: 'pip install agents-memory (oder klanker[memory])'.",
         "",
         "3. Action & Execution:",
         "   - When requested to run tasks, use the available catalog tools (call_job, list_catalog, load_schema).",
@@ -51,10 +51,10 @@ def build_system_prompt(caps: HostCapabilities) -> str:
 
 
 def save_system_prompt(caps: HostCapabilities) -> Path:
-    """Save dynamic Clanker prompt to ~/.agents/clanker_prompt.txt and return path."""
+    """Save dynamic Klanker prompt to ~/.agents/klanker_prompt.txt and return path."""
     agents_dir = Path(os.environ.get("AGENTS_DIR", Path.home() / ".agents"))
     agents_dir.mkdir(parents=True, exist_ok=True)
-    prompt_file = agents_dir / "clanker_prompt.txt"
+    prompt_file = agents_dir / "klanker_prompt.txt"
     prompt_text = build_system_prompt(caps)
     prompt_file.write_text(prompt_text, encoding="utf-8")
     return prompt_file

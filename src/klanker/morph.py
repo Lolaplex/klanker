@@ -21,7 +21,7 @@ def synthesize_schedule(
         "name": name,
         "verb": verb,
         "cadence": cadence,
-        "rests_on": rests_on or f"Synthesized by Clanker for {name}",
+        "rests_on": rests_on or f"Synthesized by Klanker for {name}",
         "expected_exit": expected_exit,
         "timeout_sec": timeout_sec,
     }

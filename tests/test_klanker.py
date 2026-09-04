@@ -1,13 +1,13 @@
-"""Unit tests for Clanker nucleus, sensing, and CLI."""
+"""Unit tests for Klanker nucleus, sensing, and CLI."""
 
 import unittest
-from clanker.sensing import probe_host, HostCapabilities
-from clanker.morph import synthesize_schedule
-from clanker.nucleus import Nucleus
-from clanker.__main__ import build_parser
+from klanker.sensing import probe_host, HostCapabilities
+from klanker.morph import synthesize_schedule
+from klanker.nucleus import Nucleus
+from klanker.__main__ import build_parser
 
 
-class TestClanker(unittest.TestCase):
+class TestKlanker(unittest.TestCase):
     def test_probe_host(self):
         caps = probe_host()
         self.assertIsInstance(caps, HostCapabilities)
@@ -33,7 +33,7 @@ class TestClanker(unittest.TestCase):
         self.assertIn("python_version", sense)
 
     def test_cli_parser(self):
-        from clanker.__main__ import parse_cli_args
+        from klanker.__main__ import parse_cli_args
         args, direct_prompt = parse_cli_args(["sense", "--json"])
         self.assertEqual(args.command, "sense")
         self.assertTrue(args.json)
@@ -51,6 +51,4 @@ class TestClanker(unittest.TestCase):
 
 
 if __name__ == "__main__":
-
-
     unittest.main()
