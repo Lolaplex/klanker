@@ -13,7 +13,7 @@ authors = [{ name = "Lolaplex" }]
 requires-python = ">=3.10"
 dependencies = [
     "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@main",
-    "agents-gateway @ git+https://github.com/Lolaplex/agents-gateway.git@main",
+    "agents-relay @ git+https://github.com/Lolaplex/agents-relay.git@main",
     "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev",
     "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@main",
     "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@main",

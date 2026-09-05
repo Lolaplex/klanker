@@ -14,7 +14,7 @@ from pathlib import Path
 COMMON_RUNTIMES = ["git", "docker", "curl", "node", "npm", "uv", "sqlite3"]
 SUITE_MODULES = {
     "harness": "runner.loop",
-    "gateway": "agents_gateway",
+    "relay": "agents_relay",
     "memory": "agents_memory",
     "docs": "agents_docs",
     "traces": "agents_traces",
@@ -50,8 +50,12 @@ class HostCapabilities:
         return self.suite_modules.get("harness", False)
 
     @property
+    def has_relay(self) -> bool:
+        return self.suite_modules.get("relay", False)
+
+    @property
     def has_gateway(self) -> bool:
-        return self.suite_modules.get("gateway", False)
+        return self.has_relay
 
     @property
     def has_memory(self) -> bool:

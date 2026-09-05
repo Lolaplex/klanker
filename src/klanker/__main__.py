@@ -110,8 +110,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     elif args.command == "serve":
-        if not nucleus.caps.has_gateway:
-            print("Error: agents-gateway is not installed. Install via pip install agents-gateway", file=sys.stderr)
+        if not (nucleus.caps.has_relay or nucleus.caps.has_gateway):
+            print("Error: agents-relay is not installed. Install via pip install agents-relay", file=sys.stderr)
             return 1
 
         # If LOOP_CMD is default and harness is present, inject Klanker's dynamic system prompt
@@ -120,11 +120,14 @@ def main(argv: list[str] | None = None) -> int:
             prompt_file = save_system_prompt(nucleus.caps)
             os.environ["LOOP_CMD"] = f"python -m runner.loop --system {prompt_file.as_posix()}"
 
-        from agents_gateway.__main__ import main as gateway_main
+        try:
+            from agents_relay.__main__ import main as relay_main
+        except ImportError:
+            from agents_gateway.__main__ import main as relay_main
         sub_argv = ["serve"]
         if getattr(args, "no_telegram", False):
             sub_argv.append("--no-telegram")
-        return gateway_main(sub_argv)
+        return relay_main(sub_argv)
 
     elif args.command == "cron":
         if not nucleus.caps.has_harness:

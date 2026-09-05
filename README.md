@@ -41,8 +41,8 @@ klanker cron
 ## Die Architektur
 
 1. **Das Brain (`agents-harness`)** — Motor, LLM-Streaming, Cordis-Kernel, Koru-Schedules, lokales Gedächtnis (`agents-memory`), JSONL-Observability & Chat-Rekonstruktion (`agents-traces`) und lokales Markdown-RAG (`agents-docs`).
-2. **Die I/O-Schicht (`agents-gateway`)** — Universelle Ein- und Ausgabe via HTTP (`/v1/turn`) und Telegram Long-Poll.
-3. **Die User-App (`klanker`)** — Verbindet Brain & Gateway zu einer adaptiven Slimemold-Shell.
+2. **Die I/O-Schicht (`agents-relay`)** — Universelle Ein- und Ausgabe via HTTP (`/v1/turn`) und Telegram Long-Poll.
+3. **Die User-App (`klanker`)** — Verbindet Brain & Relay zu einer adaptiven Slimemold-Shell.
 4. **Optionale Tools & Fühler** — Externe Fähigkeiten wie CDP-Browser (`agents-browser`), Ed25519-Keys (`agents-keys`), Jailed Terminal (`agents-terminal`) oder beliebige MCP-Tools, die Klanker bei Bedarf vorschlägt oder einbindet.
 
 
