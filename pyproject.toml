@@ -16,7 +16,7 @@ dependencies = [
     "agents-relay @ git+https://github.com/Lolaplex/agents-relay.git@dev",
     "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev",
     "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@main",
-    "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@main",
+    "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@dev",
 ]
 
 [project.optional-dependencies]
