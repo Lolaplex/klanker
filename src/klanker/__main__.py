@@ -92,6 +92,12 @@ def parse_cli_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, s
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args, direct_prompt = parse_cli_args(argv)
+    try:
+        from . import __version__
+        from .updates import check_for_updates
+        check_for_updates("klanker", __version__)
+    except Exception:
+        pass
     nucleus = Nucleus()
 
     if args.command == "sense":
