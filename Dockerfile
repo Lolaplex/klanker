@@ -11,7 +11,13 @@ RUN if [ -n "$GITHUB_TOKEN" ]; then \
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir . && \
+RUN pip install --no-cache-dir \
+        "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@dev" \
+        "agents-relay @ git+https://github.com/Lolaplex/agents-relay.git@dev" \
+        "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev" \
+        "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@dev" \
+        "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@dev" && \
+    pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
 RUN useradd -m -d /data klanker && mkdir -p /data/.agents && chown -R klanker:klanker /data
