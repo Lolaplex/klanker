@@ -1,0 +1,41 @@
+{
+  "name": "mcp.schedule.add",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m klanker remind add",
+  "rests_on": "Klanker reminder add: Telegram send verb, exit 0 = added",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string",
+        "description": "Reminder text delivered over Telegram"
+      },
+      "at": {
+        "type": "string",
+        "description": "Due time: relative like '+10m' or ISO datetime"
+      },
+      "name": {
+        "type": "string",
+        "description": "Optional short slug/identifier for the schedule"
+      },
+      "cron": {
+        "type": "string",
+        "description": "Optional standard 5-part cron expression"
+      },
+      "user": {
+        "type": "string",
+        "description": "Telegram chat id. Inherited from the current turn when omitted."
+      },
+      "timezone": {
+        "type": "string",
+        "description": "IANA timezone for naive ISO datetimes"
+      }
+    },
+    "required": ["at"]
+  }
+}

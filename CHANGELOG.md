@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Telegram reminders: `mcp.schedule.add` overlay writes a one-shot verb that calls `agents-relay send` instead of an LLM turn. Host must tick `python -m runner.schedule tick`.
+
+### Changed
+- System prompt treats the clock as the calendar (weekday + local date) and drops the slimemold greeting.
+
 ## [0.0.1] - 2026-09-05
 
 ### Added

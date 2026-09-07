@@ -3,6 +3,7 @@ set -e
 
 # Ensure data and overlay directories exist
 mkdir -p /data /data/.agents /data/.agents/memory /data/schedules /data/modules /data/traces
+python -c "from klanker.overlay import install_overlay; install_overlay()" 2>/dev/null || true
 chown -R klanker:klanker /data 2>/dev/null || true
 chmod 775 /data 2>/dev/null || true
 

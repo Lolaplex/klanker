@@ -72,7 +72,7 @@ def run_repl(nucleus: Nucleus, *, user: str = "user", provider: str | None = Non
     return 0
 
 
-KNOWN_SUBCOMMANDS = {"sense", "prompt", "serve", "cron", "chat", "-h", "--help"}
+KNOWN_SUBCOMMANDS = {"sense", "prompt", "serve", "cron", "chat", "remind", "-h", "--help"}
 
 
 def parse_cli_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, str]:
@@ -91,6 +91,12 @@ def parse_cli_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, s
 
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if raw and raw[0] == "remind":
+        from .overlay import install_overlay
+        from . import remind
+        install_overlay()
+        return remind.main(raw[1:])
     args, direct_prompt = parse_cli_args(argv)
     try:
         from . import __version__
@@ -123,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
         # If LOOP_CMD is default and harness is present, inject Klanker's dynamic system prompt
         if "LOOP_CMD" not in os.environ and nucleus.caps.has_harness:
             from .prompt import save_system_prompt
+            from .overlay import install_overlay
+            install_overlay()
             prompt_file = save_system_prompt(nucleus.caps)
             os.environ["LOOP_CMD"] = f"python -m runner.loop --system {prompt_file.as_posix()}"
 
