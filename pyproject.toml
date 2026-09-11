@@ -17,6 +17,7 @@ dependencies = [
     "agents-memory>=0.0.1",
     "agents-traces>=0.0.1",
     "agents-docs>=0.0.1",
+    "agents-terminal>=0.0.1",
 ]
 
 [project.optional-dependencies]

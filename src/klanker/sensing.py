@@ -20,6 +20,7 @@ SUITE_MODULES = {
     "traces": "agents_traces",
     "keys": "agents_keys",
     "browser": "agents_browser",
+    "terminal": "agents_terminal",
 }
 
 
@@ -68,6 +69,10 @@ class HostCapabilities:
     @property
     def has_traces(self) -> bool:
         return self.suite_modules.get("traces", False)
+
+    @property
+    def has_terminal(self) -> bool:
+        return self.suite_modules.get("terminal", False)
 
     def summary(self) -> dict[str, object]:
         return {
