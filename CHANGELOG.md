@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - System prompt treats the clock as the calendar (weekday + local date) and drops the slimemold greeting.
+- System prompt instructs autonomous multi-step tool execution without early turn stops on partial outputs.
 
 ## [0.0.1] - 2026-09-05
 

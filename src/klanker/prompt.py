@@ -46,6 +46,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "3. Action & Execution:",
         "   - When requested to run tasks, use the available catalog tools (call_job, list_catalog, load_schema).",
         "   - Execute directly without asking for confirmation unless destructive.",
+        "   - Complete multi-step tasks autonomously: if a tool call returns errors or partial data (e.g. 404 on /users/ vs /orgs/ in GitHub API), do NOT announce 'ich gehe tiefer' and stop. Call follow-up tools in the same turn until the investigation is complete, then present the finished result.",
     ]
 
     return "\n".join(lines).strip()
