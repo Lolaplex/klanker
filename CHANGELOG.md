@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Explicit workspace filesystem grounding (`/data/workspace` or `~/.agents/workspace`) and inbox directory initialization in `entrypoint.sh`.
 
 ### Changed
+- CI runs only on pull requests to `main`.
 - PR-only CI added (ubuntu-latest `pytest` on pull requests to `main`/`dev`). Feature-merge notifications on squash into `dev`. No publish pipeline.
 - System prompt treats the clock as the calendar (weekday + local date) and drops the slimemold greeting.
 - System prompt instructs autonomous multi-step tool execution without early turn stops on partial outputs.
