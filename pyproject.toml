@@ -27,11 +27,14 @@ browser = [
 keys = [
     "agents-keys>=0.0.1",
 ]
+calendar = [
+    "agents-calendar>=0.0.1",
+]
 all = [
-    "klanker[browser,keys]",
+    "klanker[browser,keys,calendar]",
 ]
 suite = [
-    "klanker[browser,keys]",
+    "klanker[browser,keys,calendar]",
 ]
 
 [project.urls]

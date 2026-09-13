@@ -1,0 +1,25 @@
+{
+  "name": "mcp.calendar.delete",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_calendar delete",
+  "rests_on": "agents-calendar CLI delete VEVENT; extra argv is href etag; exit 0 = deleted",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "href": {
+        "type": "string",
+        "description": "Event href from mcp.calendar.list"
+      },
+      "etag": {
+        "type": "string",
+        "description": "ETag from mcp.calendar.list (If-Match)"
+      }
+    },
+    "required": ["href", "etag"]
+  }
+}

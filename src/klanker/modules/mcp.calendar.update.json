@@ -1,0 +1,37 @@
+{
+  "name": "mcp.calendar.update",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_calendar update",
+  "rests_on": "agents-calendar CLI update VEVENT; extra argv is href etag then optional fields; exit 0 = updated",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "href": {
+        "type": "string",
+        "description": "Event href from mcp.calendar.list"
+      },
+      "etag": {
+        "type": "string",
+        "description": "ETag from mcp.calendar.list (If-Match)"
+      },
+      "summary": {
+        "type": "string",
+        "description": "Optional new title"
+      },
+      "dtstart": {
+        "type": "string",
+        "description": "Optional new start ISO-8601"
+      },
+      "dtend": {
+        "type": "string",
+        "description": "Optional new end ISO-8601"
+      }
+    },
+    "required": ["href", "etag"]
+  }
+}

@@ -21,6 +21,7 @@ SUITE_MODULES = {
     "keys": "agents_keys",
     "browser": "agents_browser",
     "terminal": "agents_terminal",
+    "calendar": "agents_calendar",
 }
 
 

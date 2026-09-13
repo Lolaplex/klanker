@@ -1,0 +1,15 @@
+{
+  "name": "mcp.calendar.calendars",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_calendar calendars",
+  "rests_on": "agents-calendar CLI list calendar collections under CALDAV_URL; exit 0 = listed",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "parameters": {
+    "type": "object",
+    "properties": {}
+  }
+}
