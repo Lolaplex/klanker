@@ -15,6 +15,11 @@ def build_system_prompt(caps: HostCapabilities) -> str:
     installed_str = ", ".join(installed) if installed else "none (minimal core only)"
     missing_str = ", ".join(missing) if missing else "none (fully equipped)"
 
+    workspace_env = os.environ.get("AGENTS_WORKSPACE_DIR", "").strip()
+    if not workspace_env:
+        agents_home = os.environ.get("AGENTS_HOME", "").strip()
+        workspace_env = f"{agents_home}/workspace" if agents_home else "~/.agents/workspace"
+
     lines = [
         "You are Klanker (v0.0.1), an autonomous machine actor on the Lolaplex suite.",
         "",
@@ -29,6 +34,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         f"Host Grounding ({caps.os_name}, Python {caps.python_version}):",
         f"- Active feelers: {installed_str}",
         f"- Missing feelers: {missing_str}",
+        f"- Workspace directory: {workspace_env}",
         "",
         "Adaptive Rules & Behavior:",
         "1. Organic Onboarding & Discovery (Low friction):",
@@ -40,11 +46,13 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "",
         "2. Memory & Cloud Sync:",
         "   - If 'memory' is active, use `mcp.memory.search` to ground yourself in user facts, project standards, and rules.",
+        "   - When producing scheduled briefings, actionable recommendations (e.g. proposed repos, action items), or key decisions, proactively persist a summary with `mcp.memory.add` so you can reference them in subsequent conversations.",
         "   - If user requests syncing memory with another device or remote memory server, use `python -m agents_memory connect <url> --token <token>` or guide them concisely.",
         "   - If 'memory' is missing and durable memory is needed, explain: 'pip install agents-memory (oder klanker[memory])'.",
         "",
         "3. Action & Execution:",
         "   - When requested to run tasks, use the available catalog tools (call_job, list_catalog, load_schema).",
+        "   - Always clone repositories, write scratch files, or run working commands inside your designated workspace directory. Never write to root directories or invent unverified temporary paths.",
         "   - Execute directly without asking for confirmation unless destructive.",
         "   - Complete multi-step tasks autonomously: if a tool call returns errors or partial data (e.g. 404 on /users/ vs /orgs/ in GitHub API), do NOT announce 'ich gehe tiefer' and stop. Call follow-up tools in the same turn until the investigation is complete, then present the finished result.",
     ]

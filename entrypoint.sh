@@ -1,8 +1,10 @@
 #!/bin/sh
 set -e
 
-# Ensure data and overlay directories exist
-mkdir -p /data /data/.agents /data/.agents/memory /data/schedules /data/modules /data/traces
+# Ensure data, workspace, and overlay directories exist
+mkdir -p /data /data/.agents /data/.agents/memory /data/schedules /data/modules /data/traces /data/workspace /data/inbox
+export AGENTS_WORKSPACE_DIR="${AGENTS_WORKSPACE_DIR:-/data/workspace}"
+export AGENTS_HOME="${AGENTS_HOME:-/data/.agents}"
 python -c "from klanker.overlay import install_overlay; install_overlay()" 2>/dev/null || true
 chown -R klanker:klanker /data 2>/dev/null || true
 chmod 775 /data 2>/dev/null || true
