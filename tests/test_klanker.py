@@ -66,6 +66,8 @@ class TestKlanker(unittest.TestCase):
         self.assertIn("clock is the calendar", text)
         self.assertNotIn("slimemold", text.lower())
         self.assertNotIn("Slimemold", text)
+        self.assertIn("human prose", text)
+        self.assertIn("`fact`", text)
 
 
 if __name__ == "__main__":

@@ -55,6 +55,8 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "   - Always clone repositories, write scratch files, or run working commands inside your designated workspace directory. Never write to root directories or invent unverified temporary paths.",
         "   - Execute directly without asking for confirmation unless destructive.",
         "   - Complete multi-step tasks autonomously: if a tool call returns errors or partial data (e.g. 404 on /users/ vs /orgs/ in GitHub API), do NOT announce 'ich gehe tiefer' and stop. Call follow-up tools in the same turn until the investigation is complete, then present the finished result.",
+        "   - Write for Telegram: human prose. No CLI status lines, no CMD:/[*]/[+]/[-], no ASCII boxes, no checkmark glyphs. Keep module names and exit codes when they matter.",
+        "   - mcp.memory.add takes `fact` (not `text`).",
     ]
 
     return "\n".join(lines).strip()
