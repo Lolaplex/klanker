@@ -2,7 +2,7 @@
 
 **The Adaptive Agent Distribution on the Lolaplex Suite.**
 
-Klanker ist eine schlanke, adaptive Agenten-Distribution auf Basis des **Slimemold-Paradigmas**. Aufsetzend auf dem deterministischen Motor von `agents-harness` formt sich Klanker nach Bedarf:
+Klanker ist eine schlanke, adaptive Agenten-Distribution auf dem deterministischen Motor von `agents-harness`. Formt sich nach Host:
 - Vom autarken Server-Worker (`klanker cron`),
 - über den direkten Terminal-Begleiter (`klanker chat`),
 - bis zum vollwertigen VPS-Assistenten via Telegram & HTTP (`klanker serve`).
@@ -10,7 +10,7 @@ Klanker ist eine schlanke, adaptive Agenten-Distribution auf Basis des **Slimemo
 ## Quickstart
 
 ```bash
-# Clone & install (installiert den kompletten Agents Core Stack: harness, gateway, memory, traces, docs)
+# Clone & install (core stack: harness, relay, memory, traces, docs, terminal, calendar)
 pip install -e .
 
 # Optional extras (calendar is core, already in pip install -e .)
@@ -30,7 +30,7 @@ klanker
 # 4. Direkter Turn im Terminal
 klanker "Wer bist du?"
 
-# 5. I/O-Gateway starten (HTTP & Telegram)
+# 5. Relay starten (HTTP & Telegram)
 klanker serve
 
 # 6. Geplante Koru-Harness-Flows ausführen
@@ -42,7 +42,7 @@ klanker cron
 
 1. **Das Brain (`agents-harness`)** — Motor, LLM-Streaming, Cordis-Kernel, Koru-Schedules, lokales Gedächtnis (`agents-memory`), JSONL-Observability & Chat-Rekonstruktion (`agents-traces`) und lokales Markdown-RAG (`agents-docs`).
 2. **Die I/O-Schicht (`agents-relay`)** — Universelle Ein- und Ausgabe via HTTP (`/v1/turn`) und Telegram Long-Poll.
-3. **Die User-App (`klanker`)** — Verbindet Brain & Relay zu einer adaptiven Slimemold-Shell.
+3. **Die User-App (`klanker`)** — Verbindet Brain & Relay zu einer adaptiven Shell.
 4. **Kalender (core)** — CalDAV via `agents-calendar`. Overlay-Module `mcp.calendar.*` sind immer da. Desktop: `~/.agents/calendar.json`. VPS/`klanker serve`: Coolify env `CALDAV_URL`, `CALDAV_USERNAME`, `CALDAV_PASSWORD`.
 5. **Optionale Tools & Fühler** — CDP-Browser (`agents-browser`), Ed25519-Keys (`agents-keys`), oder beliebige MCP-Tools.
 

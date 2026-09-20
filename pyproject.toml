@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "klanker"
 version = "0.0.1"
-description = "Universal, adaptive slimemold AI agent shell on the Lolaplex suite"
+description = "Adaptive agent distribution on the Lolaplex suite"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

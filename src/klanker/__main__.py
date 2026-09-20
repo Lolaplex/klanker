@@ -1,4 +1,4 @@
-"""Klanker CLI — Entry point for the Slimemold Agent."""
+"""Klanker CLI."""
 
 from __future__ import annotations
 
