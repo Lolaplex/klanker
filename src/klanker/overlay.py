@@ -22,7 +22,12 @@ def install_overlay(target: Path | None = None) -> Path:
     dest.mkdir(parents=True, exist_ok=True)
     if not BUNDLED.is_dir():
         return dest
+    import importlib.util
+    has_calendar = importlib.util.find_spec("agents_calendar") is not None
+
     for src in sorted(BUNDLED.glob("*.json")):
+        if src.name.startswith("mcp.calendar.") and not has_calendar:
+            continue
         out = dest / src.name
         if src.name in OVERLAY_ALWAYS or not out.exists():
             shutil.copy2(src, out)

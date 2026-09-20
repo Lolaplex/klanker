@@ -8,16 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Cordis modules `mcp.calendar.list|add|update|delete|calendars` (calendar is core, not an extra).
-- Forward `agents-terminal` as core suite module and preserve container environment variables across `su` in `entrypoint.sh`.
 - Auto-configure git authentication and `/data/.git-credentials` from `GITHUB_TOKEN` / `GH_TOKEN` on startup.
 - Telegram reminders: `mcp.schedule.add` overlay writes a one-shot verb that calls `agents-relay send` instead of an LLM turn. Host must tick `python -m runner.schedule tick`.
 - Explicit workspace filesystem grounding (`/data/workspace` or `~/.agents/workspace`) and inbox directory initialization in `entrypoint.sh`.
+- Dynamic overlay filtering for `mcp.calendar.*` manifests (only registered into active modules overlay when `agents-calendar` is installed on the host).
+- System prompt instructs on-demand tool installation via terminal or user guidance when a requested capability matches a missing feeler.
 
 ### Changed
 - CI runs only on pull requests to `main`.
 - PR-only CI added (ubuntu-latest `pytest` on pull requests to `main`/`dev`). Feature-merge notifications on squash into `dev`. No publish pipeline.
-- `agents-calendar` is a core dependency (same as terminal/memory). Extra `[calendar]` stays as an install alias. VPS/container uses Coolify env `CALDAV_*`.
+- `agents-calendar` and `agents-terminal` moved to optional tool extras (`[project.optional-dependencies]`) in the `agents-tools` suite role; base dependencies remain minimal runtime core (`harness`, `relay`, `memory`, `traces`, `docs`).
+- `Dockerfile` removes preinstalled `agents-calendar` from base image so tools are installed on-demand when needed.
 - System prompt treats the clock as the calendar (weekday + local date) and drops the slimemold greeting.
 - System prompt instructs autonomous multi-step tool execution without early turn stops on partial outputs.
 - Telegram replies: human prose (no CLI status / ASCII boxes / checkmark glyphs). `mcp.memory.add` is documented as `fact`, not `text`.

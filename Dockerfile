@@ -17,8 +17,7 @@ RUN pip install --no-cache-dir \
         "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@dev" \
         "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@dev" \
         "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@dev" \
-        "agents-terminal @ git+https://github.com/Lolaplex/agents-terminal.git@dev" \
-        "agents-calendar @ git+https://github.com/Lolaplex/agents-calendar.git@dev" && \
+        "agents-terminal @ git+https://github.com/Lolaplex/agents-terminal.git@dev" && \
     pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
