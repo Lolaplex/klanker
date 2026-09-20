@@ -17,8 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - CI runs only on pull requests to `main`.
 - PR-only CI added (ubuntu-latest `pytest` on pull requests to `main`/`dev`). Feature-merge notifications on squash into `dev`. No publish pipeline.
-- `agents-calendar` and `agents-terminal` moved to optional tool extras (`[project.optional-dependencies]`) in the `agents-tools` suite role; base dependencies remain minimal runtime core (`harness`, `relay`, `memory`, `traces`, `docs`).
-- `Dockerfile` removes preinstalled `agents-calendar` from base image so tools are installed on-demand when needed.
+- `agents-calendar` is an optional tool extra (`[project.optional-dependencies]`) in the `agents-tools` suite role; `agents-terminal` remains base dependency for autonomous host execution.
+- `Dockerfile` removes preinstalled `agents-calendar` from base image so optional tools are installed on-demand when needed.
 - System prompt treats the clock as the calendar (weekday + local date) and drops the slimemold greeting.
 - System prompt instructs autonomous multi-step tool execution without early turn stops on partial outputs.
 - Telegram replies: human prose (no CLI status / ASCII boxes / checkmark glyphs). `mcp.memory.add` is documented as `fact`, not `text`.

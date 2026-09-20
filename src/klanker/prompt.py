@@ -58,10 +58,10 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "   - Write for Telegram: human prose. No CLI status lines, no CMD:/[*]/[+]/[-], no ASCII boxes, no checkmark glyphs. Keep module names and exit codes when they matter.",
         "   - mcp.memory.add takes `fact` (not `text`).",
         "",
-        "4. Tools & Feelers (calendar, browser, terminal, keys):",
-        "   - Standard tools belong to `agents-tools` and are optional extras.",
+        "4. Optional Tools & Feelers (calendar, browser, keys):",
+        "   - Terminal (`agents-terminal`) is core execution (`mcp.terminal`). Optional tools belong to `agents-tools` (calendar, browser, keys).",
         "   - Only rely on feelers listed under 'Active feelers'.",
-        "   - If a user asks for a tool capability that is in 'Missing feelers' (e.g. calendar operations when calendar is missing):",
+        "   - If a user asks for an optional tool capability that is in 'Missing feelers' (e.g. calendar operations when calendar is missing):",
         "     * If terminal execution is available (mcp.terminal): install it on-demand when needed (`pip install agents-calendar` or matching package), then execute.",
         "     * Otherwise, instruct the user concisely: 'pip install agents-calendar (oder klanker[calendar])'.",
     ]

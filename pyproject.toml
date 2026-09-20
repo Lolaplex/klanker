@@ -17,6 +17,7 @@ dependencies = [
     "agents-memory>=0.0.1",
     "agents-traces>=0.0.1",
     "agents-docs>=0.0.1",
+    "agents-terminal>=0.0.1",
 ]
 
 [project.optional-dependencies]
@@ -26,16 +27,12 @@ browser = [
 keys = [
     "agents-keys>=0.0.1",
 ]
-terminal = [
-    "agents-terminal>=0.0.1",
-]
 calendar = [
     "agents-calendar>=0.0.1",
 ]
 tools = [
     "agents-browser>=0.0.1",
     "agents-keys>=0.0.1",
-    "agents-terminal>=0.0.1",
     "agents-calendar>=0.0.1",
 ]
 all = [
