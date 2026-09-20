@@ -1,4 +1,4 @@
-"""Klanker System Prompt — Slimemold identity and dynamic host grounding."""
+"""Klanker system prompt and host grounding."""
 
 from __future__ import annotations
 

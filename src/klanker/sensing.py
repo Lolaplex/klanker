@@ -1,4 +1,4 @@
-"""Host capability probe (Slimemold sensing)."""
+"""Host capability probe."""
 
 from __future__ import annotations
 
