@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `agents-calendar` is a core dependency (same as terminal/memory). Extra `[calendar]` stays as an install alias. VPS/container uses Coolify env `CALDAV_*`.
 - System prompt treats the clock as the calendar (weekday + local date) and drops the slimemold greeting.
 - System prompt instructs autonomous multi-step tool execution without early turn stops on partial outputs.
+- Telegram replies: human prose (no CLI status / ASCII boxes / checkmark glyphs). `mcp.memory.add` is documented as `fact`, not `text`.
 - System prompt instructs proactive memory persistence for scheduled briefings and recommendations via `mcp.memory.add`.
 
 ## [0.0.1] - 2026-09-05
