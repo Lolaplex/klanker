@@ -36,36 +36,13 @@ pip install "klanker[suite]"     # Complete Lolaplex suite
 
 ## Architecture
 
-```
-                       +-----------------------------+
-                       |        Host Senses          |
-                       |  (CLI / Telegram / HTTP)    |
-                       +--------------+--------------+
-                                      |
-                                      v
-                       +-----------------------------+
-                       |           klanker           |
-                       |  Adaptive Distribution Shell|
-                       +--------------+--------------+
-                                      |
-         +----------------------------+----------------------------+
-         |                                                         |
-         v                                                         v
-+------------------+                                      +------------------+
-|  agents-harness  |                                      |   agents-relay   |
-|  - runner.loop   |                                      |  - HTTP server   |
-|  - Job Kernel    |                                      |  - Telegram poll |
-|  - Cordis Verbs  |                                      |  - Streaming I/O |
-+--------+---------+                                      +------------------+
-         |
-         +-----------------+-----------------+-----------------+
-         |                 |                 |                 |
-         v                 v                 v                 v
-+-----------------+ +-------------+ +-----------------+ +---------------+
-|  agents-memory  | | agents-docs | |  agents-traces  | |agents-terminal|
-|  (Local Store)  | | (Local RAG) | |(Observability)  | |(Jailed CLI)   |
-+-----------------+ +-------------+ +-----------------+ +---------------+
-```
+| Layer | Responsibility | Stack / Package |
+| :--- | :--- | :--- |
+| **Brain** | Deterministic loop, LLM streaming, Cordis kernel, Koru schedules | `agents-harness` |
+| **Memory & Docs** | Persistent local markdown memory, typed facts, header-aware BM25 doc search | `agents-memory`, `agents-docs` |
+| **Observability** | Append-only JSONL event logging & turn reconstruction | `agents-traces` |
+| **I/O Gateway** | Universal inbound/outbound HTTP (`/v1/turn`, `/v1/inject`) and Telegram long-poll | `agents-relay` |
+| **Tools & Feelers** | Jailed execution, CalDAV calendar, CDP browser, agent DID keys | `agents-terminal`, `agents-calendar`, `agents-browser`, `agents-keys` |
 
 - **Brain (`agents-harness`)**: Deterministic execution loop, LLM completions, Cordis job catalog, and Koru scheduled flows.
 - **Memory & Docs (`agents-memory`, `agents-docs`)**: Persistent local markdown memory and header-aware documentation search.
