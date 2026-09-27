@@ -52,6 +52,24 @@ pip install "klanker[suite]"     # Complete Lolaplex suite
 
 ---
 
+## Capabilities & Roadmap
+
+### Core Capabilities (Implemented)
+
+- [x] **Adaptive Host Sensing (`klanker sense`)**: Automatic host inspection and runtime discovery.
+- [x] **Dynamic System Prompt (`klanker prompt`)**: Context-aware prompt generation grounded in host capabilities and time.
+- [x] **Multi-Surface Shell**: Interactive REPL, one-shot CLI turns, background care worker (`cron`), and gateway server (`serve`).
+- [x] **Full Suite Integration**: Core bindings for `agents-harness`, `agents-relay`, `agents-memory`, `agents-docs`, `agents-traces`, `agents-terminal`, and `agents-calendar`.
+- [x] **Telegram Reminders**: Dynamic reminder scheduling routed to `agents-relay send`.
+
+### Planned (Roadmap)
+
+- [ ] **Graphic Architecture Map**: Visual system diagram asset hosted on GitHub.
+- [ ] **Autonomous Mesh Coordination**: Distributed multi-instance task delegation via A2A.
+- [ ] **Desktop Companion GUI**: Native workbench integration with `klanker-desktop`.
+
+---
+
 ## Commands
 
 | Command | Description |
