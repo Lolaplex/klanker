@@ -1,0 +1,25 @@
+{
+  "name": "mcp.calendar.list",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_calendar list",
+  "rests_on": "agents-calendar CLI list VEVENTs; extra argv is --from/--to ISO; exit 0 = listed",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "from": {
+        "type": "string",
+        "description": "Range start ISO-8601 (UTC Z ok)"
+      },
+      "to": {
+        "type": "string",
+        "description": "Range end ISO-8601 (UTC Z ok)"
+      }
+    },
+    "required": ["from", "to"]
+  }
+}

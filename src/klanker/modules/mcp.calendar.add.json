@@ -1,0 +1,29 @@
+{
+  "name": "mcp.calendar.add",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_calendar add",
+  "rests_on": "agents-calendar CLI create VEVENT; extra argv is summary dtstart dtend; exit 0 = created",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "summary": {
+        "type": "string",
+        "description": "Event title"
+      },
+      "dtstart": {
+        "type": "string",
+        "description": "Start ISO-8601"
+      },
+      "dtend": {
+        "type": "string",
+        "description": "End ISO-8601"
+      }
+    },
+    "required": ["summary", "dtstart", "dtend"]
+  }
+}

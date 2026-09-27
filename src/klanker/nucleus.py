@@ -1,4 +1,4 @@
-"""Clanker Nucleus — The adaptive core coordinator."""
+"""Klanker Nucleus — The adaptive core coordinator."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Any
 
 from .sensing import HostCapabilities, probe_host
 
-log = logging.getLogger("clanker.nucleus")
+log = logging.getLogger("klanker.nucleus")
 
 
 class Nucleus:
@@ -67,7 +67,7 @@ class Nucleus:
         else:
             print(
                 "Error: agents-harness is required for conversational turns.\n"
-                "Install it via: pip install -e ../agents-harness (or pip install clanker)",
+                "Install it via: pip install -e ../agents-harness (or pip install klanker)",
                 file=sys.stderr,
             )
             return 1

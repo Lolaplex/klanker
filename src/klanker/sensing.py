@@ -1,4 +1,4 @@
-"""Host capability probe (Slimemold sensing)."""
+"""Host capability probe."""
 
 from __future__ import annotations
 
@@ -14,12 +14,14 @@ from pathlib import Path
 COMMON_RUNTIMES = ["git", "docker", "curl", "node", "npm", "uv", "sqlite3"]
 SUITE_MODULES = {
     "harness": "runner.loop",
-    "gateway": "agents_gateway",
+    "relay": "agents_relay",
     "memory": "agents_memory",
     "docs": "agents_docs",
     "traces": "agents_traces",
     "keys": "agents_keys",
     "browser": "agents_browser",
+    "terminal": "agents_terminal",
+    "calendar": "agents_calendar",
 }
 
 
@@ -50,8 +52,12 @@ class HostCapabilities:
         return self.suite_modules.get("harness", False)
 
     @property
+    def has_relay(self) -> bool:
+        return self.suite_modules.get("relay", False)
+
+    @property
     def has_gateway(self) -> bool:
-        return self.suite_modules.get("gateway", False)
+        return self.has_relay
 
     @property
     def has_memory(self) -> bool:
@@ -64,6 +70,10 @@ class HostCapabilities:
     @property
     def has_traces(self) -> bool:
         return self.suite_modules.get("traces", False)
+
+    @property
+    def has_terminal(self) -> bool:
+        return self.suite_modules.get("terminal", False)
 
     def summary(self) -> dict[str, object]:
         return {

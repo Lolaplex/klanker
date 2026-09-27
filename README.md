@@ -1,48 +1,102 @@
-# Clanker 🤖
+# klanker
 
-**The Adaptive Agent Distribution on the Lolaplex Suite.**
+<p align="center">
+  <a href="https://github.com/Lolaplex/klanker/releases"><img src="https://img.shields.io/badge/version-0.0.2-blue.svg?style=flat-square" alt="Version 0.0.2"></a>
+  <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.10+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+"></a>
+  <a href="https://pypi.org/project/klanker/"><img src="https://img.shields.io/pypi/v/klanker.svg?style=flat-square" alt="PyPI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="License"></a>
+</p>
 
-Clanker ist eine schlanke, adaptive Agenten-Distribution auf Basis des **Slimemold-Paradigmas**. Aufsetzend auf dem deterministischen Motor von `agents-harness` formt sich Clanker nach Bedarf:
-- Vom autarken Server-Worker (`clanker cron`),
-- über den direkten Terminal-Begleiter (`clanker chat`),
-- bis zum vollwertigen VPS-Assistenten via Telegram & HTTP (`clanker serve`).
+<p align="center">
+  <strong>Adaptive agent distribution on the Lolaplex suite.</strong><br>
+  Terminal companion, background care runner, and self-hosted assistant on agents-harness.
+</p>
+
+---
 
 ## Quickstart
 
 ```bash
-# Clone & install (installiert den kompletten Agents Core Stack: harness, gateway, memory, traces, docs)
-pip install -e .
-
-# Optional: Zusätzliche Slimemold-Fühler aktivieren
-pip install -e ".[browser]"   # CDP Browser Automation
-pip install -e ".[keys]"      # Ed25519 Agent Keys
-pip install -e ".[suite]"     # Volle Lolaplex Suite
-
-# 1. Umgebung & Fühler prüfen
-clanker sense
-
-# 2. Dynamischen System-Prompt einsehen
-clanker prompt
-
-# 3. Interaktiver Chat (REPL)
-clanker
-
-# 4. Direkter Turn im Terminal
-clanker "Wer bist du?"
-
-# 5. I/O-Gateway starten (HTTP & Telegram)
-clanker serve
-
-# 6. Geplante Koru-Harness-Flows ausführen
-clanker cron
+pip install klanker
 ```
 
+Optional suite extras:
 
-## Die Architektur
+```bash
+pip install "klanker[browser]"   # CDP browser automation
+pip install "klanker[keys]"      # Ed25519 agent key minting and DID resolution
+pip install "klanker[suite]"     # Complete Lolaplex suite
+```
 
-1. **Das Brain (`agents-harness`)** — Motor, LLM-Streaming, Cordis-Kernel, Koru-Schedules, lokales Gedächtnis (`agents-memory`), JSONL-Observability & Chat-Rekonstruktion (`agents-traces`) und lokales Markdown-RAG (`agents-docs`).
-2. **Die I/O-Schicht (`agents-gateway`)** — Universelle Ein- und Ausgabe via HTTP (`/v1/turn`) und Telegram Long-Poll.
-3. **Die User-App (`clanker`)** — Verbindet Brain & Gateway zu einer adaptiven Slimemold-Shell.
-4. **Optionale Tools & Fühler** — Externe Fähigkeiten wie CDP-Browser (`agents-browser`), Ed25519-Keys (`agents-keys`), Jailed Terminal (`agents-terminal`) oder beliebige MCP-Tools, die Clanker bei Bedarf vorschlägt oder einbindet.
+> [!TIP]
+> **🤖 Agent-Driven Setup:**
+> Give your coding agent **this repo** (clone or URL), then tell it to **"install klanker, sense host capabilities, and run your personal assistant."**
 
+---
 
+## Architecture
+
+```
+                       +-----------------------------+
+                       |        Host Senses          |
+                       |  (CLI / Telegram / HTTP)    |
+                       +--------------+--------------+
+                                      |
+                                      v
+                       +-----------------------------+
+                       |           klanker           |
+                       |  Adaptive Distribution Shell|
+                       +--------------+--------------+
+                                      |
+         +----------------------------+----------------------------+
+         |                                                         |
+         v                                                         v
++------------------+                                      +------------------+
+|  agents-harness  |                                      |   agents-relay   |
+|  - runner.loop   |                                      |  - HTTP server   |
+|  - Job Kernel    |                                      |  - Telegram poll |
+|  - Cordis Verbs  |                                      |  - Streaming I/O |
++--------+---------+                                      +------------------+
+         |
+         +-----------------+-----------------+-----------------+
+         |                 |                 |                 |
+         v                 v                 v                 v
++-----------------+ +-------------+ +-----------------+ +---------------+
+|  agents-memory  | | agents-docs | |  agents-traces  | |agents-terminal|
+|  (Local Store)  | | (Local RAG) | |(Observability)  | |(Jailed CLI)   |
++-----------------+ +-------------+ +-----------------+ +---------------+
+```
+
+- **Brain (`agents-harness`)**: Deterministic execution loop, LLM completions, Cordis job catalog, and Koru scheduled flows.
+- **Memory & Docs (`agents-memory`, `agents-docs`)**: Persistent local markdown memory and header-aware documentation search.
+- **Tracing (`agents-traces`)**: Zero-bloat JSONL observability and turn reconstruction.
+- **Relay (`agents-relay`)**: Stdlib HTTP and Telegram gateway for turns, alerts, and notifications.
+- **Calendar & Tools (`agents-calendar`, `agents-terminal`, optional `agents-browser`, `agents-keys`)**: Pre-wired capabilities for schedules, safe commands, and web interaction.
+
+---
+
+## Commands
+
+| Command | Description |
+| :--- | :--- |
+| `klanker` | Start interactive multi-turn REPL chat |
+| `klanker "message"` | Run a single turn directly in terminal |
+| `klanker sense [--json]` | Probe host capabilities, installed suite packages, and environment |
+| `klanker prompt` | Inspect dynamic system prompt generated for current host |
+| `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`) and Telegram long-poll gateway |
+| `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
+| `klanker remind <user> <time> <msg>` | Schedule a one-shot outbound notification |
+
+---
+
+## Tests
+
+```bash
+pytest
+```
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
