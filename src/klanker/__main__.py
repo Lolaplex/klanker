@@ -21,6 +21,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--user", type=str, default="user", help="User alias")
     parser.add_argument("--provider", type=str, default=None, help="LLM provider")
+    parser.add_argument("--seal", action="store_true", help="Cryptographically seal tool trace records")
 
     sub = parser.add_subparsers(dest="command")
 
@@ -31,11 +32,17 @@ def build_parser() -> argparse.ArgumentParser:
     # 1b. Dump system prompt
     sub.add_parser("prompt", help="Print the dynamic Klanker system prompt")
 
+    # 1c. Audit trace integrity & replay
+    audit_p = sub.add_parser("audit", help="Audit trace integrity and replay verification via agents-traces")
+    audit_p.add_argument("target", type=str, nargs="?", default="", help="Session ID, trace file path, or empty for all")
+    audit_p.add_argument("--json", action="store_true", help="Output JSON format")
+
     # 2. Interactive or one-turn chat (alias)
     chat_p = sub.add_parser("chat", help="Chat with Klanker (spawns harness turn)")
     chat_p.add_argument("message", type=str, nargs="?", default="", help="Message content")
     chat_p.add_argument("--user", type=str, default="user", help="User alias")
     chat_p.add_argument("--provider", type=str, default=None, help="LLM provider")
+    chat_p.add_argument("--seal", action="store_true", help="Cryptographically seal tool trace records")
 
     # 3. Serve gateway
     serve_p = sub.add_parser("serve", help="Start I/O Gateway (HTTP /v1/turn & Telegram)")
@@ -48,7 +55,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_repl(nucleus: Nucleus, *, user: str = "user", provider: str | None = None) -> int:
+def run_repl(
+    nucleus: Nucleus,
+    *,
+    user: str = "user",
+    provider: str | None = None,
+    seal: bool = False,
+) -> int:
     """Run an interactive multi-turn REPL loop retaining conversation session."""
     import uuid
     from . import __version__
@@ -67,13 +80,19 @@ def run_repl(nucleus: Nucleus, *, user: str = "user", provider: str | None = Non
         if prompt.lower() in ("exit", "quit", ":q"):
             break
 
-        nucleus.run_turn(message=prompt, user=user, session=session_id, provider=provider)
+        nucleus.run_turn(
+            message=prompt,
+            user=user,
+            session=session_id,
+            provider=provider,
+            seal=seal,
+        )
         print()
 
     return 0
 
 
-KNOWN_SUBCOMMANDS = {"sense", "prompt", "serve", "cron", "chat", "remind", "-h", "--help"}
+KNOWN_SUBCOMMANDS = {"sense", "prompt", "serve", "cron", "chat", "remind", "audit", "-h", "--help"}
 
 
 def parse_cli_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, str]:
@@ -122,6 +141,18 @@ def main(argv: list[str] | None = None) -> int:
         print(build_system_prompt(nucleus.caps))
         return 0
 
+    elif args.command == "audit":
+        if not nucleus.caps.has_traces:
+            print("Error: agents-traces is not installed. Install via pip install agents-traces", file=sys.stderr)
+            return 1
+        from agents_traces.__main__ import main as traces_main
+        sub_argv = ["audit"]
+        if getattr(args, "target", ""):
+            sub_argv.append(args.target)
+        if getattr(args, "json", False):
+            sub_argv.append("--json")
+        return traces_main(sub_argv)
+
     elif args.command == "serve":
         if not (nucleus.caps.has_relay or nucleus.caps.has_gateway):
             print("Error: agents-relay is not installed. Install via pip install agents-relay", file=sys.stderr)
@@ -158,19 +189,20 @@ def main(argv: list[str] | None = None) -> int:
         msg = direct_prompt or getattr(args, "message", None) or ""
         user = getattr(args, "user", "user")
         provider = getattr(args, "provider", None)
+        seal = getattr(args, "seal", False)
 
         if msg:
-            return nucleus.run_turn(message=msg, user=user, provider=provider)
+            return nucleus.run_turn(message=msg, user=user, provider=provider, seal=seal)
 
         # If piped input via stdin (e.g. echo "hi" | klanker)
         if not sys.stdin.isatty():
             piped_msg = sys.stdin.read().strip()
             if piped_msg:
-                return nucleus.run_turn(message=piped_msg, user=user, provider=provider)
+                return nucleus.run_turn(message=piped_msg, user=user, provider=provider, seal=seal)
             return 0
 
         # Interactive REPL
-        return run_repl(nucleus, user=user, provider=provider)
+        return run_repl(nucleus, user=user, provider=provider, seal=seal)
 
 
 if __name__ == "__main__":

@@ -57,6 +57,11 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "   - Complete multi-step tasks autonomously: if a tool call returns errors or partial data (e.g. 404 on /users/ vs /orgs/ in GitHub API), do NOT announce 'ich gehe tiefer' and stop. Call follow-up tools in the same turn until the investigation is complete, then present the finished result.",
         "   - Write for Telegram: human prose. No CLI status lines, no CMD:/[*]/[+]/[-], no ASCII boxes, no checkmark glyphs. Keep module names and exit codes when they matter.",
         "   - mcp.memory.add takes `fact` (not `text`).",
+        "",
+        "4. Observability, Integrity & Sealing:",
+        "   - If 'traces' is active, tool calls are recorded into the append-only TraceStore.",
+        "   - Use `call_job` with `mcp.traces.audit` or `mcp.traces.seal` to audit execution integrity or seal session records.",
+        "   - Cryptographic hashes and seal digests verify authenticity for system briefings and audit logs.",
     ]
 
     return "\n".join(lines).strip()

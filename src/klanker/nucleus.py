@@ -31,6 +31,7 @@ class Nucleus:
         channel: str = "local",
         provider: str | None = None,
         deliver: str = "buffered",
+        seal: bool = False,
     ) -> int:
         """Execute one conversational turn using available runner or fallback."""
         selected_provider = provider or os.environ.get("LOOP_PROVIDER", "openai.default")
@@ -61,6 +62,8 @@ class Nucleus:
             ]
             if session:
                 cmd.extend(["--session", session])
+            if seal:
+                cmd.append("--seal")
 
             res = subprocess.run(cmd)
             return res.returncode

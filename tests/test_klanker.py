@@ -68,6 +68,38 @@ class TestKlanker(unittest.TestCase):
         self.assertNotIn("Slimemold", text)
         self.assertIn("human prose", text)
         self.assertIn("`fact`", text)
+        self.assertIn("TraceStore", text)
+        self.assertIn("mcp.traces.audit", text)
+
+    def test_cli_parser_audit_and_seal(self):
+        from klanker.__main__ import parse_cli_args
+
+        args, direct_prompt = parse_cli_args(["audit", "ses_123", "--json"])
+        self.assertEqual(args.command, "audit")
+        self.assertEqual(args.target, "ses_123")
+        self.assertTrue(args.json)
+
+        args, direct_prompt = parse_cli_args(["chat", "hello", "--seal"])
+        self.assertEqual(args.command, "chat")
+        self.assertEqual(args.message, "hello")
+        self.assertTrue(args.seal)
+
+    def test_nucleus_run_turn_seal_arg(self):
+        from unittest.mock import patch
+        from klanker.sensing import HostCapabilities
+
+        caps = HostCapabilities(
+            os_name="Linux",
+            is_tty=False,
+            python_version="3.10.0",
+            suite_modules={"harness": True},
+        )
+        n = Nucleus(caps=caps)
+        with patch("subprocess.run") as mock_run:
+            n.run_turn(message="test message", seal=True)
+            self.assertTrue(mock_run.called)
+            cmd = mock_run.call_args[0][0]
+            self.assertIn("--seal", cmd)
 
 
 if __name__ == "__main__":
