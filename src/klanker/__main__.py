@@ -51,8 +51,9 @@ def build_parser() -> argparse.ArgumentParser:
 def run_repl(nucleus: Nucleus, *, user: str = "user", provider: str | None = None) -> int:
     """Run an interactive multi-turn REPL loop retaining conversation session."""
     import uuid
+    from . import __version__
     session_id = f"ses_{uuid.uuid4().hex[:12]}"
-    print("klanker (v0.0.1) — interactive chat. Type 'exit' or Ctrl+C to quit.\n")
+    print(f"klanker (v{__version__}) — interactive chat. Type 'exit' or Ctrl+C to quit.\n")
 
     while True:
         try:

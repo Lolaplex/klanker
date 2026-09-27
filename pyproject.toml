@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "klanker"
-version = "0.0.1"
+version = "0.0.2"
 description = "Adaptive agent distribution on the Lolaplex suite"
 readme = "README.md"
 license = "MIT"

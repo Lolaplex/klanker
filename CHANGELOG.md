@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-09-27
+
 ### Added
 - Cordis modules `mcp.calendar.list|add|update|delete|calendars` (calendar is core, not an extra).
 - Forward `agents-terminal` as core suite module and preserve container environment variables across `su` in `entrypoint.sh`.
@@ -30,5 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial setup and alignment with Autonomous GitHub Standard.
 - Universal, adaptive AI agent shell on the Lolaplex suite.
 
-[Unreleased]: https://github.com/Lolaplex/klanker/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/Lolaplex/klanker/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/Lolaplex/klanker/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/Lolaplex/klanker/releases/tag/v0.0.1
