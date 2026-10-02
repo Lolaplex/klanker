@@ -22,9 +22,9 @@ if [ -n "$GITHUB_TOKEN" ] || [ -n "$GH_TOKEN" ]; then
     chmod 600 /data/.git-credentials 2>/dev/null || true
 fi
 
-# Drop privileges to klanker user if started as root (-p preserves container env)
+# Drop privileges to klanker user if started as root
 if [ "$(id -u)" = "0" ]; then
-    exec su -p -s /bin/sh klanker -c "$*"
+    exec setpriv --reuid=klanker --regid=klanker --init-groups "$@"
 else
     exec "$@"
-fi
+fi
