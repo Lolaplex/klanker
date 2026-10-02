@@ -27,4 +27,4 @@ if [ "$(id -u)" = "0" ]; then
     exec setpriv --reuid=klanker --regid=klanker --init-groups "$@"
 else
     exec "$@"
-fi
+fi
