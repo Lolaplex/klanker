@@ -18,6 +18,10 @@
       "to": {
         "type": "string",
         "description": "Range end ISO-8601 (UTC Z ok)"
+      },
+      "calendar": {
+        "type": "string",
+        "description": "Calendar collection name or URL to query (optional, defaults to all)"
       }
     },
     "required": ["from", "to"]

@@ -22,6 +22,10 @@
       "dtend": {
         "type": "string",
         "description": "End ISO-8601"
+      },
+      "calendar": {
+        "type": "string",
+        "description": "Target calendar collection name (e.g. Arbeit) or URL (optional)"
       }
     },
     "required": ["summary", "dtstart", "dtend"]
