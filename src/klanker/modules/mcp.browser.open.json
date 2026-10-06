@@ -1,0 +1,23 @@
+{
+  "name": "mcp.browser.open",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_browser open",
+  "rests_on": "agents-browser navigate to a URL",
+  "expected_exit": 0,
+  "timeout_sec": 60,
+  "as_tool": true,
+  "mutates": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "URL to open",
+        "x-cli": "positional"
+      }
+    },
+    "required": ["url"]
+  }
+}

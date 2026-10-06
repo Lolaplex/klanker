@@ -34,8 +34,17 @@
       "timezone": {
         "type": "string",
         "description": "IANA timezone for naive ISO datetimes"
+      },
+      "prompt": {
+        "type": "string",
+        "description": "Routine prompt. Runs a full Klanker turn in session routine:<name>. Reply NO_UPDATE to stay quiet. Omit for a fixed-text reminder (use text instead)."
+      },
+      "timeout": {
+        "type": "integer",
+        "description": "Routine turn timeout in seconds (default 300)"
       }
     },
-    "required": ["at"]
-  }
+    "required": []
+  },
+  "mutates": true
 }

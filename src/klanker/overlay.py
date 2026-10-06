@@ -8,6 +8,7 @@ from pathlib import Path
 
 BUNDLED = Path(__file__).resolve().parent / "modules"
 OVERLAY_ALWAYS = frozenset({"mcp.schedule.add.json"})
+_default_ready = False
 
 
 def overlay_dir() -> Path:
@@ -17,13 +18,26 @@ def overlay_dir() -> Path:
     return Path.home() / ".agents" / "modules"
 
 
-def install_overlay(target: Path | None = None) -> Path:
+def install_overlay(target: Path | None = None, *, generate: bool = True) -> Path:
     dest = target or overlay_dir()
     dest.mkdir(parents=True, exist_ok=True)
-    if not BUNDLED.is_dir():
-        return dest
-    for src in sorted(BUNDLED.glob("*.json")):
-        out = dest / src.name
-        if src.name in OVERLAY_ALWAYS or not out.exists():
-            shutil.copy2(src, out)
+    if BUNDLED.is_dir():
+        for src in sorted(BUNDLED.glob("*.json")):
+            out = dest / src.name
+            if src.name in OVERLAY_ALWAYS or not out.exists():
+                shutil.copy2(src, out)
+    if generate:
+        from .helpjson import generate_overlays
+
+        generate_overlays(dest)
+    return dest
+
+
+def ensure_default_overlay() -> Path:
+    """Install the default overlay once per process."""
+    global _default_ready
+    if _default_ready:
+        return overlay_dir()
+    dest = install_overlay()
+    _default_ready = True
     return dest

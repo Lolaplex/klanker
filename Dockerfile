@@ -12,11 +12,14 @@ ARG TRACES_REF=dev
 ARG DOCS_REF=dev
 ARG TERMINAL_REF=dev
 ARG CALENDAR_REF=dev
+ARG BROWSER_REF=dev
 
 RUN if [ -n "$GITHUB_TOKEN" ]; then \
         git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
     fi
 
+# agents-browser is the Python CDP client only. Chromium is not installed;
+# set AGENTS_BROWSER_BIN when a browser binary is required.
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN pip install --no-cache-dir \
@@ -26,7 +29,8 @@ RUN pip install --no-cache-dir \
         "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@${TRACES_REF}" \
         "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@${DOCS_REF}" \
         "agents-terminal @ git+https://github.com/Lolaplex/agents-terminal.git@${TERMINAL_REF}" \
-        "agents-calendar @ git+https://github.com/Lolaplex/agents-calendar.git@${CALENDAR_REF}" && \
+        "agents-calendar @ git+https://github.com/Lolaplex/agents-calendar.git@${CALENDAR_REF}" \
+        "agents-browser @ git+https://github.com/Lolaplex/agents-browser.git@${BROWSER_REF}" && \
     pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 

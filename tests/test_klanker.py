@@ -2,7 +2,6 @@
 
 import unittest
 from klanker.sensing import probe_host, HostCapabilities
-from klanker.morph import synthesize_schedule
 from klanker.nucleus import Nucleus
 from klanker.__main__ import build_parser
 
@@ -16,15 +15,6 @@ class TestKlanker(unittest.TestCase):
         self.assertIn("runtimes", summary)
         self.assertIn("suite_modules", summary)
         self.assertTrue(hasattr(caps, "has_git"))
-
-    def test_synthesize_schedule(self):
-        manifest = synthesize_schedule(
-            name="test_flow",
-            verb="python -m test",
-            cadence="daily",
-        )
-        self.assertEqual(manifest["name"], "test_flow")
-        self.assertEqual(manifest["expected_exit"], 0)
 
     def test_nucleus_sense(self):
         n = Nucleus()
@@ -64,6 +54,13 @@ class TestKlanker(unittest.TestCase):
 
         text = build_system_prompt(probe_host())
         self.assertIn("clock is the calendar", text)
+        self.assertIn("v0.0.2", text)
+        self.assertNotIn("v0.0.1", text)
+        self.assertNotIn("klanker[memory]", text)
+        self.assertNotIn("Execute directly", text)
+        self.assertIn("NO_UPDATE", text)
+        self.assertIn("untrusted", text)
+        self.assertIn("Alles läuft lokal", text)
         self.assertNotIn("slimemold", text.lower())
         self.assertNotIn("Slimemold", text)
         self.assertIn("human prose", text)
@@ -100,6 +97,7 @@ class TestKlanker(unittest.TestCase):
             self.assertTrue(mock_run.called)
             cmd = mock_run.call_args[0][0]
             self.assertIn("--seal", cmd)
+            self.assertIn("klanker.turn", cmd)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_p.add_argument("--name", default="", help="Optional slug")
     add_p.add_argument("--cron", default="", help="Optional 5-part cron")
     add_p.add_argument("--timezone", default="", dest="timezone_name")
+    add_p.add_argument("--prompt", default="", help="Routine prompt (full LLM turn) instead of fixed text")
+    add_p.add_argument("--timeout", type=int, default=300, dest="timeout_sec")
     add_p.add_argument("--one-shot", action="store_true")
     return parser
 
@@ -67,15 +69,31 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 2
     try:
-        row = add_reminder(
-            at=args.at or None,
-            text=args.text,
-            user=args.user,
-            name=args.name,
-            cron=args.cron,
-            timezone_name=args.timezone_name,
-            one_shot=True if args.one_shot else None,
-        )
+        if (args.prompt or "").strip():
+            if (args.text or "").strip():
+                print("Error: pass either --text or --prompt", file=sys.stderr)
+                return 2
+            from .routine import add_routine
+
+            row = add_routine(
+                name=args.name,
+                prompt=args.prompt,
+                user=args.user,
+                at=args.at or None,
+                cron=args.cron or None,
+                timezone_name=args.timezone_name,
+                timeout_sec=args.timeout_sec,
+            )
+        else:
+            row = add_reminder(
+                at=args.at or None,
+                text=args.text,
+                user=args.user,
+                name=args.name,
+                cron=args.cron,
+                timezone_name=args.timezone_name,
+                one_shot=True if args.one_shot else None,
+            )
     except Exception as exc:
         print(f"Error adding reminder: {exc}", file=sys.stderr)
         return 1

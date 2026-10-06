@@ -76,11 +76,69 @@ pip install "klanker[suite]"     # Complete Lolaplex suite
 | :--- | :--- |
 | `klanker` | Start interactive multi-turn REPL chat |
 | `klanker "message"` | Run a single turn directly in terminal |
-| `klanker sense [--json]` | Probe host capabilities, installed suite packages, and environment |
+| `klanker sense [--json]` | Probe host capabilities, suite packages, MCP servers, and skills |
 | `klanker prompt` | Inspect dynamic system prompt generated for current host |
-| `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`) and Telegram long-poll gateway |
+| `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), Telegram long-poll, and the schedule ticker |
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
-| `klanker remind <user> <time> <msg>` | Schedule a one-shot outbound notification |
+| `klanker remind add --user <chat> --at <when> --text <msg>` | Fixed-text Telegram reminder |
+| `klanker routine add\|list\|remove\|run` | LLM routines (`prompt` + `at` or `cron`) |
+
+---
+
+## Schedules
+
+`klanker serve` runs a ticker every 60 seconds. `KLANKER_TICK=0` turns it off. The ticker calls `runner.schedule.tick()` under an exclusive lock file:
+
+`~/.agents/schedules/.tick.lock` (or `$AGENTS_SCHEDULES_DIR/.tick.lock`)
+
+Routines are job files with `"kind": "routine"`. The verb is `python -m klanker routine run <name> --scheduled`, so a current harness tick still runs them. A same-minute duplicate is dropped via `<name>.json.last`. Replies that are exactly `NO_UPDATE` (or start with it) are not sent. Anything else goes out through `agents-relay send`.
+
+```bash
+klanker remind add --user 123456 --at +10m --text "stand up"
+klanker remind add --user 123456 --cron "0 8 * * 1" --prompt "Weekly review" --timezone Europe/Berlin
+klanker routine add --name morning --user 123456 --cron "0 8 * * *" --timezone Europe/Berlin --prompt "Anything new?"
+klanker routine list
+klanker routine run morning
+klanker routine remove morning
+```
+
+The schedule tool `mcp.schedule.add` accepts `text` (fixed reminder) or `prompt` (routine). Passing `prompt` through the model tool depends on the harness forwarding that argument. `klanker.turn` appends `--prompt` when the current harness special-case drops it.
+
+### Coolify migration
+
+Older deploys run `python -m runner.schedule tick` as a Coolify scheduled task, which is why only that host had reminders. After this build the ticker is in `klanker serve`, so every install gets it.
+
+1. Preferred: delete the Coolify scheduled task. One ticker is enough.
+2. If you keep it during rollout, routines will not double-send in the same minute. Fixed-text reminders can still double-fire until agents-harness flocks the same `.tick.lock` and stores a last-run minute. Remove the external task unless that harness build is deployed.
+
+## Approvals
+
+With Telegram actually polling, serve sets (without overriding values you already exported):
+
+```bash
+AGENTS_APPROVAL_CMD='agents-relay approve --user {user} --timeout 300'
+AGENTS_APPROVAL_MODE=ask
+```
+
+The harness substitutes `{user}`. Mutating tools wait for Approve / Deny. A denial is final.
+
+Telegram refuses to start when `TELEGRAM_BOT_TOKEN` is set and `TELEGRAM_ALLOWED_CHAT_IDS` is empty. Opt in to an open bot with `KLANKER_TELEGRAM_OPEN=1` (the relay allowlist still applies once that side enforces it).
+
+## MCP servers and skills
+
+External MCP servers use Claude/Cursor-shaped `~/.agents/mcp.json` (override `AGENTS_MCP_CONFIG`). An example is [`examples/mcp.json`](examples/mcp.json). `klanker sense` lists each server and a lightweight health check (command on `PATH`, or the URL accepts a connection).
+
+The harness reads `~/.agents/skills/*/SKILL.md` (`AGENTS_SKILLS_DIR`). In the container, `HOME=/data`, and `entrypoint.sh` creates `/data/.agents/skills` on the data volume.
+
+## Docker
+
+The image installs `agents-browser` (CDP client: `mcp` + `websockets`). It does not install Chromium. Set `AGENTS_BROWSER_BIN` or install a browser on the host if you use it. `agents-browser` has no `--help-json` yet; `search`, `read`, `snapshot`, `open`, and `screenshot` are hand-written manifests.
+
+`agents-traces --help-json` is a raw argparse dump and does not list subcommands. `stats`, `inspect`, `sessions`, `verify`, and `cleanup` are hand-written. `audit` and `seal` stay the harness modules. Anything else is `mcp.traces.argv` after generation.
+
+`agents-keys` is not in the image. If you install it, only read verbs (`did`, `resolve`, `ssh-pubkey`) are exposed unless `KLANKER_KEYS_WRITE=1`. `vand` is exposed only when it is installed.
+
+The entrypoint does not `chmod 666` the Docker socket. As root it adds `klanker` to the socket's group (`setpriv --init-groups` keeps that group). If that still fails, set Coolify/compose `group_add` to the host socket gid (`stat -c %g /var/run/docker.sock`).
 
 ---
 
