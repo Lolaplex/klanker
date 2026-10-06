@@ -1,0 +1,16 @@
+{
+  "name": "mcp.browser.read",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_browser read",
+  "rests_on": "agents-browser reader mode for the current page",
+  "expected_exit": 0,
+  "timeout_sec": 60,
+  "as_tool": true,
+  "mutates": false,
+  "parameters": {
+    "type": "object",
+    "properties": {}
+  }
+}

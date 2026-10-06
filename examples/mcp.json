@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "example-stdio": {
+      "command": "python",
+      "args": ["-m", "some_mcp_server"],
+      "env": {
+        "API_TOKEN": "${API_TOKEN}"
+      }
+    },
+    "example-http": {
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${API_TOKEN}"
+      }
+    }
+  },
+  "allow": {
+    "example-stdio": ["tool*"]
+  },
+  "deny": {}
+}

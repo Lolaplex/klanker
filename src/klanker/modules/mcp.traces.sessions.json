@@ -1,0 +1,19 @@
+{
+  "name": "mcp.traces.sessions",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_traces sessions",
+  "rests_on": "agents-traces recent sessions",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "mutates": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "days": {"type": "string", "description": "Days to look back", "x-cli": "--days"},
+      "limit": {"type": "string", "description": "Max sessions", "x-cli": "--limit"}
+    }
+  }
+}

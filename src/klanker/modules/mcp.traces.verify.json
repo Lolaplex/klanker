@@ -1,0 +1,20 @@
+{
+  "name": "mcp.traces.verify",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_traces verify",
+  "rests_on": "agents-traces verify a sealed hash chain",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "mutates": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "path": {"type": "string", "description": "Sealed JSONL path", "x-cli": "positional"},
+      "json": {"type": "boolean", "description": "JSON result", "x-cli": "--json"}
+    },
+    "required": ["path"]
+  }
+}
