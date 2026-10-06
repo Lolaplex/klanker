@@ -76,8 +76,9 @@ def build_system_prompt(caps: HostCapabilities) -> str:
 
 
 def save_system_prompt(caps: HostCapabilities) -> Path:
-    """Save dynamic Klanker prompt to ~/.agents/klanker_prompt.txt and return path."""
-    agents_dir = Path(os.environ.get("AGENTS_DIR", Path.home() / ".agents"))
+    """Save dynamic Klanker prompt under AGENTS_HOME (default ~/.agents)."""
+    override = os.environ.get("AGENTS_HOME", "").strip()
+    agents_dir = Path(override).expanduser() if override else (Path.home() / ".agents")
     agents_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = agents_dir / "klanker_prompt.txt"
     prompt_text = build_system_prompt(caps)
