@@ -47,6 +47,9 @@ RUN useradd -m -d /data klanker && mkdir -p /data/.agents && chown -R klanker:kl
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+RUN useradd -m -d /data klanker && mkdir -p /data/.agents/memory /data/.agents/traces /data/.agents/docs && chown -R klanker:klanker /data
+
+USER klanker
 ENV HOME=/data \
     PYTHONUNBUFFERED=1 \
     GATEWAY_HOST=0.0.0.0 \

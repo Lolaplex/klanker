@@ -18,6 +18,17 @@
 
 ```bash
 pip install klanker
+pip install -e ".[repl]"   # shell + gateway + TUI
+
+# Interactive shell (default — real shell, not a bash frontend)
+klanker
+klanker --plain              # stdin/stdout when no Ratatui
+
+# Probe host capabilities
+klanker sense
+
+# One harness turn (non-interactive)
+klanker chat "ping"
 ```
 
 Klanker is **self-equipping**: when you request tools or capabilities in chat (e.g. browser automation, agent key minting), Klanker autonomously installs and equips feelers via its terminal on demand.
