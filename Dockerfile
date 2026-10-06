@@ -19,22 +19,11 @@ RUN if [ -n "$GITHUB_TOKEN" ]; then \
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-RUN pip install --no-cache-dir \
-        "agents-harness @ git+https://github.com/Lolaplex/agents-harness.git@${HARNESS_REF}" \
-        "agents-relay @ git+https://github.com/Lolaplex/agents-relay.git@${RELAY_REF}" \
-        "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@${MEMORY_REF}" \
-        "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@${TRACES_REF}" \
-        "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@${DOCS_REF}" \
-        "agents-terminal @ git+https://github.com/Lolaplex/agents-terminal.git@${TERMINAL_REF}" \
-        "agents-calendar @ git+https://github.com/Lolaplex/agents-calendar.git@${CALENDAR_REF}" && \
-    pip install --no-cache-dir . && \
-    (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
+RUN pip install --no-cache-dir ".[suite]"
 
-RUN useradd -m -d /data klanker && mkdir -p /data/.agents && chown -R klanker:klanker /data
+RUN useradd -m -d /data klanker && mkdir -p /data/.agents/memory /data/.agents/traces /data/.agents/docs && chown -R klanker:klanker /data
 
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
+USER klanker
 ENV HOME=/data \
     PYTHONUNBUFFERED=1 \
     GATEWAY_HOST=0.0.0.0 \

@@ -18,6 +18,17 @@
 
 ```bash
 pip install klanker
+pip install -e ".[repl]"   # shell + gateway + TUI
+
+# Interactive shell (default — real shell, not a bash frontend)
+klanker
+klanker --plain              # stdin/stdout when no Ratatui
+
+# Probe host capabilities
+klanker sense
+
+# One harness turn (non-interactive)
+klanker chat "ping"
 ```
 
 Optional suite extras:
