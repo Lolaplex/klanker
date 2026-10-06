@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-06
+
 ### Added
 - In-process schedule ticker in `klanker serve` (60s, `KLANKER_TICK=0` disables) with `.tick.lock`, plus `klanker routine add|list|remove|run`. Routines run a full turn in `routine:<name>` and drop `NO_UPDATE` replies.
 - `mcp.schedule.add` prompt mode (routine) beside fixed-text reminders.
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Telegram polling refuses to start without `TELEGRAM_ALLOWED_CHAT_IDS` unless `KLANKER_TELEGRAM_OPEN=1`.
 - Docker socket access uses the socket group instead of mode `666`. Skills directory is created on the data volume.
 - Ground system prompt in Local Agent Memory terminology, document file_id parameters for mcp.memory.read, and explicitly forbid tool-failure content hallucination.
+- Requires `agents-harness[mcp]>=0.1.0`, `agents-relay>=0.1.0`, `agents-memory>=1.2.0`, `agents-traces>=0.1.0`, and `agents-calendar>=0.1.0`. The Docker image builds the suite from `main` by default instead of `dev`; `SUITE_REF` and the per-package `*_REF` build args override it.
 
 ### Removed
 - Unused `morph.py` schedule synthesizer.
@@ -66,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial setup and alignment with Autonomous GitHub Standard.
 - Universal, adaptive AI agent shell on the Lolaplex suite.
 
-[Unreleased]: https://github.com/Lolaplex/klanker/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/Lolaplex/klanker/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/Lolaplex/klanker/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/Lolaplex/klanker/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/Lolaplex/klanker/releases/tag/v0.0.1
