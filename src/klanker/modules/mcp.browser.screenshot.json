@@ -1,0 +1,22 @@
+{
+  "name": "mcp.browser.screenshot",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_browser screenshot",
+  "rests_on": "agents-browser write a PNG of the current page",
+  "expected_exit": 0,
+  "timeout_sec": 60,
+  "as_tool": true,
+  "mutates": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "out": {
+        "type": "string",
+        "description": "Output PNG path",
+        "x-cli": "--out"
+      }
+    }
+  }
+}

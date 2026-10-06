@@ -1,0 +1,20 @@
+{
+  "name": "mcp.traces.stats",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_traces stats",
+  "rests_on": "agents-traces token, cost, and tool statistics. help-json does not list subcommands.",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "mutates": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "date": {"type": "string", "description": "YYYY-MM-DD", "x-cli": "--date"},
+      "days": {"type": "string", "description": "Past days to aggregate", "x-cli": "--days"},
+      "json": {"type": "boolean", "description": "Raw JSON", "x-cli": "--json"}
+    }
+  }
+}

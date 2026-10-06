@@ -76,11 +76,76 @@ pip install "klanker[suite]"     # Complete Lolaplex suite
 | :--- | :--- |
 | `klanker` | Start interactive multi-turn REPL chat |
 | `klanker "message"` | Run a single turn directly in terminal |
-| `klanker sense [--json]` | Probe host capabilities, installed suite packages, and environment |
+| `klanker sense [--json]` | Probe host capabilities, suite packages, MCP servers, and skills |
 | `klanker prompt` | Inspect dynamic system prompt generated for current host |
-| `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`) and Telegram long-poll gateway |
+| `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), Telegram long-poll, and the schedule ticker |
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
-| `klanker remind <user> <time> <msg>` | Schedule a one-shot outbound notification |
+| `klanker remind add --user <user> --channel <channel> --at <when> --text <msg>` | Fixed-text reminder on that channel |
+| `klanker routine add\|list\|remove\|run` | LLM routines (`prompt` + `at` or `cron`) |
+
+---
+
+## Schedules
+
+`klanker serve` runs a ticker every 60 seconds. `KLANKER_TICK=0` turns it off. The ticker calls `runner.schedule.tick()`.
+
+A harness that exposes `register_routine_handler` locks `<schedules>/tick.lock` inside `tick()`. Klanker does not lock that file. A second flock on it in the same process deadlocks. On older harness builds (no handler), the ticker takes a non-blocking lock on a different file, `~/.agents/schedules/.tick.lock` (or `$AGENTS_SCHEDULES_DIR/.tick.lock`), so two Klanker processes do not overlap. The scheduler starts each `tick()` on its own thread so a long job cannot push the next cron slot past the grace window.
+
+Routines are job files with `"kind": "routine"`. The verb is `python -m klanker routine run <name> --scheduled`, so a verb-only harness tick still runs them. Each job stores the originating `channel` and `user` (the turn channel, or `KLANKER_CHANNEL`, or `local`). A same-minute duplicate is dropped via `<name>.json.last`. Replies that are exactly `NO_UPDATE` (or start with it) are not sent. Telegram chat ids go out through `agents-relay send`. Any other channel is printed locally, including an HTTP user such as `anonymous`. `klanker routine add` without `--timezone` stores `runner.schedule.configured_timezone()` (`AGENTS_TIMEZONE`, then `TZ`, then `~/.agents/config.json`, else UTC). The routine turn subprocess timeout is 30 seconds under the job `timeout_sec`. The default `timeout_sec` is the harness approval wait (`AGENTS_APPROVAL_TIMEOUT`, else the approver `--timeout` plus 15 seconds) plus 330 seconds, 645 with the default approver, so a turn waiting on an approval is not killed first. Routines added through `mcp.schedule.add` without a timeout get the same default. When the installed harness accepts `--detached-session`, routine turns pass it.
+
+`klanker serve` sets `AGENTS_MODULES_DIR` to the overlay directory (`~/.agents/modules`, or `/data/.agents/modules` in the image) when it is unset. Harness ignores overlay modules, including `mcp.schedule.add`, unless that variable is set. A custom `LOOP_CMD` skips Klanker's system prompt and `klanker.turn` shims; serve logs a warning when it is set.
+
+```bash
+klanker remind add --user 123456 --channel telegram --at +10m --text "stand up"
+klanker remind add --user 123456 --channel telegram --cron "0 8 * * 1" --prompt "Weekly review" --timezone UTC
+klanker routine add --name morning --user 123456 --channel telegram --cron "0 8 * * *" --timezone UTC --prompt "Anything new?"
+klanker routine list
+klanker routine run morning
+klanker routine remove morning
+```
+
+The schedule tool `mcp.schedule.add` accepts `text` (fixed reminder) or `prompt` (routine). Passing `prompt` through the model tool depends on the harness forwarding that argument. `klanker.turn` appends `--prompt` when the current harness special-case drops it.
+
+### External schedulers (cron, systemd timer, PaaS scheduled task)
+
+`klanker serve` already ticks. Remove external `python -m runner.schedule tick` tasks.
+
+If you keep one, it must run as the service user. A root shell (`docker exec` without a user) creates root-owned lock and state files. It also skips `AGENTS_APPROVAL_CMD`, which is set in `klanker serve`, so those tool calls are ungated. Example: `setpriv --reuid=<service user> --regid=<service group> --init-groups python -m runner.schedule tick`.
+
+Do not flock `tick.lock` around that command. The harness locks it inside `tick()`, and a second flock in the same process deadlocks. `.tick.lock` is only the outer lock for harness builds that have no `register_routine_handler`.
+
+## Approvals
+
+When an approver is available, serve sets these (without overriding values you already exported). That includes a Telegram poll, `AGENTS_RELAY_APPROVER` plus a bot token, or an `AGENTS_APPROVAL_CMD` you already exported. A CLI with none of those stays ungated.
+
+```bash
+AGENTS_APPROVAL_CMD='agents-relay approve --user {user} --timeout 300'
+AGENTS_APPROVAL_MODE=ask
+```
+
+The harness substitutes `{user}`. Mutating tools wait for Approve / Deny. A denial is final.
+
+Telegram refuses to start when `TELEGRAM_BOT_TOKEN` is set and `TELEGRAM_ALLOWED_CHAT_IDS` is empty. Opt in to an open bot with `KLANKER_TELEGRAM_OPEN=1`. That also sets `AGENTS_RELAY_ALLOW_ANYONE=1` when it is unset, which is what relay requires before it will poll with an empty allowlist. Routine delivery passes `allow_anyone` through to `send_to_user`.
+
+## MCP servers and skills
+
+External MCP servers use Claude/Cursor-shaped `~/.agents/mcp.json` (override `AGENTS_MCP_CONFIG`). An example is [`examples/mcp.json`](examples/mcp.json). `klanker sense` expands `${VAR}` in `url`, `command`, `args`, and `env` the same way the harness does, then lists each server and a lightweight health check (command on `PATH`, or the URL accepts a connection).
+
+The harness reads `~/.agents/skills/*/SKILL.md` (`AGENTS_SKILLS_DIR`). In the container, `HOME=/data`, and `entrypoint.sh` creates `/data/.agents/skills` on the data volume.
+
+## Docker
+
+The image installs `agents-harness[mcp]` (stdio and HTTP MCP client) and `agents-browser` (CDP client: `mcp` + `websockets`). It does not install Chromium. Set `AGENTS_BROWSER_BIN` or install a browser on the host if you use it. `agents-browser` has no `--help-json` yet; `search`, `read`, `snapshot`, `open`, and `screenshot` are hand-written manifests.
+
+Git installs are cached by the image layer. Rebuild with `--no-cache`, or change `CACHE_BUST` / `SUITE_REF`, or the harness and relay commits stay stale. After the image is running, `pip freeze | grep agents-` should list git commits. `AGENTS_VISION=1` makes image attachments vision parts (see `.env.example`).
+
+Dependency floors stay at the last PyPI releases (`agents-harness>=0.0.1`, `agents-relay>=0.0.1`) so a resolve still succeeds. Scheduler, approval, and MCP behavior in this tree need harness and relay installed from git `dev`.
+
+`agents-traces --help-json` is a raw argparse dump and does not list subcommands. `stats`, `inspect`, `sessions`, `verify`, and `cleanup` are hand-written. `audit` and `seal` stay the harness modules. Anything else is `mcp.traces.argv` after generation.
+
+`agents-keys` is not in the image. If you install it, only read verbs (`did`, `resolve`, `ssh-pubkey`) are exposed unless `KLANKER_KEYS_WRITE=1`. `vand` is exposed only when it is installed.
+
+The entrypoint does not `chmod 666` the Docker socket. As root it adds `klanker` to the socket's group (`setpriv --init-groups` keeps that group). If that still fails, set the service `group_add` to the host socket gid (`stat -c %g /var/run/docker.sock`).
 
 ---
 

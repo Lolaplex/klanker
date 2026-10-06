@@ -8,6 +8,7 @@
   "expected_exit": 0,
   "timeout_sec": 30,
   "as_tool": true,
+  "mutates": true,
   "parameters": {
     "type": "object",
     "properties": {

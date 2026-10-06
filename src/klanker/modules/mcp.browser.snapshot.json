@@ -1,0 +1,16 @@
+{
+  "name": "mcp.browser.snapshot",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_browser snapshot",
+  "rests_on": "agents-browser page text outline with @ref indices",
+  "expected_exit": 0,
+  "timeout_sec": 60,
+  "as_tool": true,
+  "mutates": false,
+  "parameters": {
+    "type": "object",
+    "properties": {}
+  }
+}

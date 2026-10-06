@@ -4,16 +4,17 @@
   "when": "on_request",
   "cadence": "on_request",
   "verb": "python -m klanker remind add",
-  "rests_on": "Klanker reminder add: Telegram send verb, exit 0 = added",
+  "rests_on": "Klanker reminder add: fixed text or a routine prompt, exit 0 = added",
   "expected_exit": 0,
   "timeout_sec": 30,
   "as_tool": true,
+  "approval_ask": false,
   "parameters": {
     "type": "object",
     "properties": {
       "text": {
         "type": "string",
-        "description": "Reminder text delivered over Telegram"
+        "description": "Reminder text. Delivered on the job channel when that channel can send; otherwise kept local."
       },
       "at": {
         "type": "string",
@@ -27,15 +28,28 @@
         "type": "string",
         "description": "Optional standard 5-part cron expression"
       },
+      "channel": {
+        "type": "string",
+        "description": "Target channel (http, telegram, local, …). Uses the current turn channel when omitted."
+      },
       "user": {
         "type": "string",
-        "description": "Telegram chat id. Inherited from the current turn when omitted."
+        "description": "Target user on that channel. Inherited from the current turn when omitted."
       },
       "timezone": {
         "type": "string",
-        "description": "IANA timezone for naive ISO datetimes"
+        "description": "IANA timezone for naive ISO datetimes and cron (for example UTC). Inherited when omitted."
+      },
+      "prompt": {
+        "type": "string",
+        "description": "Routine prompt. Runs a full Klanker turn in session routine:<name>. Reply NO_UPDATE to stay quiet. Omit for a fixed-text reminder (use text instead)."
+      },
+      "timeout": {
+        "type": "integer",
+        "description": "Routine turn timeout in seconds (default 300)"
       }
     },
-    "required": ["at"]
-  }
+    "required": []
+  },
+  "mutates": true
 }

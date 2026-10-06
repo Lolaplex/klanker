@@ -19,8 +19,13 @@ class Nucleus:
         self.caps = caps or probe_host()
 
     def sense(self) -> dict[str, Any]:
-        """Return environment topology summary."""
-        return self.caps.summary()
+        """Return environment topology summary, MCP servers, and skills."""
+        from .config_sense import mcp_report, skills_report
+
+        summary = self.caps.summary()
+        summary.update(mcp_report())
+        summary.update(skills_report())
+        return summary
 
     def run_turn(
         self,
@@ -38,14 +43,17 @@ class Nucleus:
 
         # If agents-harness is installed, invoke runner.loop directly
         if self.caps.has_harness:
+            from .overlay import publish_modules_dir
             from .prompt import build_system_prompt
+
+            publish_modules_dir()
 
             system_prompt = build_system_prompt(self.caps)
 
             cmd = [
-                "python",
+                sys.executable,
                 "-m",
-                "runner.loop",
+                "klanker.turn",
                 "--channel",
                 channel,
                 "--user",
