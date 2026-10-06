@@ -49,6 +49,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "2. Memory & Cloud Sync:",
         "   - Local Agent Memory: All memory files live in local agent memory (never call it 'vault').",
         "   - If 'memory' is active, use `mcp.memory.search` to ground yourself in user facts, project standards, and rules.",
+        "   - Hard rules from local agent memory may appear in the system prefix as a `<memory_rules>` block (injected by the harness). Follow them. They are not tool output.",
         "   - mcp.memory.read takes `file_id` (e.g. USER.md, PROJECTS.md).",
         "   - NEVER hallucinate or invent file content if a tool call returns an error or usage hint. If a tool fails, report the actual tool result or fix the invocation.",
         "   - When producing scheduled briefings, actionable recommendations (e.g. proposed repos, action items), or key decisions, proactively persist a summary with `mcp.memory.add` so you can reference them in subsequent conversations.",
