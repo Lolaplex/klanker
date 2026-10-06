@@ -1,4 +1,4 @@
-# klanker
+<h1 align="center">klanker</h1>
 
 <p align="center">
   <a href="https://github.com/Lolaplex/klanker/releases"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg?style=flat-square" alt="Version 0.1.0"></a>
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <strong>Adaptive agent distribution on the Lolaplex suite.</strong><br>
+  <strong>Adaptive agent distribution on the Lolaplex stack.</strong><br>
   Terminal companion, background care runner, and self-hosted assistant on agents-harness.
 </p>
 

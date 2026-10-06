@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -308,6 +310,7 @@ class TestRoutines(unittest.TestCase):
         self.assertEqual(again["status"], "delivered")
         self.assertTrue(path.is_file())
 
+    @unittest.skipIf(sys.platform == "win32", "fcntl not available on Windows")
     def test_tick_lock_skips_when_held(self):
         import fcntl
 
@@ -326,6 +329,7 @@ class TestRoutines(unittest.TestCase):
             self.assertTrue(run_due_schedules(lambda: ran.append(1)))
         self.assertEqual(ran, [1])
 
+    @unittest.skipIf(sys.platform == "win32", "fcntl not available on Windows")
     def test_new_harness_skips_outer_lock(self):
         import fcntl
         import types
@@ -713,6 +717,7 @@ class TestGatingAndDocs(unittest.TestCase):
         example = json.loads((root / "examples/mcp.json").read_text(encoding="utf-8"))
         self.assertIn("mcpServers", example)
 
+    @unittest.skipIf(shutil.which("sh") is None, "sh not available on PATH")
     def test_entrypoint_shell_syntax(self):
         import subprocess
         import sys

@@ -16,8 +16,8 @@ dependencies = [
     "agents-relay>=0.1.0",
     "agents-memory>=1.2.0",
     "agents-traces>=0.1.0",
-    "agents-docs>=0.44.1",
-    "agents-terminal>=0.0.4",
+    "agents-docs>=0.45.0",
+    "agents-terminal>=0.0.5",
     "agents-calendar>=0.1.0",
 ]
 
@@ -26,7 +26,7 @@ browser = [
     "agents-browser>=0.45.0",
 ]
 keys = [
-    "agents-keys>=0.0.1",
+    "agents-keys>=0.0.4",
 ]
 calendar = [
     "agents-calendar>=0.1.0",

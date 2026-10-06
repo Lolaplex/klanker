@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI (and MCP, when present) check PyPI at most once per day for a newer release and print one stderr / tool-response line (`uv tool upgrade …`). Disabled with `AGENTS_NO_UPDATE_CHECK=1` or when `CI` is set; offline/timeout stays silent.
 
 ### Changed
-- Requires `agents-docs>=0.44.1`, `agents-terminal>=0.0.4`, and `agents-browser>=0.45.0` (optional browser extra).
+- Requires `agents-docs>=0.45.0`, `agents-terminal>=0.0.5`, and `agents-browser>=0.45.0` (optional browser extra).
 - System prompt uses the package version, describes approvals and untrusted tool data, and no longer says to execute mutating tools directly.
 - `mcp.schedule.add` sets `approval_ask: false`. The ticker runs each `tick()` on a worker thread. One-shot routines delete their `.json.last` and `.lock` sidecars.
 - Routines and reminders store channel and user. Relay delivers Telegram chat ids; other channels, including HTTP `anonymous`, stay local.
@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Telegram polling refuses to start without `TELEGRAM_ALLOWED_CHAT_IDS` unless `KLANKER_TELEGRAM_OPEN=1`.
 - Docker socket access uses the socket group instead of mode `666`. Skills directory is created on the data volume.
 - Ground system prompt in Local Agent Memory terminology, document file_id parameters for mcp.memory.read, and explicitly forbid tool-failure content hallucination.
-- Requires `agents-harness[mcp]>=0.1.0`, `agents-relay>=0.1.0`, `agents-memory>=1.2.0`, `agents-traces>=0.1.0`, `agents-calendar>=0.1.0`, `agents-docs>=0.44.1`, and `agents-terminal>=0.0.4`. The Docker image builds the suite from `main` by default instead of `dev`; `SUITE_REF` and the per-package `*_REF` build args override it.
+- Requires `agents-harness[mcp]>=0.1.0`, `agents-relay>=0.1.0`, `agents-memory>=1.2.0`, `agents-traces>=0.1.0`, `agents-calendar>=0.1.0`, `agents-docs>=0.45.0`, and `agents-terminal>=0.0.5`. The Docker image builds from `main` by default instead of `dev`; `SUITE_REF` and the per-package `*_REF` build args override it.
 
 ### Removed
 - Unused `morph.py` schedule synthesizer.
