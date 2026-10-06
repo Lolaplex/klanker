@@ -2,9 +2,39 @@
 
 from __future__ import annotations
 
+import math
 import os
+import shlex
 
-APPROVAL_CMD = "agents-relay approve --user {user} --timeout 300"
+APPROVAL_TIMEOUT_SEC = 300
+APPROVAL_CMD = f"agents-relay approve --user {{user}} --timeout {APPROVAL_TIMEOUT_SEC}"
+# runner.approval waits the command's ``--timeout`` plus this grace, or a fixed
+# fallback when the command has no ``--timeout``. ``AGENTS_APPROVAL_TIMEOUT`` overrides both.
+HARNESS_APPROVAL_GRACE_SEC = 15
+HARNESS_APPROVAL_FALLBACK_SEC = 330
+
+
+def approval_wait_sec() -> int:
+    """Longest time the harness may block a turn on one approval."""
+    raw = os.environ.get("AGENTS_APPROVAL_TIMEOUT", "").strip()
+    if raw:
+        try:
+            return max(1, math.ceil(float(raw)))
+        except ValueError:
+            pass
+    cmd = os.environ.get("AGENTS_APPROVAL_CMD", "").strip() or APPROVAL_CMD
+    try:
+        parts = shlex.split(cmd)
+    except ValueError:
+        parts = cmd.split()
+    if "--timeout" in parts:
+        idx = parts.index("--timeout")
+        if idx + 1 < len(parts):
+            try:
+                return max(1, math.ceil(float(parts[idx + 1]) + HARNESS_APPROVAL_GRACE_SEC))
+            except ValueError:
+                pass
+    return HARNESS_APPROVAL_FALLBACK_SEC
 
 
 def env_flag(name: str) -> bool:

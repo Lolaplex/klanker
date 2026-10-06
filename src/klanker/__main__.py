@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     routine_add.add_argument("--at", default="")
     routine_add.add_argument("--cron", default="")
     routine_add.add_argument("--timezone", default="", dest="timezone_name")
-    routine_add.add_argument("--timeout", type=int, default=300, dest="timeout_sec")
+    routine_add.add_argument("--timeout", type=int, default=None, dest="timeout_sec", help="Job timeout in seconds (default: approval wait + 330s)")
     routine_sub.add_parser("list", help="List routines")
     routine_rm = routine_sub.add_parser("remove", help="Remove a routine")
     routine_rm.add_argument("name")

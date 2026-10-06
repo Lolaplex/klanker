@@ -361,7 +361,45 @@ class TestRoutines(unittest.TestCase):
         self.assertEqual(turn_timeout_sec({"timeout_sec": 300}), 270)
         self.assertLess(turn_timeout_sec({"timeout_sec": 300}), 300)
         self.assertEqual(turn_timeout_sec({"timeout_sec": 10}), 9)
-        self.assertEqual(turn_timeout_sec({}), 270)
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGENTS_APPROVAL_TIMEOUT", None)
+            os.environ.pop("AGENTS_APPROVAL_CMD", None)
+            self.assertEqual(turn_timeout_sec({}), 615)
+
+    def test_routine_timeout_outlasts_approval_wait(self):
+        from klanker.__main__ import build_parser
+        from klanker.gating import approval_wait_sec
+        from klanker.remind import build_parser as remind_parser
+        from klanker.routine import default_routine_timeout_sec
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("AGENTS_APPROVAL_TIMEOUT", None)
+            os.environ.pop("AGENTS_APPROVAL_CMD", None)
+            wait = approval_wait_sec()
+            self.assertEqual(wait, 315)
+            default = default_routine_timeout_sec()
+            self.assertEqual(default, 645)
+            self.assertGreater(turn_timeout_sec({"timeout_sec": default}), wait)
+            self.assertGreater(turn_timeout_sec({}), wait)
+            row = add_routine(name="gated", prompt="p", user="1", cron="0 8 * * *")
+            self.assertEqual(row["timeout_sec"], default)
+            self.assertGreater(turn_timeout_sec(row), wait)
+            args = build_parser().parse_args(["routine", "add", "--prompt", "p", "--user", "1", "--cron", "0 8 * * *"])
+            self.assertIsNone(args.timeout_sec)
+            self.assertIsNone(remind_parser().parse_args(["add", "--prompt", "p"]).timeout_sec)
+            self.assertEqual(add_routine(name="short", prompt="p", user="1", cron="0 8 * * *", timeout_sec=120)["timeout_sec"], 120)
+            out = extend_schedule_argv(["--at", "+10m"], {"prompt": "scan"})
+            self.assertEqual(out[-2:], ["--timeout", str(default)])
+            self.assertNotIn("--timeout", extend_schedule_argv(["--at", "+10m", "--text", "hi"], {}))
+        with patch.dict(os.environ, {"AGENTS_APPROVAL_CMD": "notify --timeout 900"}):
+            os.environ.pop("AGENTS_APPROVAL_TIMEOUT", None)
+            self.assertEqual(approval_wait_sec(), 915)
+            self.assertGreater(turn_timeout_sec({}), 915)
+        with patch.dict(os.environ, {"AGENTS_APPROVAL_CMD": "notify", "AGENTS_APPROVAL_TIMEOUT": ""}):
+            self.assertEqual(approval_wait_sec(), 330)
+        with patch.dict(os.environ, {"AGENTS_APPROVAL_TIMEOUT": "1200"}):
+            self.assertEqual(approval_wait_sec(), 1200)
+            self.assertGreater(turn_timeout_sec({"timeout_sec": default_routine_timeout_sec()}), 1200)
 
     def test_harness_handler_keeps_minute_on_failure(self):
         job = add_routine(name="held", prompt="check", user="7", cron="* * * * *")

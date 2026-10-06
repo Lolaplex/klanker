@@ -98,6 +98,11 @@ def extend_schedule_argv(out: list[str], arguments: Any) -> list[str]:
     if prompt and "--prompt" not in out:
         out.extend(["--prompt", prompt])
     timeout = args_dict(arguments).get("timeout")
+    if timeout in (None, "") and prompt:
+        # The harness defaults LLM jobs to 300s, shorter than the approval wait.
+        from .routine import default_routine_timeout_sec
+
+        timeout = default_routine_timeout_sec()
     if timeout not in (None, "") and "--timeout" not in out:
         out.extend(["--timeout", str(timeout)])
     return out

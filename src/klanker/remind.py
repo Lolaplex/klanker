@@ -68,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_p.add_argument("--cron", default="", help="Optional 5-part cron")
     add_p.add_argument("--timezone", default="", dest="timezone_name")
     add_p.add_argument("--prompt", default="", help="Routine prompt (full LLM turn) instead of fixed text")
-    add_p.add_argument("--timeout", type=int, default=300, dest="timeout_sec")
+    add_p.add_argument("--timeout", type=int, default=None, dest="timeout_sec", help="Routine job timeout in seconds (default: approval wait + 330s)")
     add_p.add_argument("--one-shot", action="store_true")
     return parser
 

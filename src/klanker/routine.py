@@ -44,6 +44,8 @@ TICK_LOCK_NAME = ".tick.lock"
 TRAILER = "---agents-loop-trailer---"
 # Finish the turn before the harness job timeout so that timeout wins the race.
 TURN_TIMEOUT_SLACK_SEC = 30
+# Turn time a routine gets on top of one full approval wait.
+ROUTINE_WORK_SEC = 300
 _HANDLER_READY = False
 
 TurnFn = Callable[[dict[str, Any]], tuple[int, str]]
@@ -273,13 +275,26 @@ def configured_timezone_name() -> str:
     return os.environ.get("TZ", "").strip() or "UTC"
 
 
+def default_routine_timeout_sec() -> int:
+    """Default job timeout: the turn budget outlasts the approval wait.
+
+    A routine that hits an approval prompt must not be killed before the
+    harness gives up on the approver, so the turn budget (job timeout minus
+    ``TURN_TIMEOUT_SLACK_SEC``) covers one full approval wait plus
+    ``ROUTINE_WORK_SEC`` of model and tool time.
+    """
+    from .gating import approval_wait_sec
+
+    return approval_wait_sec() + ROUTINE_WORK_SEC + TURN_TIMEOUT_SLACK_SEC
+
+
 def turn_timeout_sec(job: dict[str, Any]) -> int:
     """Subprocess budget strictly under the job's ``timeout_sec`` when that is > 1."""
     raw = job.get("timeout_sec")
     try:
-        job_timeout = int(300 if raw in (None, "") else raw)
+        job_timeout = int(default_routine_timeout_sec() if raw in (None, "") else raw)
     except (TypeError, ValueError):
-        job_timeout = 300
+        job_timeout = default_routine_timeout_sec()
     job_timeout = max(1, job_timeout)
     if job_timeout <= 1:
         return 1
@@ -304,7 +319,7 @@ def add_routine(
     at: str | None = None,
     cron: str | None = None,
     timezone_name: str = "",
-    timeout_sec: int = 300,
+    timeout_sec: int | None = None,
     channel: str = "",
 ) -> dict[str, Any]:
     if not (prompt or "").strip():
@@ -328,7 +343,7 @@ def add_routine(
         "cadence": "one_shot" if at else "cron",
         "rests_on": f"Klanker routine {slug}",
         "expected_exit": 0,
-        "timeout_sec": int(timeout_sec or 300),
+        "timeout_sec": int(timeout_sec or default_routine_timeout_sec()),
         "one_shot": bool(at) and not bool(cron),
         "channel": resolve_channel(channel),
         "timezone": zone,
