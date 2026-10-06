@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Telegram polling refuses to start without `TELEGRAM_ALLOWED_CHAT_IDS` unless `KLANKER_TELEGRAM_OPEN=1`.
 - Docker socket access uses the socket group instead of mode `666`. Skills directory is created on the data volume.
 - Ground system prompt in Local Agent Memory terminology, document file_id parameters for mcp.memory.read, and explicitly forbid tool-failure content hallucination.
+- CI is one job on every pull request and on manual dispatch: Ubuntu, Python 3.12, tests, then build and `twine check`. The merge notification workflows and the failure webhook job are removed.
 
 ### Removed
 - Unused `morph.py` schedule synthesizer.
