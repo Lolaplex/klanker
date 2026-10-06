@@ -709,7 +709,7 @@ class TestGatingAndDocs(unittest.TestCase):
         self.assertIn("prompt", schedule["parameters"]["properties"])
         self.assertTrue(schedule["mutates"])
         self.assertFalse((root / "src/klanker/morph.py").exists())
-        self.assertEqual(__version__, "0.0.2")
+        self.assertEqual(__version__, "0.1.0")
         example = json.loads((root / "examples/mcp.json").read_text(encoding="utf-8"))
         self.assertIn("mcpServers", example)
 

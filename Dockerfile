@@ -14,11 +14,12 @@ RUN if [ -n "$GITHUB_TOKEN" ]; then \
 # set AGENTS_BROWSER_BIN when a browser binary is required.
 COPY pyproject.toml README.md ./
 COPY src ./src
-# SUITE_REF is the default git ref for every suite package. CACHE_BUST
+# SUITE_REF is the default git ref for every suite package (main = latest
+# release; override per package with *_REF). CACHE_BUST
 # invalidates this layer when the branch tip moved but the ref name did not.
 # On your build platform, rebuild with --no-cache or bump CACHE_BUST, then confirm
 # `pip freeze | grep agents-` shows the git commits you expect.
-ARG SUITE_REF=dev
+ARG SUITE_REF=main
 ARG CACHE_BUST=0
 ARG HARNESS_REF=${SUITE_REF}
 ARG RELAY_REF=${SUITE_REF}
