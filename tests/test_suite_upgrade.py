@@ -405,6 +405,88 @@ class TestRoutines(unittest.TestCase):
         _send_to_user(old_send, cfg, 7, "hi")
         self.assertEqual(captured["old"], ())
 
+    def test_one_shot_removes_sidecars(self):
+        job = add_routine(
+            name="once",
+            prompt="check",
+            user="anonymous",
+            at="2026-01-01T00:00:00Z",
+            channel="http",
+        )
+        path = Path(job["_file"])
+        result = perform_routine(job, force=True, turn=lambda _job: (0, "NO_UPDATE"))
+        self.assertEqual(result["status"], "no_update")
+        self.assertFalse(path.exists())
+        self.assertFalse(path.with_name(path.name + ".last").exists())
+        self.assertFalse(path.with_suffix(".lock").exists())
+
+    def test_http_user_stays_local(self):
+        job = add_routine(
+            name="web",
+            prompt="check",
+            user="anonymous",
+            cron="0 9 * * *",
+            channel="http",
+        )
+        result = perform_routine(job, force=True, turn=lambda _job: (0, "hello from http"))
+        self.assertEqual(result["status"], "local")
+        self.assertEqual(job["channel"], "http")
+
+    def test_routine_turn_uses_channel_and_detached_flag(self):
+        from klanker.routine import default_turn
+
+        job = add_routine(
+            name="detached",
+            prompt="check",
+            user="anonymous",
+            cron="0 9 * * *",
+            channel="http",
+        )
+        captured: dict[str, list[str]] = {}
+
+        def fake_run(cmd, **_kwargs):
+            captured["cmd"] = list(cmd)
+            return type("Proc", (), {"returncode": 0, "stdout": "ok"})()
+
+        with patch("klanker.routine.loop_supports_detached_session", return_value=True):
+            with patch("klanker.prompt.save_system_prompt", return_value=Path(self.tmp.name) / "prompt.txt"):
+                with patch("klanker.sensing.probe_host", return_value=object()):
+                    with patch("klanker.routine.subprocess.run", side_effect=fake_run):
+                        default_turn(job)
+        cmd = captured["cmd"]
+        self.assertEqual(cmd[cmd.index("--channel") + 1], "http")
+        self.assertEqual(cmd[cmd.index("--user") + 1], "anonymous")
+        self.assertIn("--detached-session", cmd)
+
+        captured.clear()
+        with patch("klanker.routine.loop_supports_detached_session", return_value=False):
+            with patch("klanker.prompt.save_system_prompt", return_value=Path(self.tmp.name) / "prompt.txt"):
+                with patch("klanker.sensing.probe_host", return_value=object()):
+                    with patch("klanker.routine.subprocess.run", side_effect=fake_run):
+                        default_turn(job)
+        self.assertNotIn("--detached-session", captured["cmd"])
+
+    def test_ticker_runs_tick_on_a_worker_thread(self):
+        import threading
+
+        seen = threading.Event()
+        names: list[str] = []
+
+        def fake_run() -> bool:
+            names.append(threading.current_thread().name)
+            seen.set()
+            return True
+
+        with patch("klanker.routine.run_due_schedules", side_effect=fake_run):
+            stop = start_ticker()
+            self.assertIsNotNone(stop)
+            self.assertTrue(seen.wait(2), "ticker did not start a worker")
+            assert stop is not None
+            stop.set()
+        self.assertTrue(names)
+        self.assertTrue(names[0].startswith("klanker-tick-run"))
+        self.assertNotEqual(names[0], "klanker-tick")
+
     def test_ticker_disabled(self):
         with patch.dict(os.environ, {"KLANKER_TICK": "0"}):
             self.assertFalse(ticker_enabled())
@@ -456,6 +538,30 @@ class TestGatingAndDocs(unittest.TestCase):
             os.environ["AGENTS_RELAY_ALLOW_ANYONE"] = "0"
             apply_approval_env(telegram=True)
             self.assertEqual(os.environ["AGENTS_RELAY_ALLOW_ANYONE"], "0")
+
+    def test_approval_follows_approver_not_only_telegram_poll(self):
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+            os.environ.pop("AGENTS_RELAY_APPROVER", None)
+            os.environ.pop("AGENTS_APPROVAL_CMD", None)
+            os.environ.pop("AGENTS_APPROVAL_MODE", None)
+            os.environ.pop("KLANKER_TELEGRAM_OPEN", None)
+            apply_approval_env(telegram=False)
+            self.assertNotIn("AGENTS_APPROVAL_CMD", os.environ)
+        with patch.dict(
+            os.environ,
+            {
+                "TELEGRAM_BOT_TOKEN": "t",
+                "TELEGRAM_ALLOWED_CHAT_IDS": "",
+                "AGENTS_RELAY_APPROVER": "42",
+                "KLANKER_TELEGRAM_OPEN": "",
+            },
+        ):
+            os.environ.pop("AGENTS_APPROVAL_CMD", None)
+            os.environ.pop("AGENTS_APPROVAL_MODE", None)
+            apply_approval_env(telegram=False)
+            self.assertIn("{user}", os.environ["AGENTS_APPROVAL_CMD"])
+            self.assertEqual(os.environ["AGENTS_APPROVAL_MODE"], "ask")
 
     def test_mcp_and_skills_sense(self):
         from klanker.config_sense import mcp_report, probe_server, skills_report
@@ -551,14 +657,21 @@ class TestGatingAndDocs(unittest.TestCase):
         self.assertIn("CACHE_BUST", docker)
         self.assertIn("SUITE_REF", docker)
         example_env = (root / ".env.example").read_text(encoding="utf-8")
-        self.assertIn("AGENTS_TIMEZONE=Europe/Berlin", example_env)
-        self.assertIn("TZ=Europe/Berlin", example_env)
+        self.assertIn("# AGENTS_TIMEZONE=UTC", example_env)
+        self.assertIn("# TZ=UTC", example_env)
+        self.assertNotIn("Europe/Berlin", example_env)
         self.assertIn("AGENTS_VISION", example_env)
+        self.assertIn("External schedulers", readme)
+        self.assertNotIn("Coolify migration", readme)
+        self.assertNotIn("Coolify", readme)
         schedule = json.loads((root / "src/klanker/modules/mcp.schedule.add.json").read_text(encoding="utf-8"))
+        self.assertIs(schedule.get("approval_ask"), False)
+        self.assertIn("channel", schedule["parameters"]["properties"])
+        self.assertNotIn("Telegram chat id", json.dumps(schedule))
         self.assertIn("prompt", schedule["parameters"]["properties"])
         self.assertTrue(schedule["mutates"])
         self.assertFalse((root / "src/klanker/morph.py").exists())
-        self.assertEqual(__version__, "0.0.2")
+        self.assertEqual(__version__, "0.0.3.dev0")
         example = json.loads((root / "examples/mcp.json").read_text(encoding="utf-8"))
         self.assertIn("mcpServers", example)
 

@@ -20,7 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt section on Observability, Integrity & Sealing guiding Klanker to use `mcp.traces.audit` and `mcp.traces.seal`.
 
 ### Changed
+- Dev version `0.0.3.dev0` (not published). Pip floors stay on the last release; harness and relay features need git `dev`.
 - System prompt uses the package version, describes approvals and untrusted tool data, and no longer says to execute mutating tools directly.
+- `mcp.schedule.add` sets `approval_ask: false`. The ticker runs each `tick()` on a worker thread. One-shot routines delete their `.json.last` and `.lock` sidecars.
+- Routines and reminders store channel and user. Relay delivers Telegram chat ids; other channels, including HTTP `anonymous`, stay local.
+- Ask-mode approvals apply when an approver is configured, not only while Telegram is polling.
 - Telegram polling refuses to start without `TELEGRAM_ALLOWED_CHAT_IDS` unless `KLANKER_TELEGRAM_OPEN=1`.
 - Docker socket access uses the socket group instead of mode `666`. Skills directory is created on the data volume.
 - Ground system prompt in Local Agent Memory terminology, document file_id parameters for mcp.memory.read, and explicitly forbid tool-failure content hallucination.

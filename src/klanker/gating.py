@@ -33,16 +33,32 @@ def telegram_refusal(*, no_telegram: bool) -> str | None:
     )
 
 
-def apply_approval_env(*, telegram: bool) -> None:
-    """Default ask-mode approvals when a Telegram bot is being served.
+def approver_configured() -> bool:
+    """True when some command can ask a person before a mutating tool runs.
 
-    Existing ``AGENTS_APPROVAL_CMD`` / ``AGENTS_APPROVAL_MODE`` win.
-    Harness substitutes ``{user}`` in the command.
+    CLI with no bot token, no ``AGENTS_RELAY_APPROVER``, and no
+    ``AGENTS_APPROVAL_CMD`` stays ungated.
+    """
+    if os.environ.get("AGENTS_APPROVAL_CMD", "").strip():
+        return True
+    if not os.environ.get("TELEGRAM_BOT_TOKEN", "").strip():
+        return False
+    if os.environ.get("AGENTS_RELAY_APPROVER", "").strip():
+        return True
+    return allowlist_configured() or env_flag("KLANKER_TELEGRAM_OPEN")
+
+
+def apply_approval_env(*, telegram: bool = False) -> None:
+    """Default ask-mode approvals when an approver path exists.
+
+    Telegram polling is one such path. A configured relay approver or an
+    existing ``AGENTS_APPROVAL_CMD`` is another, including HTTP-only serve.
+    Existing exports win. Harness substitutes ``{user}`` in the command.
     """
     if env_flag("KLANKER_TELEGRAM_OPEN"):
         # Relay denies an empty allowlist unless this is set. Do not override an export.
         os.environ.setdefault("AGENTS_RELAY_ALLOW_ANYONE", "1")
-    if not telegram:
+    if not telegram and not approver_configured():
         return
     os.environ.setdefault("AGENTS_APPROVAL_CMD", APPROVAL_CMD)
     os.environ.setdefault("AGENTS_APPROVAL_MODE", "ask")

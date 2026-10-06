@@ -1,6 +1,7 @@
 """Unit tests for Klanker nucleus, sensing, and CLI."""
 
 import unittest
+from klanker import __version__
 from klanker.sensing import probe_host, HostCapabilities
 from klanker.nucleus import Nucleus
 from klanker.__main__ import build_parser
@@ -42,11 +43,14 @@ class TestKlanker(unittest.TestCase):
     def test_send_verb_quotes_text(self):
         from klanker.remind import build_send_verb
 
-        verb = build_send_verb("12345", 'hello "world"')
+        verb = build_send_verb("12345", 'hello "world"', channel="telegram")
         self.assertTrue(verb.startswith("python -m agents_relay send"))
         self.assertIn("--user", verb)
         self.assertIn("12345", verb)
         self.assertNotIn("runner.loop", verb)
+        local = build_send_verb("anonymous", "hello", channel="http")
+        self.assertNotIn("agents_relay", local)
+        self.assertIn("hello", local)
 
     def test_prompt_uses_clock_as_calendar(self):
         from klanker.prompt import build_system_prompt
@@ -54,7 +58,7 @@ class TestKlanker(unittest.TestCase):
 
         text = build_system_prompt(probe_host())
         self.assertIn("clock is the calendar", text)
-        self.assertIn("v0.0.2", text)
+        self.assertIn(f"v{__version__}", text)
         self.assertNotIn("v0.0.1", text)
         self.assertNotIn("klanker[memory]", text)
         self.assertNotIn("Execute directly", text)

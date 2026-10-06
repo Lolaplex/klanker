@@ -16,7 +16,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 # SUITE_REF is the default git ref for every suite package. CACHE_BUST
 # invalidates this layer when the branch tip moved but the ref name did not.
-# Coolify: rebuild with --no-cache, or bump CACHE_BUST, then confirm
+# On your build platform, rebuild with --no-cache or bump CACHE_BUST, then confirm
 # `pip freeze | grep agents-` shows the git commits you expect.
 ARG SUITE_REF=dev
 ARG CACHE_BUST=0

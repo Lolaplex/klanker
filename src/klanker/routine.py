@@ -12,8 +12,8 @@ second fd in the same process deadlocks. The ticker calls ``tick()`` directly.
 
 Older harness builds have no handler. The ticker then takes a non-blocking lock
 on ``<schedules>/.tick.lock`` (a different file) so two Klanker processes do not
-overlap. An external Coolify ``python -m runner.schedule tick`` does not share
-that file. Delete that task in the same deploy as this image.
+overlap. An external scheduler (``python -m runner.schedule tick``) does not
+share that file. Remove it, or run it as the same user as ``klanker serve``.
 
 When the harness callback exists, this module registers it via
 ``register_routine_handler`` (or ``tick(run_routine=...)`` /
@@ -221,6 +221,42 @@ def _normalize_at(at: str, timezone_name: str) -> str:
         return at.strip()
 
 
+def resolve_channel(explicit: str = "") -> str:
+    """Channel for a new job: explicit arg, then the turn/serve env, else local."""
+    chosen = str(explicit or "").strip()
+    if chosen:
+        return chosen
+    env = os.environ.get("KLANKER_CHANNEL", "").strip()
+    return env or "local"
+
+
+def relay_can_deliver(channel: str, user: str) -> bool:
+    """Relay send is Telegram and needs a numeric chat id. Other channels stay local."""
+    if str(channel or "").strip().lower() != "telegram":
+        return False
+    text = str(user or "").strip()
+    if not text:
+        return False
+    try:
+        int(text)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def loop_supports_detached_session() -> bool:
+    """True when this harness ``runner.loop`` accepts ``--detached-session``."""
+    try:
+        import runner.loop as loop
+    except ImportError:
+        return False
+    try:
+        source = inspect.getsource(loop)
+    except OSError:
+        return False
+    return "--detached-session" in source
+
+
 def configured_timezone_name() -> str:
     """Job zone: harness ``configured_timezone()``, else ``AGENTS_TIMEZONE`` / ``TZ`` / UTC."""
     try:
@@ -269,6 +305,7 @@ def add_routine(
     cron: str | None = None,
     timezone_name: str = "",
     timeout_sec: int = 300,
+    channel: str = "",
 ) -> dict[str, Any]:
     if not (prompt or "").strip():
         raise ValueError("prompt is required")
@@ -293,7 +330,7 @@ def add_routine(
         "expected_exit": 0,
         "timeout_sec": int(timeout_sec or 300),
         "one_shot": bool(at) and not bool(cron),
-        "channel": "telegram",
+        "channel": resolve_channel(channel),
         "timezone": zone,
     }
     if at:
@@ -349,9 +386,8 @@ def remove_routine(name: str) -> bool:
     if not isinstance(data, dict) or data.get("kind") != "routine":
         raise ValueError(f"{name} is not a routine")
     path.unlink()
-    stamp = _stamp_path(path)
-    if stamp.is_file():
-        stamp.unlink()
+    _unlink_quiet(_stamp_path(path))
+    _unlink_quiet(path.with_suffix(".lock"))
     return True
 
 
@@ -360,7 +396,8 @@ def default_turn(job: dict[str, Any]) -> tuple[int, str]:
     from .sensing import probe_host
 
     prompt_file = save_system_prompt(probe_host())
-    user = str(job.get("user") or "").strip()
+    user = str(job.get("user") or "").strip() or "routine"
+    channel = resolve_channel(str(job.get("channel") or ""))
     session = str(job.get("session") or f"routine:{job.get('name')}")
     message = str(job.get("prompt") or "")
     provider = os.environ.get("LOOP_PROVIDER", "openai.default") or "openai.default"
@@ -370,9 +407,9 @@ def default_turn(job: dict[str, Any]) -> tuple[int, str]:
         "-m",
         "klanker.turn",
         "--channel",
-        "telegram" if user else "local",
+        channel,
         "--user",
-        user or "routine",
+        user,
         "--session",
         session,
         "--message",
@@ -385,6 +422,8 @@ def default_turn(job: dict[str, Any]) -> tuple[int, str]:
         "--deliver",
         "buffered",
     ]
+    if loop_supports_detached_session():
+        cmd.append("--detached-session")
     proc = subprocess.run(
         cmd,
         capture_output=True,
@@ -395,10 +434,14 @@ def default_turn(job: dict[str, Any]) -> tuple[int, str]:
     return int(proc.returncode), extract_reply(proc.stdout or "")
 
 
-def deliver_reply(user: str, text: str) -> None:
+def deliver_reply(user: str, text: str, channel: str = "") -> None:
+    """Send via relay when that channel can, else print the reply locally."""
     target = str(user).strip()
-    if not target:
-        raise ValueError("user is required to deliver")
+    ch = resolve_channel(channel)
+    if not relay_can_deliver(ch, target):
+        log.info("routine reply kept local (channel=%s user=%s)", ch, target or "-")
+        print(text)
+        return
     chat_id = int(target)
     try:
         from agents_relay.config import RelayConfig
@@ -474,30 +517,54 @@ def perform_routine(
         _consume_one_shot(job, path)
         return {"status": "no_update" if reply.strip() else "empty", "reply": reply, "name": job.get("name")}
     user = str(job.get("user") or "").strip()
+    channel = resolve_channel(str(job.get("channel") or ""))
     try:
-        if user:
+        if deliver is None:
+            if user and relay_can_deliver(channel, user):
+                deliver_reply(user, reply, channel=channel)
+                status = "delivered"
+            else:
+                if user:
+                    log.info(
+                        "routine %s reply kept local (channel=%s user=%s)",
+                        job.get("name"),
+                        channel,
+                        user,
+                    )
+                print(reply)
+                status = "local"
+        elif user:
             sender(user, reply)
+            status = "delivered"
         else:
             print(reply)
+            status = "local"
     except Exception:
         _release()
         raise
     _consume_one_shot(job, path)
     return {
-        "status": "delivered" if user else "local",
+        "status": status,
         "reply": reply,
         "name": job.get("name"),
     }
 
 
+def _unlink_quiet(path: Path) -> None:
+    if not path.is_file():
+        return
+    try:
+        path.unlink()
+    except OSError:
+        log.warning("could not remove %s", path)
+
+
 def _consume_one_shot(job: dict[str, Any], path: Path) -> None:
     if not job.get("one_shot"):
         return
-    if path.is_file():
-        try:
-            path.unlink()
-        except OSError:
-            log.warning("could not remove one-shot routine %s", path)
+    _unlink_quiet(path)
+    _unlink_quiet(_stamp_path(path))
+    _unlink_quiet(path.with_suffix(".lock"))
 
 
 def routine_handler(job: dict[str, Any]) -> dict[str, Any]:
@@ -557,18 +624,27 @@ def run_due_schedules(tick_fn: Callable[[], None] | None = None) -> bool:
 
 
 def start_ticker() -> threading.Event | None:
-    """Daemon thread: tick immediately, then every 60s. ``KLANKER_TICK=0`` disables."""
+    """Every 60s, start ``tick()`` on its own daemon thread.
+
+    ``tick()`` waits for claimed jobs (up to the job timeout). Running it on
+    the scheduler thread would push later cron slots past the grace window.
+    Overlapping ticks are safe: the harness claims each job, and older
+    harness builds skip when ``.tick.lock`` is held. ``KLANKER_TICK=0`` disables.
+    """
     if not ticker_enabled():
         log.info("schedule ticker disabled (KLANKER_TICK=0)")
         return None
     stop = threading.Event()
 
+    def _tick_once() -> None:
+        try:
+            run_due_schedules()
+        except Exception:
+            log.exception("schedule tick failed")
+
     def _loop() -> None:
         while not stop.is_set():
-            try:
-                run_due_schedules()
-            except Exception:
-                log.exception("schedule tick failed")
+            threading.Thread(target=_tick_once, name="klanker-tick-run", daemon=True).start()
             if stop.wait(TICK_INTERVAL_SEC):
                 return
 
@@ -588,6 +664,7 @@ def dispatch(args: argparse.Namespace) -> int:
                 cron=args.cron or None,
                 timezone_name=args.timezone_name,
                 timeout_sec=args.timeout_sec,
+                channel=getattr(args, "channel", "") or "",
             )
             print(json.dumps(row, indent=2, ensure_ascii=False))
             return 0

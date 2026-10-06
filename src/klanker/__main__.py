@@ -70,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     routine_add.add_argument("--name", default="")
     routine_add.add_argument("--prompt", default="")
     routine_add.add_argument("--user", default="")
+    routine_add.add_argument("--channel", default="", help="Originating channel (http, telegram, local, …)")
     routine_add.add_argument("--at", default="")
     routine_add.add_argument("--cron", default="")
     routine_add.add_argument("--timezone", default="", dest="timezone_name")
@@ -200,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
         ensure_default_overlay()
         telegram_on = telegram_would_poll(no_telegram=bool(getattr(args, "no_telegram", False)))
         apply_approval_env(telegram=telegram_on)
+        # HTTP is always on under serve. A turn overwrites KLANKER_CHANNEL from --channel.
+        os.environ.setdefault("KLANKER_CHANNEL", "http")
 
         # If LOOP_CMD is default and harness is present, inject Klanker's dynamic system prompt.
         # klanker.turn installs argv shims, then runs runner.loop.
