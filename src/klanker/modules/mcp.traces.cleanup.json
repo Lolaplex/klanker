@@ -1,0 +1,19 @@
+{
+  "name": "mcp.traces.cleanup",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_traces cleanup",
+  "rests_on": "agents-traces delete or gzip old trace files",
+  "expected_exit": 0,
+  "timeout_sec": 60,
+  "as_tool": true,
+  "mutates": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "keep_days": {"type": "string", "description": "Days to retain", "x-cli": "--keep-days"},
+      "compress": {"type": "boolean", "description": "Gzip instead of deleting", "x-cli": "--compress"}
+    }
+  }
+}

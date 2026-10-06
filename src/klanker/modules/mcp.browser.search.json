@@ -1,0 +1,23 @@
+{
+  "name": "mcp.browser.search",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_browser search",
+  "rests_on": "agents-browser web search; extra argv is the query. No --help-json on this package yet.",
+  "expected_exit": 0,
+  "timeout_sec": 60,
+  "as_tool": true,
+  "mutates": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Search query",
+        "x-cli": "positional"
+      }
+    },
+    "required": ["query"]
+  }
+}

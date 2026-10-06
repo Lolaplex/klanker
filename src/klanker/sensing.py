@@ -22,6 +22,7 @@ SUITE_MODULES = {
     "browser": "agents_browser",
     "terminal": "agents_terminal",
     "calendar": "agents_calendar",
+    "vand": "vand",
 }
 
 
