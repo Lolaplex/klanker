@@ -14,6 +14,17 @@ from .sensing import probe_host
 log = logging.getLogger("klanker")
 
 
+def note_custom_loop_cmd() -> None:
+    """A pre-set LOOP_CMD skips Klanker's prompt file and ``klanker.turn`` shims."""
+    custom = os.environ.get("LOOP_CMD", "").strip()
+    if not custom:
+        return
+    log.warning(
+        "LOOP_CMD=%s bypasses Klanker's system prompt and argv shims (klanker.turn)",
+        custom,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="klanker",
@@ -178,19 +189,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
         from .gating import apply_approval_env, telegram_refusal, telegram_would_poll
-        from .overlay import ensure_default_overlay
+        from .overlay import ensure_default_overlay, publish_modules_dir
 
         refusal = telegram_refusal(no_telegram=bool(getattr(args, "no_telegram", False)))
         if refusal:
             print(f"Error: {refusal}", file=sys.stderr)
             return 1
 
+        publish_modules_dir()
         ensure_default_overlay()
         telegram_on = telegram_would_poll(no_telegram=bool(getattr(args, "no_telegram", False)))
         apply_approval_env(telegram=telegram_on)
 
         # If LOOP_CMD is default and harness is present, inject Klanker's dynamic system prompt.
         # klanker.turn installs argv shims, then runs runner.loop.
+        note_custom_loop_cmd()
         if "LOOP_CMD" not in os.environ and nucleus.caps.has_harness:
             from .prompt import save_system_prompt
 

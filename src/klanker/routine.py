@@ -2,17 +2,22 @@
 
 Job files live in ``AGENTS_SCHEDULES_DIR`` or ``~/.agents/schedules`` and use
 ``kind=routine``. The verb is ``python -m klanker routine run <name> --scheduled``
-so a current harness ``tick()`` (which only knows verbs) still runs them.
+so a harness ``tick()`` that only knows verbs still runs them.
 
-Same-minute duplicates share ``<job>.json.last``. The in-process ticker also
-takes an exclusive non-blocking lock on ``<schedules>/.tick.lock``. Harness
-should flock that same file around ``tick()`` so an external Coolify task
-cannot overlap this process. Until that lock exists upstream, remove the
-Coolify task: routines dedupe, fixed-text reminders can still double-fire.
+Same-minute duplicates share ``<job>.json.last``.
 
-When harness grows a routine callback, this module passes ``run_routine`` /
-``routine_handler`` into ``tick()``, or calls ``register_routine_handler``,
-``set_routine_handler``, or ``set_run_routine``.
+A harness that exposes ``register_routine_handler`` locks ``<schedules>/tick.lock``
+inside ``tick()`` (blocking flock). This process must not flock that file: a
+second fd in the same process deadlocks. The ticker calls ``tick()`` directly.
+
+Older harness builds have no handler. The ticker then takes a non-blocking lock
+on ``<schedules>/.tick.lock`` (a different file) so two Klanker processes do not
+overlap. An external Coolify ``python -m runner.schedule tick`` does not share
+that file. Delete that task in the same deploy as this image.
+
+When the harness callback exists, this module registers it via
+``register_routine_handler`` (or ``tick(run_routine=...)`` /
+``tick(routine_handler=...)`` / ``set_routine_handler`` / ``set_run_routine``).
 """
 
 from __future__ import annotations
@@ -37,6 +42,8 @@ log = logging.getLogger("klanker.routine")
 TICK_INTERVAL_SEC = 60
 TICK_LOCK_NAME = ".tick.lock"
 TRAILER = "---agents-loop-trailer---"
+# Finish the turn before the harness job timeout so that timeout wins the race.
+TURN_TIMEOUT_SLACK_SEC = 30
 _HANDLER_READY = False
 
 TurnFn = Callable[[dict[str, Any]], tuple[int, str]]
@@ -214,6 +221,45 @@ def _normalize_at(at: str, timezone_name: str) -> str:
         return at.strip()
 
 
+def configured_timezone_name() -> str:
+    """Job zone: harness ``configured_timezone()``, else ``AGENTS_TIMEZONE`` / ``TZ`` / UTC."""
+    try:
+        from runner.schedule import configured_timezone
+
+        zone = str(configured_timezone() or "").strip()
+        if zone:
+            return zone
+    except Exception:
+        pass
+    named = os.environ.get("AGENTS_TIMEZONE", "").strip()
+    if named:
+        return named
+    return os.environ.get("TZ", "").strip() or "UTC"
+
+
+def turn_timeout_sec(job: dict[str, Any]) -> int:
+    """Subprocess budget strictly under the job's ``timeout_sec`` when that is > 1."""
+    raw = job.get("timeout_sec")
+    try:
+        job_timeout = int(300 if raw in (None, "") else raw)
+    except (TypeError, ValueError):
+        job_timeout = 300
+    job_timeout = max(1, job_timeout)
+    if job_timeout <= 1:
+        return 1
+    margin = TURN_TIMEOUT_SLACK_SEC if job_timeout > TURN_TIMEOUT_SLACK_SEC else 1
+    return job_timeout - margin
+
+
+def harness_owns_tick_lock() -> bool:
+    """True when ``tick()`` takes ``tick.lock`` itself (do not flock it here)."""
+    try:
+        from runner import schedule as sched
+    except ImportError:
+        return False
+    return callable(getattr(sched, "register_routine_handler", None))
+
+
 def add_routine(
     *,
     name: str = "",
@@ -234,6 +280,7 @@ def add_routine(
         raise ValueError("pass either at or cron")
     slug = slugify(name) if (name or "").strip() else slugify(f"routine_{int(datetime.now(timezone.utc).timestamp())}")
     session = f"routine:{slug}"
+    zone = (timezone_name or "").strip() or configured_timezone_name()
     manifest: dict[str, Any] = {
         "name": slug,
         "kind": "routine",
@@ -247,17 +294,16 @@ def add_routine(
         "timeout_sec": int(timeout_sec or 300),
         "one_shot": bool(at) and not bool(cron),
         "channel": "telegram",
+        "timezone": zone,
     }
     if at:
-        manifest["at"] = _normalize_at(at, timezone_name)
+        manifest["at"] = _normalize_at(at, zone)
         manifest["cadence"] = "one_shot"
         manifest["one_shot"] = True
     if cron:
         manifest["cron"] = cron.strip()
         manifest["cadence"] = "cron"
         manifest["one_shot"] = False
-    if timezone_name.strip():
-        manifest["timezone"] = timezone_name.strip()
     path = schedules_dir() / f"{slug}.json"
     path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     manifest["_file"] = str(path)
@@ -318,7 +364,7 @@ def default_turn(job: dict[str, Any]) -> tuple[int, str]:
     session = str(job.get("session") or f"routine:{job.get('name')}")
     message = str(job.get("prompt") or "")
     provider = os.environ.get("LOOP_PROVIDER", "openai.default") or "openai.default"
-    timeout = int(job.get("timeout_sec") or 300)
+    timeout = turn_timeout_sec(job)
     cmd = [
         sys.executable,
         "-m",
@@ -369,12 +415,24 @@ def deliver_reply(user: str, text: str) -> None:
             raise RuntimeError(detail)
         return
     cfg = RelayConfig.from_env()
-    send_to_user(
-        token=cfg.telegram_bot_token,
-        chat_id=chat_id,
-        text=text,
-        allowed=cfg.telegram_allowed_chat_ids,
-    )
+    _send_to_user(send_to_user, cfg, chat_id, text)
+
+
+def _send_to_user(send_to_user: Callable[..., Any], cfg: Any, chat_id: int, text: str) -> None:
+    """Pass ``allow_anyone`` when this relay build accepts it."""
+    kwargs: dict[str, Any] = {
+        "token": cfg.telegram_bot_token,
+        "chat_id": chat_id,
+        "text": text,
+        "allowed": cfg.telegram_allowed_chat_ids,
+    }
+    try:
+        accepted = inspect.signature(send_to_user).parameters
+    except (TypeError, ValueError):
+        accepted = {}
+    if "allow_anyone" in accepted:
+        kwargs["allow_anyone"] = cfg.allow_anyone
+    send_to_user(**kwargs)
 
 
 def perform_routine(
@@ -383,21 +441,34 @@ def perform_routine(
     force: bool = False,
     turn: TurnFn | None = None,
     deliver: DeliverFn | None = None,
+    under_harness: bool = False,
 ) -> dict[str, Any]:
-    """Run one routine turn. Drop ``NO_UPDATE``. Otherwise deliver via relay."""
+    """Run one routine turn. Drop ``NO_UPDATE``. Otherwise deliver via relay.
+
+    ``under_harness`` is the in-process handler. Harness already records the
+    attempt, so clearing the minute stamp on failure does not schedule a retry.
+    The verb path (``--scheduled``) still releases the stamp so a failed run
+    can be tried again in that minute.
+    """
     path = Path(str(job.get("_file") or job_path(str(job.get("name") or ""))))
     minute = minute_key(job)
     if not claim_minute(path, minute, force=force):
         return {"status": "skipped", "reply": "", "name": job.get("name")}
     runner = turn or default_turn
     sender = deliver or deliver_reply
+
+    def _release() -> None:
+        if under_harness:
+            return
+        release_minute(path, minute)
+
     try:
         code, reply = runner(job)
     except Exception:
-        release_minute(path, minute)
+        _release()
         raise
     if code != 0:
-        release_minute(path, minute)
+        _release()
         return {"status": "failed", "reply": reply, "name": job.get("name")}
     if is_no_update(reply) or not reply.strip():
         _consume_one_shot(job, path)
@@ -409,7 +480,7 @@ def perform_routine(
         else:
             print(reply)
     except Exception:
-        release_minute(path, minute)
+        _release()
         raise
     _consume_one_shot(job, path)
     return {
@@ -430,7 +501,7 @@ def _consume_one_shot(job: dict[str, Any], path: Path) -> None:
 
 
 def routine_handler(job: dict[str, Any]) -> dict[str, Any]:
-    return perform_routine(job, force=False)
+    return perform_routine(job, force=False, under_harness=True)
 
 
 def _register_once(sched: Any, handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
@@ -468,7 +539,15 @@ def default_tick() -> None:
 
 
 def run_due_schedules(tick_fn: Callable[[], None] | None = None) -> bool:
-    """Run one tick if ``.tick.lock`` is free. Return False when the lock is held."""
+    """Run one tick.
+
+    New harness locks ``tick.lock`` inside ``tick()``. Skip the outer
+    ``.tick.lock`` in that case. Older harness still uses the outer lock.
+    Return False only when that older lock is already held.
+    """
+    if harness_owns_tick_lock():
+        (tick_fn or default_tick)()
+        return True
     with tick_lock() as owned:
         if not owned:
             log.info("schedule tick skipped; %s is held", tick_lock_path())

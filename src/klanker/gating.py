@@ -39,6 +39,9 @@ def apply_approval_env(*, telegram: bool) -> None:
     Existing ``AGENTS_APPROVAL_CMD`` / ``AGENTS_APPROVAL_MODE`` win.
     Harness substitutes ``{user}`` in the command.
     """
+    if env_flag("KLANKER_TELEGRAM_OPEN"):
+        # Relay denies an empty allowlist unless this is set. Do not override an export.
+        os.environ.setdefault("AGENTS_RELAY_ALLOW_ANYONE", "1")
     if not telegram:
         return
     os.environ.setdefault("AGENTS_APPROVAL_CMD", APPROVAL_CMD)

@@ -5,6 +5,8 @@ set -e
 mkdir -p /data /data/.agents /data/.agents/memory /data/.agents/skills /data/.agents/schedules /data/.agents/modules /data/schedules /data/modules /data/traces /data/workspace /data/inbox
 export AGENTS_WORKSPACE_DIR="${AGENTS_WORKSPACE_DIR:-/data/workspace}"
 export AGENTS_HOME="${AGENTS_HOME:-/data/.agents}"
+# Harness loads overlays only when this is set (default write path is invisible).
+export AGENTS_MODULES_DIR="${AGENTS_MODULES_DIR:-$AGENTS_HOME/modules}"
 python -c "from klanker.overlay import install_overlay; install_overlay()" 2>/dev/null || true
 python -c "from klanker.git_identity import setup_git_identity; setup_git_identity()" 2>/dev/null || true
 chown -R klanker:klanker /data 2>/dev/null || true

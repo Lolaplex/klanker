@@ -43,7 +43,10 @@ class Nucleus:
 
         # If agents-harness is installed, invoke runner.loop directly
         if self.caps.has_harness:
+            from .overlay import publish_modules_dir
             from .prompt import build_system_prompt
+
+            publish_modules_dir()
 
             system_prompt = build_system_prompt(self.caps)
 

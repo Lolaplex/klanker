@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable
+
+# Same ${ENV_VAR} form as runner.mcp_client.interpolate. Unset names become empty.
+_ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def mcp_config_path() -> Path:
@@ -25,15 +29,31 @@ def skills_dir() -> Path:
     return Path.home() / ".agents" / "skills"
 
 
+def expand_env(value: Any) -> Any:
+    """Expand ``${VAR}`` in strings, lists, and dicts. Missing vars become empty."""
+    if isinstance(value, str):
+        return _ENV.sub(lambda match: os.environ.get(match.group(1), ""), value)
+    if isinstance(value, list):
+        return [expand_env(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): expand_env(item) for key, item in value.items()}
+    return value
+
+
 def probe_server(
     spec: dict[str, Any],
     *,
     which: Callable[[str], str | None] | None = None,
     open_url: Callable[[str], Any] | None = None,
 ) -> str:
-    """Lightweight health: command on PATH, or URL accepts a connection."""
+    """Lightweight health: command on PATH, or URL accepts a connection.
+
+    ``url``, ``command``, ``args``, and ``env`` are expanded like the harness
+    before the probe, so a placeholder is not reported as a missing binary.
+    """
     if not isinstance(spec, dict):
         return "invalid"
+    spec = expand_env(spec)
     url = str(spec.get("url") or "").strip()
     if url:
         return _probe_url(url, open_url=open_url)

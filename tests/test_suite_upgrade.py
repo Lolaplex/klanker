@@ -21,6 +21,7 @@ from klanker.helpjson import (
 from klanker.routine import (
     add_routine,
     claim_minute,
+    harness_owns_tick_lock,
     is_no_update,
     list_routines,
     perform_routine,
@@ -28,6 +29,8 @@ from klanker.routine import (
     run_due_schedules,
     start_ticker,
     ticker_enabled,
+    turn_timeout_sec,
+    _send_to_user,
 )
 from klanker.shim import argv_from_schema, extend_schedule_argv
 
@@ -313,13 +316,94 @@ class TestRoutines(unittest.TestCase):
         fh = open(lock, "a+b")
         fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
-            self.assertFalse(run_due_schedules(lambda: ran.append(1)))
+            with patch("klanker.routine.harness_owns_tick_lock", return_value=False):
+                self.assertFalse(run_due_schedules(lambda: ran.append(1)))
         finally:
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
             fh.close()
         self.assertEqual(ran, [])
-        self.assertTrue(run_due_schedules(lambda: ran.append(1)))
+        with patch("klanker.routine.harness_owns_tick_lock", return_value=False):
+            self.assertTrue(run_due_schedules(lambda: ran.append(1)))
         self.assertEqual(ran, [1])
+
+    def test_new_harness_skips_outer_lock(self):
+        import fcntl
+        import types
+
+        ran: list[int] = []
+        lock = Path(self.tmp.name) / ".tick.lock"
+        fh = open(lock, "a+b")
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            with patch("klanker.routine.harness_owns_tick_lock", return_value=True):
+                self.assertTrue(run_due_schedules(lambda: ran.append(1)))
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            fh.close()
+        self.assertEqual(ran, [1])
+
+        runner = types.ModuleType("runner")
+        sched = types.ModuleType("runner.schedule")
+        sched.register_routine_handler = lambda handler: handler
+        runner.schedule = sched
+        bare = types.ModuleType("runner.schedule")
+        bare_runner = types.ModuleType("runner")
+        bare_runner.schedule = bare
+        with patch.dict("sys.modules", {"runner": runner, "runner.schedule": sched}):
+            self.assertTrue(harness_owns_tick_lock())
+        with patch.dict("sys.modules", {"runner": bare_runner, "runner.schedule": bare}):
+            self.assertFalse(harness_owns_tick_lock())
+
+    def test_timezone_defaults_and_turn_timeout(self):
+        with patch.dict(os.environ, {"AGENTS_TIMEZONE": "Europe/Berlin", "TZ": "UTC"}):
+            row = add_routine(name="zoned", prompt="p", user="1", cron="0 8 * * *")
+        self.assertEqual(row["timezone"], "Europe/Berlin")
+        self.assertEqual(turn_timeout_sec({"timeout_sec": 300}), 270)
+        self.assertLess(turn_timeout_sec({"timeout_sec": 300}), 300)
+        self.assertEqual(turn_timeout_sec({"timeout_sec": 10}), 9)
+        self.assertEqual(turn_timeout_sec({}), 270)
+
+    def test_harness_handler_keeps_minute_on_failure(self):
+        job = add_routine(name="held", prompt="check", user="7", cron="* * * * *")
+        calls = {"n": 0}
+
+        def fail(_job):
+            calls["n"] += 1
+            return 1, "boom"
+
+        failed = perform_routine(job, force=False, turn=fail, under_harness=True)
+        self.assertEqual(failed["status"], "failed")
+        again = perform_routine(
+            job,
+            force=False,
+            turn=lambda _job: (0, "ok"),
+            under_harness=True,
+        )
+        self.assertEqual(again["status"], "skipped")
+        self.assertEqual(calls["n"], 1)
+
+    def test_deliver_passes_allow_anyone(self):
+        from types import SimpleNamespace
+
+        captured: dict[str, object] = {}
+
+        def send_to_user(*, token, chat_id, text, allowed, allow_anyone=False):
+            captured["allow_anyone"] = allow_anyone
+            captured["chat_id"] = chat_id
+
+        cfg = SimpleNamespace(
+            telegram_bot_token="t",
+            telegram_allowed_chat_ids=(),
+            allow_anyone=True,
+        )
+        _send_to_user(send_to_user, cfg, 7, "hi")
+        self.assertIs(captured["allow_anyone"], True)
+
+        def old_send(*, token, chat_id, text, allowed):
+            captured["old"] = allowed
+
+        _send_to_user(old_send, cfg, 7, "hi")
+        self.assertEqual(captured["old"], ())
 
     def test_ticker_disabled(self):
         with patch.dict(os.environ, {"KLANKER_TICK": "0"}):
@@ -365,7 +449,13 @@ class TestGatingAndDocs(unittest.TestCase):
             os.environ,
             {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_ALLOWED_CHAT_IDS": "", "KLANKER_TELEGRAM_OPEN": "1"},
         ):
+            os.environ.pop("AGENTS_RELAY_ALLOW_ANYONE", None)
             self.assertIsNone(telegram_refusal(no_telegram=False))
+            apply_approval_env(telegram=True)
+            self.assertEqual(os.environ["AGENTS_RELAY_ALLOW_ANYONE"], "1")
+            os.environ["AGENTS_RELAY_ALLOW_ANYONE"] = "0"
+            apply_approval_env(telegram=True)
+            self.assertEqual(os.environ["AGENTS_RELAY_ALLOW_ANYONE"], "0")
 
     def test_mcp_and_skills_sense(self):
         from klanker.config_sense import mcp_report, probe_server, skills_report
@@ -404,6 +494,44 @@ class TestGatingAndDocs(unittest.TestCase):
                 self.assertIn("mcp_servers", sense)
                 self.assertEqual(sense["skills"], ["demo"])
 
+    def test_sense_expands_mcp_env(self):
+        from klanker.config_sense import expand_env, probe_server
+
+        seen: dict[str, str] = {}
+
+        def open_url(url: str) -> None:
+            seen["url"] = url
+
+        with patch.dict(
+            os.environ,
+            {"SENSE_HOST": "probe.example", "SENSE_BIN": "klanker-bin", "SENSE_TOKEN": "sek"},
+        ):
+            os.environ.pop("UNSET_SENSE_VAR_ZZ", None)
+            spec = expand_env(
+                {
+                    "command": "${SENSE_BIN}",
+                    "args": ["--token", "${SENSE_TOKEN}"],
+                    "env": {"TOKEN": "${SENSE_TOKEN}"},
+                    "url": "https://${SENSE_HOST}/mcp",
+                }
+            )
+            self.assertEqual(spec["command"], "klanker-bin")
+            self.assertEqual(spec["args"], ["--token", "sek"])
+            self.assertEqual(spec["env"]["TOKEN"], "sek")
+            self.assertEqual(
+                probe_server({"url": "https://${SENSE_HOST}/mcp"}, open_url=open_url),
+                "ok",
+            )
+            self.assertEqual(seen["url"], "https://probe.example/mcp")
+            self.assertEqual(
+                probe_server(
+                    {"command": "${SENSE_BIN}", "args": ["${SENSE_TOKEN}"]},
+                    which=lambda cmd: "/bin/x" if cmd == "klanker-bin" else None,
+                ),
+                "ok",
+            )
+            self.assertEqual(probe_server({"command": "${UNSET_SENSE_VAR_ZZ}"}), "invalid")
+
     def test_docs_and_manifests(self):
         root = Path(__file__).resolve().parents[1]
         readme = (root / "README.md").read_text(encoding="utf-8")
@@ -416,6 +544,16 @@ class TestGatingAndDocs(unittest.TestCase):
         self.assertNotIn("chmod 666", entry)
         self.assertIn(".agents/skills", entry)
         self.assertIn("dockerhost", entry)
+        self.assertIn("AGENTS_MODULES_DIR", entry)
+        self.assertNotIn("flocks the same", readme)
+        docker = (root / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn("agents-harness[mcp]", docker)
+        self.assertIn("CACHE_BUST", docker)
+        self.assertIn("SUITE_REF", docker)
+        example_env = (root / ".env.example").read_text(encoding="utf-8")
+        self.assertIn("AGENTS_TIMEZONE=Europe/Berlin", example_env)
+        self.assertIn("TZ=Europe/Berlin", example_env)
+        self.assertIn("AGENTS_VISION", example_env)
         schedule = json.loads((root / "src/klanker/modules/mcp.schedule.add.json").read_text(encoding="utf-8"))
         self.assertIn("prompt", schedule["parameters"]["properties"])
         self.assertTrue(schedule["mutates"])
@@ -432,6 +570,54 @@ class TestGatingAndDocs(unittest.TestCase):
         proc = subprocess.run(["sh", "-n", str(root / "entrypoint.sh")], capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertTrue(sys.executable)
+
+    def test_modules_dir_and_loop_cmd_warning(self):
+        import sys
+        import types
+
+        from klanker.__main__ import note_custom_loop_cmd
+        from klanker.nucleus import Nucleus
+        from klanker.sensing import HostCapabilities
+        from klanker.turn import main as turn_main
+
+        old = os.environ.pop("AGENTS_MODULES_DIR", None)
+        try:
+            loop = types.ModuleType("runner.loop")
+            captured: dict[str, str | None] = {}
+
+            def loop_main(argv: list[str]) -> int:
+                captured["env"] = os.environ.get("AGENTS_MODULES_DIR")
+                return 7
+
+            loop.main = loop_main
+            runner = types.ModuleType("runner")
+            runner.loop = loop
+            with patch.dict(sys.modules, {"runner": runner, "runner.loop": loop}):
+                code = turn_main(["--message", "hi"])
+            self.assertEqual(code, 7)
+            self.assertTrue(captured["env"])
+
+            caps = HostCapabilities(
+                os_name="linux",
+                is_tty=False,
+                python_version="3.12",
+                suite_modules={"harness": True},
+            )
+            os.environ.pop("AGENTS_MODULES_DIR", None)
+            with patch("klanker.nucleus.subprocess.run") as run:
+                run.return_value = types.SimpleNamespace(returncode=0)
+                Nucleus(caps).run_turn(message="hi")
+            self.assertTrue(os.environ.get("AGENTS_MODULES_DIR"))
+        finally:
+            if old is None:
+                os.environ.pop("AGENTS_MODULES_DIR", None)
+            else:
+                os.environ["AGENTS_MODULES_DIR"] = old
+
+        with patch.dict(os.environ, {"LOOP_CMD": "python -m runner.loop"}):
+            with self.assertLogs("klanker", level="WARNING") as logs:
+                note_custom_loop_cmd()
+        self.assertTrue(any("bypasses" in line for line in logs.output))
 
 
 if __name__ == "__main__":

@@ -9,6 +9,9 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .overlay import publish_modules_dir
+
+    publish_modules_dir()
     try:
         from runner.loop import main as loop_main
     except ImportError:

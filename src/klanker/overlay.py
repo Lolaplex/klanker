@@ -18,6 +18,13 @@ def overlay_dir() -> Path:
     return Path.home() / ".agents" / "modules"
 
 
+def publish_modules_dir() -> Path:
+    """Harness reads the overlay only when ``AGENTS_MODULES_DIR`` is set."""
+    path = overlay_dir()
+    os.environ.setdefault("AGENTS_MODULES_DIR", str(path))
+    return Path(os.environ["AGENTS_MODULES_DIR"]).expanduser()
+
+
 def install_overlay(target: Path | None = None, *, generate: bool = True) -> Path:
     dest = target or overlay_dir()
     dest.mkdir(parents=True, exist_ok=True)

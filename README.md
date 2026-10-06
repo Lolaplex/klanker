@@ -87,11 +87,13 @@ pip install "klanker[suite]"     # Complete Lolaplex suite
 
 ## Schedules
 
-`klanker serve` runs a ticker every 60 seconds. `KLANKER_TICK=0` turns it off. The ticker calls `runner.schedule.tick()` under an exclusive lock file:
+`klanker serve` runs a ticker every 60 seconds. `KLANKER_TICK=0` turns it off. The ticker calls `runner.schedule.tick()`.
 
-`~/.agents/schedules/.tick.lock` (or `$AGENTS_SCHEDULES_DIR/.tick.lock`)
+A harness that exposes `register_routine_handler` locks `<schedules>/tick.lock` inside `tick()`. Klanker does not lock that file. A second flock on it in the same process deadlocks. On older harness builds (no handler), the ticker takes a non-blocking lock on a different file, `~/.agents/schedules/.tick.lock` (or `$AGENTS_SCHEDULES_DIR/.tick.lock`), so two Klanker processes do not overlap. An external Coolify tick does not share `.tick.lock`.
 
-Routines are job files with `"kind": "routine"`. The verb is `python -m klanker routine run <name> --scheduled`, so a current harness tick still runs them. A same-minute duplicate is dropped via `<name>.json.last`. Replies that are exactly `NO_UPDATE` (or start with it) are not sent. Anything else goes out through `agents-relay send`.
+Routines are job files with `"kind": "routine"`. The verb is `python -m klanker routine run <name> --scheduled`, so a verb-only harness tick still runs them. A same-minute duplicate is dropped via `<name>.json.last`. Replies that are exactly `NO_UPDATE` (or start with it) are not sent. Anything else goes out through `agents-relay send`. `klanker routine add` without `--timezone` stores `runner.schedule.configured_timezone()` (`AGENTS_TIMEZONE`, then `TZ`, then `~/.agents/config.json`, else UTC). The routine turn subprocess timeout is 30 seconds under the job `timeout_sec`.
+
+`klanker serve` sets `AGENTS_MODULES_DIR` to the overlay directory (`~/.agents/modules`, or `/data/.agents/modules` in the image) when it is unset. Harness ignores overlay modules, including `mcp.schedule.add`, unless that variable is set. A custom `LOOP_CMD` skips Klanker's system prompt and `klanker.turn` shims; serve logs a warning when it is set.
 
 ```bash
 klanker remind add --user 123456 --at +10m --text "stand up"
@@ -106,10 +108,11 @@ The schedule tool `mcp.schedule.add` accepts `text` (fixed reminder) or `prompt`
 
 ### Coolify migration
 
-Older deploys run `python -m runner.schedule tick` as a Coolify scheduled task, which is why only that host had reminders. After this build the ticker is in `klanker serve`, so every install gets it.
+Older deploys run `python -m runner.schedule tick` as a Coolify scheduled task, which is why only that host had reminders. After this build the ticker is in `klanker serve`.
 
-1. Preferred: delete the Coolify scheduled task. One ticker is enough.
-2. If you keep it during rollout, routines will not double-send in the same minute. Fixed-text reminders can still double-fire until agents-harness flocks the same `.tick.lock` and stores a last-run minute. Remove the external task unless that harness build is deployed.
+1. Set `TELEGRAM_ALLOWED_CHAT_IDS` before deploying the relay that refuses an empty allowlist. `KLANKER_TELEGRAM_OPEN=1` also sets `AGENTS_RELAY_ALLOW_ANYONE=1` (relay denies the open bot otherwise). Do not leave the allowlist empty unless that opt-in is intentional.
+2. Delete the Coolify task `python -m runner.schedule tick` in the same deploy. Do not point it at `.tick.lock` or `tick.lock`. The new harness locks `tick.lock` inside `tick()`, and Klanker must not flock that file in-process.
+3. Rebuild the image with no Docker cache, or bump the `CACHE_BUST` / `SUITE_REF` build args, so the git installs of harness and relay are not a stale layer. `agents-harness` is installed with the `[mcp]` extra. In the container, `pip freeze | grep agents-` should show git commits, not an old cached revision.
 
 ## Approvals
 
@@ -122,17 +125,19 @@ AGENTS_APPROVAL_MODE=ask
 
 The harness substitutes `{user}`. Mutating tools wait for Approve / Deny. A denial is final.
 
-Telegram refuses to start when `TELEGRAM_BOT_TOKEN` is set and `TELEGRAM_ALLOWED_CHAT_IDS` is empty. Opt in to an open bot with `KLANKER_TELEGRAM_OPEN=1` (the relay allowlist still applies once that side enforces it).
+Telegram refuses to start when `TELEGRAM_BOT_TOKEN` is set and `TELEGRAM_ALLOWED_CHAT_IDS` is empty. Opt in to an open bot with `KLANKER_TELEGRAM_OPEN=1`. That also sets `AGENTS_RELAY_ALLOW_ANYONE=1` when it is unset, which is what relay requires before it will poll with an empty allowlist. Routine delivery passes `allow_anyone` through to `send_to_user`.
 
 ## MCP servers and skills
 
-External MCP servers use Claude/Cursor-shaped `~/.agents/mcp.json` (override `AGENTS_MCP_CONFIG`). An example is [`examples/mcp.json`](examples/mcp.json). `klanker sense` lists each server and a lightweight health check (command on `PATH`, or the URL accepts a connection).
+External MCP servers use Claude/Cursor-shaped `~/.agents/mcp.json` (override `AGENTS_MCP_CONFIG`). An example is [`examples/mcp.json`](examples/mcp.json). `klanker sense` expands `${VAR}` in `url`, `command`, `args`, and `env` the same way the harness does, then lists each server and a lightweight health check (command on `PATH`, or the URL accepts a connection).
 
 The harness reads `~/.agents/skills/*/SKILL.md` (`AGENTS_SKILLS_DIR`). In the container, `HOME=/data`, and `entrypoint.sh` creates `/data/.agents/skills` on the data volume.
 
 ## Docker
 
-The image installs `agents-browser` (CDP client: `mcp` + `websockets`). It does not install Chromium. Set `AGENTS_BROWSER_BIN` or install a browser on the host if you use it. `agents-browser` has no `--help-json` yet; `search`, `read`, `snapshot`, `open`, and `screenshot` are hand-written manifests.
+The image installs `agents-harness[mcp]` (stdio and HTTP MCP client) and `agents-browser` (CDP client: `mcp` + `websockets`). It does not install Chromium. Set `AGENTS_BROWSER_BIN` or install a browser on the host if you use it. `agents-browser` has no `--help-json` yet; `search`, `read`, `snapshot`, `open`, and `screenshot` are hand-written manifests.
+
+Git installs are cached by Docker layer. Coolify will keep an old harness/relay until you rebuild with `--no-cache` or change `CACHE_BUST` / `SUITE_REF`. After deploy, `pip freeze | grep agents-` should list the git commits from that build. `AGENTS_VISION=1` makes image attachments vision parts (see `.env.example`).
 
 `agents-traces --help-json` is a raw argparse dump and does not list subcommands. `stats`, `inspect`, `sessions`, `verify`, and `cleanup` are hand-written. `audit` and `seal` stay the harness modules. Anything else is `mcp.traces.argv` after generation.
 
