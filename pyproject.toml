@@ -23,7 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 browser = [
-    "agents-browser>=0.44.0",
+    "agents-browser>=0.45.0",
 ]
 keys = [
     "agents-keys>=0.0.1",

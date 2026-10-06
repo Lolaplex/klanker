@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI (and MCP, when present) check PyPI at most once per day for a newer release and print one stderr / tool-response line (`uv tool upgrade …`). Disabled with `AGENTS_NO_UPDATE_CHECK=1` or when `CI` is set; offline/timeout stays silent.
 
 ### Changed
-- Requires `agents-docs>=0.44.1`, `agents-terminal>=0.0.4`, and `agents-browser>=0.44.0` (optional browser extra).
+- Requires `agents-docs>=0.44.1`, `agents-terminal>=0.0.4`, and `agents-browser>=0.45.0` (optional browser extra).
 - System prompt uses the package version, describes approvals and untrusted tool data, and no longer says to execute mutating tools directly.
 - `mcp.schedule.add` sets `approval_ask: false`. The ticker runs each `tick()` on a worker thread. One-shot routines delete their `.json.last` and `.lock` sidecars.
 - Routines and reminders store channel and user. Relay delivers Telegram chat ids; other channels, including HTTP `anonymous`, stay local.
