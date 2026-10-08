@@ -110,20 +110,22 @@ The schedule tool `mcp.schedule.add` accepts `text` (fixed reminder) or `prompt`
 
 `klanker serve` already ticks. Remove external `python -m runner.schedule tick` tasks.
 
-If you keep one, it must run as the service user. A root shell (`docker exec` without a user) creates root-owned lock and state files. It also skips `AGENTS_APPROVAL_CMD`, which is set in `klanker serve`, so those tool calls are ungated. Example: `setpriv --reuid=<service user> --regid=<service group> --init-groups python -m runner.schedule tick`.
+If you keep one, it must run as the service user. A root shell (`docker exec` without a user) creates root-owned lock and state files. Approvals are opt-in in the service environment; a shell that does not inherit `AGENTS_APPROVAL_MODE` stays ungated. Example: `setpriv --reuid=<service user> --regid=<service group> --init-groups python -m runner.schedule tick`.
 
 Do not flock `tick.lock` around that command. The harness locks it inside `tick()`, and a second flock in the same process deadlocks. `.tick.lock` is only the outer lock for harness builds that have no `register_routine_handler`.
 
 ## Approvals
 
-When an approver is available, serve sets these (without overriding values you already exported). That includes a Telegram poll, `AGENTS_RELAY_APPROVER` plus a bot token, or an `AGENTS_APPROVAL_CMD` you already exported. A CLI with none of those stays ungated.
+`klanker serve` does not enable the approval gate. When `AGENTS_APPROVAL_MODE` is unset, mutating tools run with no Telegram Approve/Deny prompt.
+
+Opt in by setting the mode to `ask` or `strict`. If `AGENTS_APPROVAL_CMD` is unset, serve fills the default `agents-relay approve` command. An exported command is left as-is.
 
 ```bash
-AGENTS_APPROVAL_CMD='agents-relay approve --user {user} --timeout 300'
 AGENTS_APPROVAL_MODE=ask
+AGENTS_APPROVAL_CMD='agents-relay approve --user {user} --timeout 300'
 ```
 
-The harness substitutes `{user}`. Mutating tools wait for Approve / Deny. A denial is final.
+The harness substitutes `{user}`. With `ask` or `strict`, mutating tools wait for Approve / Deny. A denial is final.
 
 Telegram refuses to start when `TELEGRAM_BOT_TOKEN` is set and `TELEGRAM_ALLOWED_CHAT_IDS` is empty. Opt in to an open bot with `KLANKER_TELEGRAM_OPEN=1`. That also sets `AGENTS_RELAY_ALLOW_ANYONE=1` when it is unset, which is what relay requires before it will poll with an empty allowlist. Routine delivery passes `allow_anyone` through to `send_to_user`.
 
