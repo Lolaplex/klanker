@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             from .prompt import save_system_prompt
 
             prompt_file = save_system_prompt(nucleus.caps)
-            os.environ["LOOP_CMD"] = f"python -m klanker.turn --system {prompt_file.as_posix()}"
+            os.environ["LOOP_CMD"] = f"{sys.executable} -m klanker.turn --system {prompt_file.as_posix()}"
 
         if nucleus.caps.has_harness:
             from .routine import start_ticker

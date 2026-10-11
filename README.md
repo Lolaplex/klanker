@@ -20,7 +20,9 @@
 pip install klanker
 ```
 
-Optional suite extras:
+Klanker is **self-equipping**: when you request tools or capabilities in chat (e.g. browser automation, agent key minting), Klanker autonomously installs and equips feelers via its terminal on demand.
+
+You can also pre-install optional suite extras ahead of time:
 
 ```bash
 pip install "klanker[browser]"   # CDP browser automation
@@ -57,6 +59,7 @@ pip install "klanker[suite]"     # Complete Lolaplex suite
 ### Core Capabilities (Implemented)
 
 - [x] **Adaptive Host Sensing (`klanker sense`)**: Automatic host inspection and runtime discovery.
+- [x] **Autonomous Self-Equipping**: Dynamic feeler and tool self-installation via `mcp.terminal` on demand.
 - [x] **Dynamic System Prompt (`klanker prompt`)**: Context-aware prompt generation grounded in host capabilities and time.
 - [x] **Multi-Surface Shell**: Interactive REPL, one-shot CLI turns, background care worker (`cron`), and gateway server (`serve`).
 - [x] **Full Suite Integration**: Core bindings for `agents-harness`, `agents-relay`, `agents-memory`, `agents-docs`, `agents-traces`, `agents-terminal`, and `agents-calendar`.
