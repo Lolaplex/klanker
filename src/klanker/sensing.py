@@ -16,7 +16,6 @@ SUITE_MODULES = {
     "harness": "runner.loop",
     "relay": "agents_relay",
     "memory": "agents_memory",
-    "docs": "agents_docs",
     "traces": "agents_traces",
     "keys": "agents_keys",
     "browser": "agents_browser",

@@ -68,7 +68,6 @@ SKIP_COMMANDS = frozenset(
 
 PACKAGES: tuple[dict[str, Any], ...] = (
     {"alias": "memory", "module": "agents_memory", "read_only": False},
-    {"alias": "docs", "module": "agents_docs", "read_only": False},
     {"alias": "traces", "module": "agents_traces", "read_only": False},
     {"alias": "calendar", "module": "agents_calendar", "read_only": False},
     {"alias": "terminal", "module": "agents_terminal", "read_only": False},

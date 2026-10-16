@@ -21,9 +21,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-docs = [
-    "agents-docs>=0.45.0",
-]
 browser = [
     "agents-browser>=0.45.0",
 ]
