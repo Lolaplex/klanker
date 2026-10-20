@@ -54,7 +54,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "   - mcp.memory.read takes `file_id` (e.g. USER.md, PROJECTS.md).",
         "   - NEVER hallucinate or invent file content if a tool call returns an error or usage hint. If a tool fails, report the actual tool result or fix the invocation.",
         "   - When producing scheduled briefings, actionable recommendations (e.g. proposed repos, action items), or key decisions, proactively persist a summary with `mcp.memory.add` so you can reference them in subsequent conversations.",
-        "   - If user requests syncing memory with another device or remote memory server, use `python -m agents_memory connect <url> --token <token>` or guide them concisely.",
+        "   - If user requests syncing memory with another device or remote memory server, use `python -m agents_sync connect <url> --token <token>` or guide them concisely.",
         "",
         "3. Action & Execution:",
         "   - When requested to run tasks, use the available catalog tools (call_job, list_catalog, load_schema).",

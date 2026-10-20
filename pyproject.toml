@@ -15,6 +15,7 @@ dependencies = [
     "agents-harness[mcp]>=0.1.0",
     "agents-relay>=0.1.0",
     "agents-memory>=1.2.0",
+    "agents-sync>=0.1.0",
     "agents-traces>=0.1.0",
     "agents-terminal>=0.0.5",
     "agents-calendar>=0.1.0",

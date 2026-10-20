@@ -28,11 +28,13 @@ ARG TRACES_REF=${SUITE_REF}
 ARG TERMINAL_REF=${SUITE_REF}
 ARG CALENDAR_REF=${SUITE_REF}
 ARG BROWSER_REF=${SUITE_REF}
+ARG SYNC_REF=${SUITE_REF}
 RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
     pip install --no-cache-dir \
         "agents-harness[mcp] @ git+https://github.com/Lolaplex/agents-harness.git@${HARNESS_REF}" \
         "agents-relay @ git+https://github.com/Lolaplex/agents-relay.git@${RELAY_REF}" \
         "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@${MEMORY_REF}" \
+        "agents-sync @ git+https://github.com/Lolaplex/agents-sync.git@${SYNC_REF}" \
         "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@${TRACES_REF}" \
         "agents-terminal @ git+https://github.com/Lolaplex/agents-terminal.git@${TERMINAL_REF}" \
         "agents-calendar @ git+https://github.com/Lolaplex/agents-calendar.git@${CALENDAR_REF}" \

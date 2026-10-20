@@ -18,6 +18,8 @@ class TestKlanker(unittest.TestCase):
         self.assertIn("suite_modules", summary)
         self.assertTrue(bool(caps.python_executable))
         self.assertTrue(hasattr(caps, "has_git"))
+        self.assertTrue(hasattr(caps, "has_sync"))
+        self.assertIn("sync", caps.suite_modules)
 
     def test_nucleus_sense(self):
         n = Nucleus()

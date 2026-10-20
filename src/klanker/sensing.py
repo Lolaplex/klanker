@@ -21,6 +21,7 @@ SUITE_MODULES = {
     "browser": "agents_browser",
     "terminal": "agents_terminal",
     "calendar": "agents_calendar",
+    "sync": "agents_sync",
     "vand": "vand",
 }
 
@@ -75,6 +76,10 @@ class HostCapabilities:
     @property
     def has_terminal(self) -> bool:
         return self.suite_modules.get("terminal", False)
+
+    @property
+    def has_sync(self) -> bool:
+        return self.suite_modules.get("sync", False)
 
     def summary(self) -> dict[str, object]:
         return {
