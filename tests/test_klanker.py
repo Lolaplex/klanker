@@ -104,7 +104,7 @@ class TestKlanker(unittest.TestCase):
             suite_modules={"harness": True},
         )
         n = Nucleus(caps=caps)
-        with patch("subprocess.run") as mock_run:
+        with patch("klanker.nucleus.probe_host", return_value=caps), patch("subprocess.run") as mock_run:
             n.run_turn(message="test message", seal=True)
             self.assertTrue(mock_run.called)
             cmd = mock_run.call_args[0][0]

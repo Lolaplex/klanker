@@ -7,14 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-21
+
 ### Added
+- `agents-sync>=0.1.0` integrated as fixed core dependency and autonomous sensing feeler.
 - Autonomous self-equipping and direct execution directives in dynamic system prompt (`prompt.py`). Klanker immediately installs missing packages via `mcp.terminal` using `{caps.python_executable} -m pip install <pkg>` instead of passively instructing users to run pip commands.
 - `python_executable` field recorded in `HostCapabilities` and dynamically probed via `probe_host()`.
 - Dynamic capability re-probing (`self.caps = probe_host()`) on each conversational turn in `Nucleus.run_turn()`.
 
 ### Changed
+- `agents-docs` transitioned from core dependencies to optional extras (`klanker[docs]`), keeping the default installation lightweight.
+- Docker build configuration sets default `SUITE_REF=dev` on dev branch.
 - `klanker serve` no longer sets `AGENTS_APPROVAL_MODE=ask` or `AGENTS_APPROVAL_CMD`. Unset mode stays ungated. Opt in with `AGENTS_APPROVAL_MODE=ask` or `strict`; serve then fills the default approve command when `AGENTS_APPROVAL_CMD` is unset.
-- Removed outdated passive pip install explanation from system prompt.
 - `klanker serve` sets `LOOP_CMD` using `sys.executable` to prevent Python interpreter mismatches.
 
 ## [0.1.0] - 2026-10-06
