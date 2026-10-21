@@ -1,3 +1,3 @@
-"""Klanker — adaptive agent distribution on the Lolaplex suite."""
+"""Klanker — adaptive autonomous agent runtime and terminal companion."""
 
 __version__ = "0.1.0"

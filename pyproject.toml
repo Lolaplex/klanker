@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "klanker"
-version = "0.2.0"
-description = "Adaptive agent distribution on the Lolaplex suite"
+version = "0.2.1"
+description = "Adaptive autonomous agent runtime and terminal companion"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -32,9 +32,6 @@ calendar = [
     "agents-calendar>=0.1.0",
 ]
 all = [
-    "klanker[browser,keys,calendar]",
-]
-suite = [
     "klanker[browser,keys,calendar]",
 ]
 

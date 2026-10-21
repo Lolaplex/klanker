@@ -1,14 +1,14 @@
 <h1 align="center">klanker</h1>
 
 <p align="center">
-  <a href="https://github.com/Lolaplex/klanker/releases"><img src="https://img.shields.io/badge/version-0.2.0-blue.svg?style=flat-square" alt="Version 0.2.0"></a>
+  <a href="https://github.com/Lolaplex/klanker/releases"><img src="https://img.shields.io/badge/version-0.2.1-blue.svg?style=flat-square" alt="Version 0.2.1"></a>
   <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.10+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+"></a>
   <a href="https://pypi.org/project/klanker/"><img src="https://img.shields.io/pypi/v/klanker.svg?style=flat-square" alt="PyPI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="License"></a>
 </p>
 
 <p align="center">
-  <strong>Adaptive agent distribution on the Lolaplex stack.</strong><br>
+  <strong>Adaptive autonomous agent runtime and terminal companion.</strong><br>
   Terminal companion, background care runner, and self-hosted assistant on agents-harness.
 </p>
 
@@ -22,12 +22,13 @@ pip install klanker
 
 Klanker is **self-equipping**: when you request tools or capabilities in chat (e.g. browser automation, agent key minting), Klanker autonomously installs and equips feelers via its terminal on demand.
 
-You can also pre-install optional suite extras ahead of time:
+You can also pre-install optional extras ahead of time:
 
 ```bash
 pip install "klanker[browser]"   # CDP browser automation
 pip install "klanker[keys]"      # Ed25519 agent key minting and DID resolution
-pip install "klanker[suite]"     # Complete Lolaplex suite
+pip install "klanker[calendar]"  # CalDAV calendar integration
+pip install "klanker[all]"       # All optional extensions
 ```
 
 > [!TIP]
@@ -62,7 +63,7 @@ pip install "klanker[suite]"     # Complete Lolaplex suite
 - [x] **Autonomous Self-Equipping**: Dynamic feeler and tool self-installation via `mcp.terminal` on demand.
 - [x] **Dynamic System Prompt (`klanker prompt`)**: Context-aware prompt generation grounded in host capabilities and time.
 - [x] **Multi-Surface Shell**: Interactive REPL, one-shot CLI turns, background care worker (`cron`), and gateway server (`serve`).
-- [x] **Full Suite Integration**: Core bindings for `agents-harness`, `agents-relay`, `agents-memory`, `agents-docs`, `agents-traces`, `agents-terminal`, and `agents-calendar`.
+- [x] **Full Agent Tooling Integration**: Core bindings for `agents-harness`, `agents-relay`, `agents-memory`, `agents-docs`, `agents-traces`, `agents-terminal`, and `agents-calendar`.
 - [x] **Telegram Reminders**: Dynamic reminder scheduling routed to `agents-relay send`.
 
 ### Planned (Roadmap)
@@ -79,7 +80,7 @@ pip install "klanker[suite]"     # Complete Lolaplex suite
 | :--- | :--- |
 | `klanker` | Start interactive multi-turn REPL chat |
 | `klanker "message"` | Run a single turn directly in terminal |
-| `klanker sense [--json]` | Probe host capabilities, suite packages, MCP servers, and skills |
+| `klanker sense [--json]` | Probe host capabilities, installed agent packages, MCP servers, and skills |
 | `klanker prompt` | Inspect dynamic system prompt generated for current host |
 | `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), Telegram long-poll, and the schedule ticker |
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
@@ -144,7 +145,7 @@ The image installs `agents-harness[mcp]` (stdio and HTTP MCP client) and `agents
 
 Git installs are cached by the image layer. Rebuild with `--no-cache`, or change `CACHE_BUST` / `SUITE_REF`, or the harness and relay commits stay stale. After the image is running, `pip freeze | grep agents-` should list git commits. `AGENTS_VISION=1` makes image attachments vision parts (see `.env.example`).
 
-Dependency floors: `agents-harness[mcp]>=0.1.0`, `agents-relay>=0.1.0`, `agents-memory>=1.2.0`, `agents-traces>=0.1.0`, `agents-calendar>=0.1.0`. The image installs the suite from git `main` (the latest releases) by default. Set `SUITE_REF`, or a per-package ref such as `HARNESS_REF`, to build from another branch or tag.
+Dependency floors: `agents-harness[mcp]>=0.1.0`, `agents-relay>=0.1.0`, `agents-memory>=1.2.0`, `agents-traces>=0.1.0`, `agents-calendar>=0.1.0`. The image installs packages from git `main` (the latest releases) by default. Set `SUITE_REF`, or a per-package ref such as `HARNESS_REF`, to build from another branch or tag.
 
 `agents-traces --help-json` is a raw argparse dump and does not list subcommands. `stats`, `inspect`, `sessions`, `verify`, and `cleanup` are hand-written. `audit` and `seal` stay the harness modules. Anything else is `mcp.traces.argv` after generation.
 

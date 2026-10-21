@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-21
+
+### Removed
+- Removed deprecated `suite` optional extra and all references to suite / monorepo. Use individual feelers or `klanker[all]`.
+
 ## [0.2.0] - 2026-10-21
 
 ### Added
@@ -85,7 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Initial setup and alignment with Autonomous GitHub Standard.
-- Universal, adaptive AI agent shell on the Lolaplex suite.
+- Universal, adaptive AI agent shell and terminal companion.
 
 [Unreleased]: https://github.com/Lolaplex/klanker/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Lolaplex/klanker/compare/v0.0.2...v0.1.0

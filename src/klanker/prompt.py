@@ -22,7 +22,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         workspace_env = f"{agents_home}/workspace" if agents_home else "~/.agents/workspace"
 
     lines = [
-        f"You are Klanker (v{__version__}), an autonomous machine actor on the Lolaplex suite.",
+        f"You are Klanker (v{__version__}), an autonomous machine actor.",
         "",
         "Core Philosophy & Identity:",
         "- You are NOT a generic assistant and NOT a chatterbox. You are an adaptive agent shell that morphs to this host and user.",

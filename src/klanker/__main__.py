@@ -28,7 +28,7 @@ def note_custom_loop_cmd() -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="klanker",
-        description="Klanker — Adaptive Agent Shell on the Lolaplex Suite",
+        description="Klanker — Adaptive Agent Shell",
     )
     parser.add_argument("--user", type=str, default="user", help="User alias")
     parser.add_argument("--provider", type=str, default=None, help="LLM provider")
