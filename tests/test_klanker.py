@@ -13,15 +13,20 @@ class TestKlanker(unittest.TestCase):
         self.assertIsInstance(caps, HostCapabilities)
         summary = caps.summary()
         self.assertIn("os_name", summary)
+        self.assertIn("python_executable", summary)
         self.assertIn("runtimes", summary)
         self.assertIn("suite_modules", summary)
+        self.assertTrue(bool(caps.python_executable))
         self.assertTrue(hasattr(caps, "has_git"))
+        self.assertTrue(hasattr(caps, "has_sync"))
+        self.assertIn("sync", caps.suite_modules)
 
     def test_nucleus_sense(self):
         n = Nucleus()
         sense = n.sense()
         self.assertIsInstance(sense, dict)
         self.assertIn("python_version", sense)
+        self.assertIn("python_executable", sense)
 
     def test_cli_parser(self):
         from klanker.__main__ import parse_cli_args
@@ -61,10 +66,13 @@ class TestKlanker(unittest.TestCase):
         self.assertIn(f"v{__version__}", text)
         self.assertNotIn("v0.0.1", text)
         self.assertNotIn("klanker[memory]", text)
+        self.assertNotIn("pip install agents-memory", text)
         self.assertNotIn("Execute directly", text)
         self.assertIn("NO_UPDATE", text)
         self.assertIn("untrusted", text)
         self.assertIn("Alles läuft lokal", text)
+        self.assertIn("Autonomous Self-Equipping", text)
+        self.assertIn("Python executable:", text)
         self.assertNotIn("slimemold", text.lower())
         self.assertNotIn("Slimemold", text)
         self.assertIn("human prose", text)
@@ -96,7 +104,7 @@ class TestKlanker(unittest.TestCase):
             suite_modules={"harness": True},
         )
         n = Nucleus(caps=caps)
-        with patch("subprocess.run") as mock_run:
+        with patch("klanker.nucleus.probe_host", return_value=caps), patch("subprocess.run") as mock_run:
             n.run_turn(message="test message", seal=True)
             self.assertTrue(mock_run.called)
             cmd = mock_run.call_args[0][0]

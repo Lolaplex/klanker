@@ -1,4 +1,4 @@
-"""Serve-time Telegram allowlist and approval-env defaults."""
+"""Serve-time Telegram allowlist and opt-in approval command."""
 
 from __future__ import annotations
 
@@ -63,32 +63,29 @@ def telegram_refusal(*, no_telegram: bool) -> str | None:
     )
 
 
-def approver_configured() -> bool:
-    """True when some command can ask a person before a mutating tool runs.
+_OPT_IN_APPROVAL_MODES = frozenset({"ask", "strict"})
 
-    CLI with no bot token, no ``AGENTS_RELAY_APPROVER``, and no
-    ``AGENTS_APPROVAL_CMD`` stays ungated.
-    """
-    if os.environ.get("AGENTS_APPROVAL_CMD", "").strip():
-        return True
-    if not os.environ.get("TELEGRAM_BOT_TOKEN", "").strip():
-        return False
-    if os.environ.get("AGENTS_RELAY_APPROVER", "").strip():
-        return True
-    return allowlist_configured() or env_flag("KLANKER_TELEGRAM_OPEN")
+
+def approval_opt_in() -> bool:
+    """True when the user exported ask or strict. Unset mode stays ungated."""
+    mode = os.environ.get("AGENTS_APPROVAL_MODE", "").strip().lower()
+    return mode in _OPT_IN_APPROVAL_MODES
 
 
 def apply_approval_env(*, telegram: bool = False) -> None:
-    """Default ask-mode approvals when an approver path exists.
+    """Fill the default approve command only for an explicit ask/strict opt-in.
 
-    Telegram polling is one such path. A configured relay approver or an
-    existing ``AGENTS_APPROVAL_CMD`` is another, including HTTP-only serve.
-    Existing exports win. Harness substitutes ``{user}`` in the command.
+    Unset ``AGENTS_APPROVAL_MODE`` is left unset, which the harness treats as
+    off: mutating tools run with no Telegram gate. Serve never writes the mode.
+    ``telegram`` does not opt in; a poll or a configured approver is not enough.
+    ``KLANKER_TELEGRAM_OPEN`` still sets ``AGENTS_RELAY_ALLOW_ANYONE`` when it
+    is unset, which relay needs before it will poll an empty allowlist.
+    An exported ``AGENTS_APPROVAL_CMD`` wins. Harness substitutes ``{user}``.
     """
+    del telegram
     if env_flag("KLANKER_TELEGRAM_OPEN"):
         # Relay denies an empty allowlist unless this is set. Do not override an export.
         os.environ.setdefault("AGENTS_RELAY_ALLOW_ANYONE", "1")
-    if not telegram and not approver_configured():
+    if not approval_opt_in():
         return
     os.environ.setdefault("AGENTS_APPROVAL_CMD", APPROVAL_CMD)
-    os.environ.setdefault("AGENTS_APPROVAL_MODE", "ask")

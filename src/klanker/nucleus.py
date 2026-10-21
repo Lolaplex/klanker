@@ -46,6 +46,7 @@ class Nucleus:
             from .overlay import publish_modules_dir
             from .prompt import build_system_prompt
 
+            self.caps = probe_host()
             publish_modules_dir()
 
             system_prompt = build_system_prompt(self.caps)

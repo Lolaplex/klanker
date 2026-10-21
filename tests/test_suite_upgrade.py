@@ -543,7 +543,7 @@ class TestRoutines(unittest.TestCase):
 
 
 class TestGatingAndDocs(unittest.TestCase):
-    def test_telegram_refusal_and_approval_default(self):
+    def test_telegram_refusal_and_unset_approval_stays_ungated(self):
         with patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_ALLOWED_CHAT_IDS": ""}, clear=False):
             os.environ.pop("KLANKER_TELEGRAM_OPEN", None)
             os.environ.pop("AGENTS_APPROVAL_CMD", None)
@@ -562,11 +562,17 @@ class TestGatingAndDocs(unittest.TestCase):
             os.environ.pop("AGENTS_APPROVAL_MODE", None)
             self.assertIsNone(telegram_refusal(no_telegram=False))
             apply_approval_env(telegram=True)
-            self.assertIn("{user}", os.environ["AGENTS_APPROVAL_CMD"])
-            self.assertEqual(os.environ["AGENTS_APPROVAL_MODE"], "ask")
+            self.assertNotIn("AGENTS_APPROVAL_CMD", os.environ)
+            self.assertNotIn("AGENTS_APPROVAL_MODE", os.environ)
             os.environ["AGENTS_APPROVAL_MODE"] = "strict"
             apply_approval_env(telegram=True)
             self.assertEqual(os.environ["AGENTS_APPROVAL_MODE"], "strict")
+            self.assertIn("{user}", os.environ["AGENTS_APPROVAL_CMD"])
+            os.environ["AGENTS_APPROVAL_CMD"] = "custom approve --user {user}"
+            os.environ["AGENTS_APPROVAL_MODE"] = "ask"
+            apply_approval_env(telegram=True)
+            self.assertEqual(os.environ["AGENTS_APPROVAL_MODE"], "ask")
+            self.assertEqual(os.environ["AGENTS_APPROVAL_CMD"], "custom approve --user {user}")
 
     def test_open_opt_in(self):
         with patch.dict(
@@ -575,13 +581,17 @@ class TestGatingAndDocs(unittest.TestCase):
         ):
             os.environ.pop("AGENTS_RELAY_ALLOW_ANYONE", None)
             self.assertIsNone(telegram_refusal(no_telegram=False))
+            os.environ.pop("AGENTS_APPROVAL_CMD", None)
+            os.environ.pop("AGENTS_APPROVAL_MODE", None)
             apply_approval_env(telegram=True)
             self.assertEqual(os.environ["AGENTS_RELAY_ALLOW_ANYONE"], "1")
+            self.assertNotIn("AGENTS_APPROVAL_CMD", os.environ)
+            self.assertNotIn("AGENTS_APPROVAL_MODE", os.environ)
             os.environ["AGENTS_RELAY_ALLOW_ANYONE"] = "0"
             apply_approval_env(telegram=True)
             self.assertEqual(os.environ["AGENTS_RELAY_ALLOW_ANYONE"], "0")
 
-    def test_approval_follows_approver_not_only_telegram_poll(self):
+    def test_opt_in_wires_cmd_without_telegram_poll(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("TELEGRAM_BOT_TOKEN", None)
             os.environ.pop("AGENTS_RELAY_APPROVER", None)
@@ -590,6 +600,7 @@ class TestGatingAndDocs(unittest.TestCase):
             os.environ.pop("KLANKER_TELEGRAM_OPEN", None)
             apply_approval_env(telegram=False)
             self.assertNotIn("AGENTS_APPROVAL_CMD", os.environ)
+            self.assertNotIn("AGENTS_APPROVAL_MODE", os.environ)
         with patch.dict(
             os.environ,
             {
@@ -602,8 +613,17 @@ class TestGatingAndDocs(unittest.TestCase):
             os.environ.pop("AGENTS_APPROVAL_CMD", None)
             os.environ.pop("AGENTS_APPROVAL_MODE", None)
             apply_approval_env(telegram=False)
+            self.assertNotIn("AGENTS_APPROVAL_CMD", os.environ)
+            self.assertNotIn("AGENTS_APPROVAL_MODE", os.environ)
+            os.environ["AGENTS_APPROVAL_MODE"] = "ask"
+            apply_approval_env(telegram=False)
             self.assertIn("{user}", os.environ["AGENTS_APPROVAL_CMD"])
             self.assertEqual(os.environ["AGENTS_APPROVAL_MODE"], "ask")
+            os.environ.pop("AGENTS_APPROVAL_CMD", None)
+            os.environ["AGENTS_APPROVAL_MODE"] = "off"
+            apply_approval_env(telegram=False)
+            self.assertNotIn("AGENTS_APPROVAL_CMD", os.environ)
+            self.assertEqual(os.environ["AGENTS_APPROVAL_MODE"], "off")
 
     def test_mcp_and_skills_sense(self):
         from klanker.config_sense import mcp_report, probe_server, skills_report

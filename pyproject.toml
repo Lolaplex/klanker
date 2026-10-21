@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "klanker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Adaptive agent distribution on the Lolaplex suite"
 readme = "README.md"
 license = "MIT"
@@ -15,8 +15,8 @@ dependencies = [
     "agents-harness[mcp]>=0.1.0",
     "agents-relay>=0.1.0",
     "agents-memory>=1.2.0",
+    "agents-sync>=0.1.0",
     "agents-traces>=0.1.0",
-    "agents-docs>=0.45.0",
     "agents-terminal>=0.0.5",
     "agents-calendar>=0.1.0",
 ]
