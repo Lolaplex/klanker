@@ -20,7 +20,7 @@ COPY src ./src
 # On your build platform, rebuild with --no-cache or bump CACHE_BUST, then confirm
 # `pip freeze | grep agents-` shows the git commits you expect.
 ARG SUITE_REF=dev
-ARG CACHE_BUST=0
+ARG CACHE_BUST=1
 ARG HARNESS_REF=${SUITE_REF}
 ARG RELAY_REF=${SUITE_REF}
 ARG MEMORY_REF=${SUITE_REF}
