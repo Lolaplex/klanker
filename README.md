@@ -102,6 +102,8 @@ Each finished routine run, including `NO_UPDATE` and failures, is written under 
 
 `klanker serve` sets `AGENTS_MODULES_DIR` to the overlay directory (`~/.agents/modules`, or `/data/.agents/modules` in the image) when it is unset. Harness ignores overlay modules, including `mcp.schedule.add`, unless that variable is set. A custom `LOOP_CMD` skips Klanker's system prompt and `klanker.turn` shims; serve logs a warning when it is set.
 
+`klanker.turn` is the process that runs the harness loop. When `agents-traces` is installed it registers `read_content` as the content backend, so a `<ref digest="..."/>` can be paged instead of summarized. It also registers the evidence check as the final-response hook: a side effect needs a successful `agents_harness.tool_receipt.v1`, and a memory save also needs `agents_memory.write_receipt.v1`. One revision pass runs; leftover findings are `response_flags`. Read-only terminal commands are `mcp.terminal.list`, `read`, `grep`, and `stat`.
+
 ```bash
 klanker remind add --user 123456 --channel telegram --at +10m --text "stand up"
 klanker remind add --user 123456 --channel telegram --cron "0 8 * * 1" --prompt "Weekly review" --timezone UTC

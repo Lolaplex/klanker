@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `klanker evidence --from YYYY-MM-DD --to YYYY-MM-DD` lists routine-run and workspace files for every day in the range. Memory and traces stay separate tool checks.
 - System prompt rules: name each source checked and keep a miss distinct from non-existence; cover every day of a requested range; do read-only investigation without asking; retrieve truncated text before summarizing; claim a side effect only after a successful tool call in that turn.
 - Routine-run files are replaced atomically. Retention keeps the newest 2000 runs from the last 90 days (`AGENTS_ROUTINE_RUNS_KEEP_COUNT`, `AGENTS_ROUTINE_RUNS_KEEP_DAYS`).
+- `klanker.turn` registers `agents-traces` `read_content` as the harness content backend when traces is installed, and registers the evidence side-effect check as the harness final check. A memory save counts only with `agents_memory.write_receipt.v1`.
+- Generated tool manifests honor declared `side_effects`. Read-only terminal verbs (`list`, `read`, `grep`, `stat`) stay non-mutating when the package says so.
+
+### Changed
+- The system prompt sends clipped trace text to `read_content` and workspace reads to `mcp.terminal.list|read|grep|stat` instead of a shell or a permission ask.
 
 ### Fixed
 - README no longer lists `agents-docs` as an integrated package. It is not a dependency.

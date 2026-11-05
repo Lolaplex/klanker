@@ -120,6 +120,13 @@ def test_prompt_requires_evidence_before_absence(monkeypatch, tmp_path):
         "no_update",
         "AGENTS_ROUTINE_RUNS_KEEP_DAYS",
         "newest 2000",
+        "read_content",
+        "mcp.terminal.list",
+        "mcp.terminal.read",
+        "mcp.terminal.grep",
+        "mcp.terminal.stat",
+        "agents_memory.write_receipt.v1",
+        "Do not ask permission",
         routine_runs_path().as_posix(),
         workspace_path().as_posix(),
     ):

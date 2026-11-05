@@ -91,6 +91,21 @@ def is_read_verb(name: str) -> bool:
     return command_leaf(name) in READ_VERBS
 
 
+def effects_read(meta: dict[str, Any]) -> bool | None:
+    """Read-only class from declared ``side_effects``, or None when undeclared.
+
+    A present value wins over the command name. Unknown values are mutating.
+    Missing metadata keeps the verb heuristic for packages that do not publish it.
+    """
+    if not isinstance(meta, dict) or "side_effects" not in meta:
+        return None
+    raw = meta.get("side_effects")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    token = raw.strip().lower().replace("_", "-")
+    return token in ("read-only", "readonly")
+
+
 def _skip(name: str) -> bool:
     leaf = command_leaf(name)
     return leaf in SKIP_COMMANDS or name.lower() in SKIP_COMMANDS
@@ -305,7 +320,8 @@ def build_manifests(
     for command, meta in iter_commands(spec):
         if _skip(command):
             continue
-        read = is_read_verb(command)
+        declared = effects_read(meta)
+        read = is_read_verb(command) if declared is None else declared
         if read_only and not read and not allow_mutate:
             continue
         if read_only and not read and not keys_write_enabled():
@@ -329,6 +345,8 @@ def build_manifests(
                 "parameters": schema_for(meta),
             }
         )
+        if declared is not None:
+            rows[-1]["side_effects"] = "read-only" if read else "mutating"
     if allow_mutate or not read_only:
         if not (read_only and not keys_write_enabled()):
             rows.append(_passthrough(alias, module, spec))

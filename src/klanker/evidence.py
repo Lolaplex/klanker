@@ -85,7 +85,8 @@ _GAP_STATEMENT = re.compile(
     re.IGNORECASE,
 )
 _MEMORY_CLAIM = re.compile(
-    r"\b(?:saved|wrote|written|persisted|stored|remembered)\b(?:\W+\w+){0,10}\bmemory\b",
+    r"\b(?:saved|wrote|written|persisted|stored|remembered)\b"
+    r"(?:\W+(?!memory\b)\w+){0,10}\W+\bmemory\b",
     re.IGNORECASE,
 )
 _FILE_SAVE = re.compile(
@@ -118,11 +119,15 @@ _EPISTEMIC = re.compile(
     r"\b(mention(?:s|ed)?|says?|said|states?|includes?|contains?|shows?|lists?|sees?|seen|reads?|according|quotes?)\b",
     re.IGNORECASE,
 )
+_EFFECT_VERB = (
+    r"saved|wrote|written|persisted|stored|remembered|scheduled|sent|delivered"
+)
 _NEGATED_EFFECT = re.compile(
-    r"\b(?:not|never|nothing|nichts|nicht|nie|kein(?:e|en|er|em)?)\b"
-    r"(?:\W+\w+){0,6}\b(?:saved|wrote|written|persisted|stored|remembered|scheduled|sent|delivered)\b"
-    r"|\b(?:saved|wrote|written|persisted|stored|remembered|scheduled|sent|delivered)\b"
-    r"(?:\W+\w+){0,4}\b(?:nothing|nichts)\b",
+    rf"\b(?:not|never|nothing|nichts|nicht|nie|kein(?:e|en|er|em)?)\b"
+    rf"(?:\W+(?!{_EFFECT_VERB}\b)\w+){{0,6}}"
+    rf"\W+\b(?:{_EFFECT_VERB})\b"
+    rf"|\b(?:{_EFFECT_VERB})\b"
+    rf"(?:\W+\w+){{0,4}}\W+\b(?:nothing|nichts)\b",
     re.IGNORECASE,
 )
 _PROCESS = re.compile(
@@ -237,9 +242,9 @@ def evidence_policy_lines() -> list[str]:
         f"   - Workspace: `{work}`. List it. Read dated and undated files before calling a day empty. A date mentioned inside a file is not a record for that day unless the file itself is that day's output.",
         f"   - Schedules: `{sched}` shows configured jobs. A job file is not proof that a day ran.",
         "   - Date range: cover every calendar day from the first day through the last day, inclusive. Report each day as a record (path or session) or as a gap. A gap means no record in the sources you checked.",
-        "   - Do not ask permission for a read-only investigation. Read, list, search, and inspect as soon as a tool allows it, including read-only `mcp.terminal` (`ls`, `rg`, `cat`). Ask only when a mutating tool needs an approval this host actually requires.",
-        "   - If a tool result or earlier turn is truncated, omitted, or clipped, retrieve the full source with a tool before you summarize. Match the excerpt to the file under routine outputs or the workspace. If no tool can read it, name the missing span. Facts, counts, and statuses that are not in the retrieved text must not appear in the reply.",
-        "   - Claim a side effect (saved, written, sent, scheduled, remembered) only when a tool call in this turn succeeded at that action (`mcp.memory.add`, `mcp.memory.write`, `mcp.schedule.add`, a real write, or a send). A sentence that says you saved something is not a save.",
+        "   - Do not ask permission for a read-only investigation. Read-only terminal verbs are `mcp.terminal.list`, `mcp.terminal.read`, `mcp.terminal.grep`, and `mcp.terminal.stat` (declared side_effects read-only). Use them for workspace files. Do not ask, and do not use `mcp.terminal.run` for a read those verbs already cover. `mcp.terminal.run` is mutating. Ask only when a mutating tool needs an approval this host actually requires.",
+        "   - If a tool result or earlier turn is truncated, omitted, clipped, or carries a `<ref digest=\"...\"/>`, call `read_content` with that digest, offset, and limit before you summarize. Page with offset plus the length of the returned text. If `read_content` says the content is unavailable, name the missing span. Do not invent it. Facts, counts, and statuses that are not in the retrieved text must not appear in the reply.",
+        "   - Claim a side effect (saved, written, sent, scheduled, remembered) only when this turn has a successful tool receipt (`agents_harness.tool_receipt.v1`, success true) for that action (`mcp.memory.add`, `mcp.memory.write`, `mcp.schedule.add`, a real write, or a send). A memory save also needs a nested `agents_memory.write_receipt.v1`. A sentence that says you saved something is not a save.",
     ]
 
 
@@ -924,6 +929,8 @@ def _has_memory_write(calls: list[Mapping[str, Any]]) -> bool:
         if not _succeeded(call):
             continue
         blob = _call_blob(call)
+        if "agents_memory.write_receipt.v1" in blob:
+            return True
         if "mcp.memory.add" in blob or "mcp.memory.write" in blob:
             return True
         if re.search(r"agents_memory\s+(add|write)\b", blob):
@@ -965,9 +972,9 @@ def is_full_read(call: Mapping[str, Any]) -> bool:
         return False
     blob = _call_blob(call)
     name = str(call.get("name") or call.get("tool") or "").lower()
-    if name in {"mcp.memory.read", "mcp.traces.inspect"}:
+    if name in {"mcp.memory.read", "mcp.traces.inspect", "read_content", "mcp.terminal.read"}:
         return True
-    if "mcp.memory.read" in blob or "mcp.traces.inspect" in blob:
+    if "mcp.memory.read" in blob or "mcp.traces.inspect" in blob or "read_content" in blob or "mcp.terminal.read" in blob:
         return True
     command = _command(call)
     if not re.search(r"(?:^|[;&|]\s*)(?:cat|type)\s+\S+", command):
@@ -992,7 +999,7 @@ def flag_unbacked_side_effects(
         if _MEMORY_CLAIM.search(sentence):
             if not _has_memory_write(calls):
                 issues.append(
-                    "memory write claimed without a successful mcp.memory.add or mcp.memory.write in this turn"
+                    "memory write claimed without a successful agents_memory.write_receipt.v1 or mcp.memory.add in this turn"
                 )
         elif _FILE_SAVE.search(sentence):
             if not _has_file_write(calls):
@@ -1041,21 +1048,65 @@ def _number_in_evidence(number: str, evidence: str) -> bool:
     return bool(re.search(rf"(?<!\d){re.escape(number)}(?!\d)", evidence or ""))
 
 
+HARNESS_RECEIPT_SCHEMA = "agents_harness.tool_receipt.v1"
+MEMORY_WRITE_RECEIPT_SCHEMA = "agents_memory.write_receipt.v1"
+
+
+def _is_memory_write_tool(name: str) -> bool:
+    low = name.lower().replace("_", ".")
+    return "memory.add" in low or "memory.write" in low
+
+
+def receipts_as_tool_calls(receipts: list[Any] | None) -> list[dict[str, Any]]:
+    """Map harness receipts onto the tool-call shape ``review_turn`` already checks.
+
+    A receipt counts only when ``success`` is true and the schema is
+    ``agents_harness.tool_receipt.v1``. A memory add or write counts only when
+    the nested payload is ``agents_memory.write_receipt.v1`` and is not
+    ``verified: false``.
+    """
+    calls: list[dict[str, Any]] = []
+    for item in receipts or []:
+        if not isinstance(item, dict) or item.get("success") is not True:
+            continue
+        schema = str(item.get("schema") or "")
+        if schema != HARNESS_RECEIPT_SCHEMA:
+            continue
+        tool = str(item.get("tool") or "")
+        nested = item.get("receipt") if isinstance(item.get("receipt"), dict) else None
+        nested_schema = str((nested or {}).get("schema") or "")
+        if _is_memory_write_tool(tool) or nested_schema == MEMORY_WRITE_RECEIPT_SCHEMA:
+            if nested_schema != MEMORY_WRITE_RECEIPT_SCHEMA or (nested or {}).get("verified") is False:
+                continue
+            calls.append({"name": tool or "mcp.memory.write", "ok": True, "arguments": nested})
+            continue
+        calls.append({"name": tool, "ok": True, "arguments": nested or {}})
+    return calls
+
+
 def review_turn(
     assistant_text: str,
     *,
     tool_calls: list[Mapping[str, Any]] | None = None,
+    receipts: list[Any] | None = None,
     checked: Mapping[str, str] | None = None,
     evidence: str = "",
     prior_context: str = "",
     required_sources: tuple[str, ...] = _REQUIRED_SOURCES,
+    scope: str = "all",
 ) -> list[str]:
     """Review a draft the way the evidence policy requires.
 
     ``checked`` maps a source id to the result string (``no hit``, ``not scanned``,
     ``3 record(s)``, …). ``evidence`` is the text actually retrieved.
+    ``receipts`` are ``agents_harness.tool_receipt.v1`` objects and replace
+    ``tool_calls`` for the side-effect check. ``scope="side_effects"`` is the
+    harness final check: it does not score absence or truncated text, because
+    that hook does not receive the retrieved sources.
     """
-    calls = list(tool_calls or [])
+    calls = receipts_as_tool_calls(receipts) if receipts is not None else list(tool_calls or [])
+    if scope == "side_effects":
+        return [f"side_effect: {item}" for item in flag_unbacked_side_effects(assistant_text, calls)]
     sources = dict(checked or {})
     issues: list[str] = []
     if claims_global_absence(assistant_text):
@@ -1078,6 +1129,14 @@ def review_turn(
     if evidence or assistant_text:
         issues.extend(f"unsupported: {item}" for item in unsupported_facts(assistant_text, evidence))
     return issues
+
+
+def harness_final_check(text: str, receipts: list[Any]) -> list[str]:
+    """Adapter for ``runner.register_final_check``.
+
+    An empty list means the reply is acceptable. Leftover strings are findings.
+    """
+    return review_turn(text, receipts=receipts, scope="side_effects")
 
 
 def run_evidence(args: argparse.Namespace) -> int:

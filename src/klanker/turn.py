@@ -5,8 +5,11 @@ Installs harness argv shims, then delegates to ``runner.loop``.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
+
+log = logging.getLogger("klanker.turn")
 
 
 def channel_from_argv(argv: list[str]) -> str:
@@ -34,6 +37,12 @@ def main(argv: list[str] | None = None) -> int:
     except ImportError:
         print("Error: agents-harness is not installed.", file=sys.stderr)
         return 1
+    try:
+        from .hooks import register_harness_hooks
+
+        register_harness_hooks()
+    except Exception:
+        log.warning("harness hooks were not registered", exc_info=True)
     try:
         from .shim import install_argv_shim
 
