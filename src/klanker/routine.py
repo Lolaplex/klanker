@@ -52,12 +52,16 @@ TurnFn = Callable[[dict[str, Any]], tuple[int, str]]
 DeliverFn = Callable[[str, str], None]
 
 
-def schedules_dir() -> Path:
+def schedules_path() -> Path:
+    """Schedule job directory. Does not create it."""
     raw = os.environ.get("AGENTS_SCHEDULES_DIR", "").strip()
     if raw:
-        path = Path(raw).expanduser()
-    else:
-        path = Path.home() / ".agents" / "schedules"
+        return Path(raw).expanduser()
+    return Path.home() / ".agents" / "schedules"
+
+
+def schedules_dir() -> Path:
+    path = schedules_path()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -493,6 +497,18 @@ def _send_to_user(send_to_user: Callable[..., Any], cfg: Any, chat_id: int, text
     send_to_user(**kwargs)
 
 
+def _record_run(job: dict[str, Any], minute: str, status: str, reply: str) -> str:
+    """Persist the reply. A recording failure must not hide the turn result."""
+    try:
+        from .evidence import record_routine_run
+
+        row = record_routine_run(job, minute=minute, status=status, reply=reply)
+    except Exception:
+        log.warning("could not record routine run %s (%s)", job.get("name"), status, exc_info=True)
+        return ""
+    return str(row.get("path") or "")
+
+
 def perform_routine(
     job: dict[str, Any],
     *,
@@ -503,6 +519,8 @@ def perform_routine(
 ) -> dict[str, Any]:
     """Run one routine turn. Drop ``NO_UPDATE``. Otherwise deliver via relay.
 
+    Every finished run, including ``NO_UPDATE`` and failures, is written under
+    the routine-runs directory so a later turn can find it outside memory.
     ``under_harness`` is the in-process handler. Harness already records the
     attempt, so clearing the minute stamp on failure does not schedule a retry.
     The verb path (``--scheduled``) still releases the stamp so a failed run
@@ -526,11 +544,14 @@ def perform_routine(
         _release()
         raise
     if code != 0:
+        artifact = _record_run(job, minute, "failed", reply)
         _release()
-        return {"status": "failed", "reply": reply, "name": job.get("name")}
+        return {"status": "failed", "reply": reply, "name": job.get("name"), "artifact": artifact}
     if is_no_update(reply) or not reply.strip():
+        quiet = "no_update" if reply.strip() else "empty"
+        artifact = _record_run(job, minute, quiet, reply)
         _consume_one_shot(job, path)
-        return {"status": "no_update" if reply.strip() else "empty", "reply": reply, "name": job.get("name")}
+        return {"status": quiet, "reply": reply, "name": job.get("name"), "artifact": artifact}
     user = str(job.get("user") or "").strip()
     channel = resolve_channel(str(job.get("channel") or ""))
     try:
@@ -555,13 +576,16 @@ def perform_routine(
             print(reply)
             status = "local"
     except Exception:
+        _record_run(job, minute, "undelivered", reply)
         _release()
         raise
+    artifact = _record_run(job, minute, status, reply)
     _consume_one_shot(job, path)
     return {
         "status": status,
         "reply": reply,
         "name": job.get("name"),
+        "artifact": artifact,
     }
 
 

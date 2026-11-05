@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from . import __version__
+from .evidence import evidence_policy_lines, workspace_path
 from .sensing import HostCapabilities
 
 
@@ -16,10 +17,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
     installed_str = ", ".join(installed) if installed else "none (minimal core only)"
     missing_str = ", ".join(missing) if missing else "none (fully equipped)"
 
-    workspace_env = os.environ.get("AGENTS_WORKSPACE_DIR", "").strip()
-    if not workspace_env:
-        agents_home = os.environ.get("AGENTS_HOME", "").strip()
-        workspace_env = f"{agents_home}/workspace" if agents_home else "~/.agents/workspace"
+    workspace_env = workspace_path().as_posix()
 
     lines = [
         f"You are Klanker (v{__version__}), an autonomous machine actor.",
@@ -74,6 +72,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "   - Use `call_job` with `mcp.traces.audit` or `mcp.traces.seal` to audit execution integrity or seal session records.",
         "   - Cryptographic hashes and seal digests verify authenticity for system briefings and audit logs.",
     ]
+    lines.extend(evidence_policy_lines())
 
     return "\n".join(lines).strip()
 

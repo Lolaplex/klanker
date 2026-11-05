@@ -83,6 +83,20 @@ def build_parser() -> argparse.ArgumentParser:
     routine_run.add_argument("--scheduled", action="store_true", help="Respect same-minute dedupe (ticker path)")
     routine_run.add_argument("--force", action="store_true", help="Run even if this minute already ran")
 
+    evidence_p = sub.add_parser(
+        "evidence",
+        help="List routine outputs and workspace files by day (read-only)",
+    )
+    evidence_p.add_argument("--from", dest="date_from", required=True, help="First day YYYY-MM-DD (inclusive)")
+    evidence_p.add_argument("--to", dest="date_to", required=True, help="Last day YYYY-MM-DD (inclusive)")
+    evidence_p.add_argument("--json", action="store_true", help="Print the coverage report as JSON")
+    evidence_p.add_argument(
+        "--root",
+        action="append",
+        default=[],
+        help="Extra directory to scan (repeatable). Does not search memory or traces.",
+    )
+
     return parser
 
 
@@ -123,7 +137,19 @@ def run_repl(
     return 0
 
 
-KNOWN_SUBCOMMANDS = {"sense", "prompt", "serve", "cron", "chat", "remind", "audit", "routine", "-h", "--help"}
+KNOWN_SUBCOMMANDS = {
+    "sense",
+    "prompt",
+    "serve",
+    "cron",
+    "chat",
+    "remind",
+    "audit",
+    "routine",
+    "evidence",
+    "-h",
+    "--help",
+}
 
 
 def parse_cli_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, str]:
@@ -231,6 +257,11 @@ def main(argv: list[str] | None = None) -> int:
         from .routine import dispatch
 
         return dispatch(args)
+
+    elif args.command == "evidence":
+        from .evidence import run_evidence
+
+        return run_evidence(args)
 
     elif args.command == "cron":
         if not nucleus.caps.has_harness:
