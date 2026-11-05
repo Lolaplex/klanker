@@ -240,13 +240,19 @@ class TestRoutines(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self._old = os.environ.get("AGENTS_SCHEDULES_DIR")
+        self._old_runs = os.environ.get("AGENTS_ROUTINE_RUNS_DIR")
         os.environ["AGENTS_SCHEDULES_DIR"] = self.tmp.name
+        os.environ["AGENTS_ROUTINE_RUNS_DIR"] = str(Path(self.tmp.name) / "runs")
 
     def tearDown(self):
         if self._old is None:
             os.environ.pop("AGENTS_SCHEDULES_DIR", None)
         else:
             os.environ["AGENTS_SCHEDULES_DIR"] = self._old
+        if self._old_runs is None:
+            os.environ.pop("AGENTS_ROUTINE_RUNS_DIR", None)
+        else:
+            os.environ["AGENTS_ROUTINE_RUNS_DIR"] = self._old_runs
         self.tmp.cleanup()
 
     def test_add_list_remove(self):

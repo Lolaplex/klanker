@@ -42,13 +42,13 @@ pip install "klanker[all]"       # All optional extensions
 | Layer | Responsibility | Stack / Package |
 | :--- | :--- | :--- |
 | **Brain** | Deterministic loop, LLM streaming, Cordis kernel, Koru schedules | `agents-harness` |
-| **Memory & Docs** | Persistent local markdown memory, typed facts, header-aware BM25 doc search | `agents-memory`, `agents-docs` |
+| **Memory** | Persistent local markdown memory and typed facts. Search covers that tree only | `agents-memory` |
 | **Observability** | Append-only JSONL event logging & turn reconstruction | `agents-traces` |
 | **I/O Gateway** | Universal inbound/outbound HTTP (`/v1/turn`, `/v1/inject`) and Telegram long-poll | `agents-relay` |
 | **Tools & Feelers** | Jailed execution, CalDAV calendar, CDP browser, agent DID keys | `agents-terminal`, `agents-calendar`, `agents-browser`, `agents-keys` |
 
 - **Brain (`agents-harness`)**: Deterministic execution loop, LLM completions, Cordis job catalog, and Koru scheduled flows.
-- **Memory & Docs (`agents-memory`, `agents-docs`)**: Persistent local markdown memory and header-aware documentation search.
+- **Memory (`agents-memory`)**: Persistent local markdown memory and typed facts. A memory search covers that indexed tree only.
 - **Tracing (`agents-traces`)**: Zero-bloat JSONL observability and turn reconstruction.
 - **Relay (`agents-relay`)**: Stdlib HTTP and Telegram gateway for turns, alerts, and notifications.
 - **Calendar & Tools (`agents-calendar`, `agents-terminal`, optional `agents-browser`, `agents-keys`)**: Pre-wired capabilities for schedules, safe commands, and web interaction.
@@ -63,7 +63,7 @@ pip install "klanker[all]"       # All optional extensions
 - [x] **Autonomous Self-Equipping**: Dynamic feeler and tool self-installation via `mcp.terminal` on demand.
 - [x] **Dynamic System Prompt (`klanker prompt`)**: Context-aware prompt generation grounded in host capabilities and time.
 - [x] **Multi-Surface Shell**: Interactive REPL, one-shot CLI turns, background care worker (`cron`), and gateway server (`serve`).
-- [x] **Full Agent Tooling Integration**: Core bindings for `agents-harness`, `agents-relay`, `agents-memory`, `agents-docs`, `agents-traces`, `agents-terminal`, and `agents-calendar`.
+- [x] **Full Agent Tooling Integration**: Core bindings for `agents-harness`, `agents-relay`, `agents-memory`, `agents-traces`, `agents-terminal`, and `agents-calendar`.
 - [x] **Telegram Reminders**: Dynamic reminder scheduling routed to `agents-relay send`.
 
 ### Planned (Roadmap)
@@ -86,6 +86,7 @@ pip install "klanker[all]"       # All optional extensions
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
 | `klanker remind add --user <user> --channel <channel> --at <when> --text <msg>` | Fixed-text reminder on that channel |
 | `klanker routine add\|list\|remove\|run` | LLM routines (`prompt` + `at` or `cron`) |
+| `klanker evidence --from <day> --to <day>` | Per-day routine-run and workspace files (read-only; does not search memory or traces) |
 
 ---
 
@@ -96,6 +97,8 @@ pip install "klanker[all]"       # All optional extensions
 A harness that exposes `register_routine_handler` locks `<schedules>/tick.lock` inside `tick()`. Klanker does not lock that file. A second flock on it in the same process deadlocks. On older harness builds (no handler), the ticker takes a non-blocking lock on a different file, `~/.agents/schedules/.tick.lock` (or `$AGENTS_SCHEDULES_DIR/.tick.lock`), so two Klanker processes do not overlap. The scheduler starts each `tick()` on its own thread so a long job cannot push the next cron slot past the grace window.
 
 Routines are job files with `"kind": "routine"`. The verb is `python -m klanker routine run <name> --scheduled`, so a verb-only harness tick still runs them. Each job stores the originating `channel` and `user` (the turn channel, or `KLANKER_CHANNEL`, or `local`). A same-minute duplicate is dropped via `<name>.json.last`. Replies that are exactly `NO_UPDATE` (or start with it) are not sent. Telegram chat ids go out through `agents-relay send`. Any other channel is printed locally, including an HTTP user such as `anonymous`. `klanker routine add` without `--timezone` stores `runner.schedule.configured_timezone()` (`AGENTS_TIMEZONE`, then `TZ`, then `~/.agents/config.json`, else UTC). The routine turn subprocess timeout is 30 seconds under the job `timeout_sec`. The default `timeout_sec` is the harness approval wait (`AGENTS_APPROVAL_TIMEOUT`, else the approver `--timeout` plus 15 seconds) plus 330 seconds, 645 with the default approver, so a turn waiting on an approval is not killed first. Routines added through `mcp.schedule.add` without a timeout get the same default. When the installed harness accepts `--detached-session`, routine turns pass it.
+
+Each finished routine run, including `NO_UPDATE` and failures, is written under `~/.agents/routine-runs/<name>/` (`AGENTS_ROUTINE_RUNS_DIR`, or `$AGENTS_HOME/routine-runs`): `index.jsonl` plus one markdown file. Each write replaces the file in one step. Runs older than 90 days, and runs past the newest 2000, are removed (`AGENTS_ROUTINE_RUNS_KEEP_DAYS`, `AGENTS_ROUTINE_RUNS_KEEP_COUNT`). Those files are not part of the memory index unless a turn adds them. `klanker evidence --from YYYY-MM-DD --to YYYY-MM-DD` lists them and the workspace by day.
 
 `klanker serve` sets `AGENTS_MODULES_DIR` to the overlay directory (`~/.agents/modules`, or `/data/.agents/modules` in the image) when it is unset. Harness ignores overlay modules, including `mcp.schedule.add`, unless that variable is set. A custom `LOOP_CMD` skips Klanker's system prompt and `klanker.turn` shims; serve logs a warning when it is set.
 
