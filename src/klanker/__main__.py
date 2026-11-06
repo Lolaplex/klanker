@@ -72,6 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
     shell_p.add_argument("--session", type=str, default="", help="Resume session id")
     shell_p.add_argument("--no-gateway", action="store_true", help="Builtins/exec only, no agent tier")
 
+    # 3c. Stop the local daemon
+    sub.add_parser("stop", help="Stop the local klanker daemon (pid file)")
+
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
     cron_p.add_argument("--flow", type=str, default="", help="Run specific flow name")
@@ -118,6 +121,7 @@ KNOWN_SUBCOMMANDS = {
     "prompt",
     "serve",
     "shell",
+    "stop",
     "cron",
     "chat",
     "remind",
@@ -228,7 +232,16 @@ def main(argv: list[str] | None = None) -> int:
         sub_argv = ["serve"]
         if getattr(args, "no_telegram", False):
             sub_argv.append("--no-telegram")
-        return relay_main(sub_argv)
+
+        from . import daemon as _daemon
+
+        pid_path = _daemon.daemon_pid_path()
+        pid_path.parent.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text(str(os.getpid()), encoding="utf-8")
+        try:
+            return relay_main(sub_argv)
+        finally:
+            _daemon.release_pid_file(pid_path, os.getpid())
 
     elif args.command == "routine":
         from .routine import dispatch
@@ -240,13 +253,28 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_evidence(args)
 
+    elif args.command == "stop":
+        from . import daemon as _daemon
+
+        return _daemon.stop_daemon()
+
     elif args.command == "shell":
+        from . import daemon as _daemon
         from .shell.repl.loop import run_interactive_shell
 
+        url = getattr(args, "url", "http://127.0.0.1:8787") or "http://127.0.0.1:8787"
+        if not getattr(args, "no_gateway", False) and _daemon._is_loopback(url):
+            if not _daemon.relay_health(url) and _daemon.ensure_daemon(url):
+                print(f"klanker daemon started at {url}")
+            elif not _daemon.relay_health(url):
+                print(
+                    f"warning: no relay at {url} — agent tier unavailable",
+                    file=sys.stderr,
+                )
         return run_interactive_shell(
             plain=bool(getattr(args, "plain", False)),
             stream=bool(getattr(args, "stream", False)),
-            url=getattr(args, "url", "http://127.0.0.1:8787"),
+            url=url,
             secret=getattr(args, "secret", "") or "",
             user=getattr(args, "user", "local") or "local",
             project=getattr(args, "project", "") or "",
@@ -288,16 +316,28 @@ def main(argv: list[str] | None = None) -> int:
                 return nucleus.run_turn(message=piped_msg, user=user, provider=provider, seal=seal)
             return 0
 
-        # Interactive shell: agent shell client when attached to a TTY
+        # Interactive shell: ensure local daemon, then agent shell client
+        from . import daemon as _daemon
         from .overlay import ensure_default_overlay
-
-        ensure_default_overlay()
         from .shell.repl.loop import run_interactive_shell
 
-        return run_interactive_shell(
+        ensure_default_overlay()
+        url = _daemon.DEFAULT_RELAY_URL
+        if not _daemon.relay_health(url):
+            if _daemon.ensure_daemon(url):
+                print(f"klanker daemon started at {url}")
+            else:
+                print(
+                    f"warning: no relay at {url} — agent tier unavailable",
+                    file=sys.stderr,
+                )
+        rc = run_interactive_shell(
             user=user,
             provider=provider or "",
         )
+        if _daemon.relay_health(url):
+            print(f"\ndaemon still running at {url} — `klanker stop` to halt")
+        return rc
 
 
 if __name__ == "__main__":
