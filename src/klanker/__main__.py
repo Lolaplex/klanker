@@ -59,6 +59,19 @@ def build_parser() -> argparse.ArgumentParser:
     serve_p = sub.add_parser("serve", help="Start I/O Gateway (HTTP /v1/turn & Telegram)")
     serve_p.add_argument("--no-telegram", action="store_true", help="Disable Telegram polling")
 
+    # 3b. Interactive agent shell (client of a running relay)
+    shell_p = sub.add_parser("shell", help="Interactive shell — builtins, exec, agent tier via relay")
+    shell_p.add_argument("--plain", action="store_true", help="Force line-based UI (no TUI)")
+    shell_p.add_argument("--stream", action="store_true", help="Stream agent replies (SSE /v1/stream)")
+    shell_p.add_argument("--url", default="http://127.0.0.1:8787", help="Relay base URL")
+    shell_p.add_argument("--secret", default="", help="Relay secret (X-Gateway-Secret)")
+    shell_p.add_argument("--user", type=str, default="local", help="User alias")
+    shell_p.add_argument("--project", type=str, default="", help="Project name")
+    shell_p.add_argument("--provider", type=str, default="", help="LLM provider")
+    shell_p.add_argument("--persona", type=str, default="default", help="Persona")
+    shell_p.add_argument("--session", type=str, default="", help="Resume session id")
+    shell_p.add_argument("--no-gateway", action="store_true", help="Builtins/exec only, no agent tier")
+
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
     cron_p.add_argument("--flow", type=str, default="", help="Run specific flow name")
@@ -100,47 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def run_repl(
-    nucleus: Nucleus,
-    *,
-    user: str = "user",
-    provider: str | None = None,
-    seal: bool = False,
-) -> int:
-    """Run an interactive multi-turn REPL loop retaining conversation session."""
-    import uuid
-    from . import __version__
-    session_id = f"ses_{uuid.uuid4().hex[:12]}"
-    print(f"klanker (v{__version__}) — interactive chat. Type 'exit' or Ctrl+C to quit.\n")
-
-    while True:
-        try:
-            prompt = input("klanker> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-
-        if not prompt:
-            continue
-        if prompt.lower() in ("exit", "quit", ":q"):
-            break
-
-        nucleus.run_turn(
-            message=prompt,
-            user=user,
-            session=session_id,
-            provider=provider,
-            seal=seal,
-        )
-        print()
-
-    return 0
-
-
 KNOWN_SUBCOMMANDS = {
     "sense",
     "prompt",
     "serve",
+    "shell",
     "cron",
     "chat",
     "remind",
@@ -263,6 +240,22 @@ def main(argv: list[str] | None = None) -> int:
 
         return run_evidence(args)
 
+    elif args.command == "shell":
+        from .shell.repl.loop import run_interactive_shell
+
+        return run_interactive_shell(
+            plain=bool(getattr(args, "plain", False)),
+            stream=bool(getattr(args, "stream", False)),
+            url=getattr(args, "url", "http://127.0.0.1:8787"),
+            secret=getattr(args, "secret", "") or "",
+            user=getattr(args, "user", "local") or "local",
+            project=getattr(args, "project", "") or "",
+            provider=getattr(args, "provider", "") or "",
+            persona=getattr(args, "persona", "default") or "default",
+            session=getattr(args, "session", "") or "",
+            no_gateway=bool(getattr(args, "no_gateway", False)),
+        )
+
     elif args.command == "cron":
         if not nucleus.caps.has_harness:
             print("Error: agents-harness is not installed. Install via pip install agents-harness", file=sys.stderr)
@@ -295,11 +288,16 @@ def main(argv: list[str] | None = None) -> int:
                 return nucleus.run_turn(message=piped_msg, user=user, provider=provider, seal=seal)
             return 0
 
-        # Interactive REPL
+        # Interactive shell: agent shell client when attached to a TTY
         from .overlay import ensure_default_overlay
 
         ensure_default_overlay()
-        return run_repl(nucleus, user=user, provider=provider, seal=seal)
+        from .shell.repl.loop import run_interactive_shell
+
+        return run_interactive_shell(
+            user=user,
+            provider=provider or "",
+        )
 
 
 if __name__ == "__main__":

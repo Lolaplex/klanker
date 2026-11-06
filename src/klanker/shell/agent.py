@@ -27,7 +27,7 @@ def harness_flag(flag: str) -> str:
 def agent_turn(state: ShellState, message: str) -> list[str]:
     gw = state.gateway
     if gw is None:
-        return ["agent tier unavailable (install agents-gateway and pass --url)"]
+        return ["agent tier unavailable (install agents-relay and pass --url)"]
     new_session = state.pending_new_session
     state.pending_new_session = False
     if state.stream:

@@ -10,7 +10,7 @@ from .plain import run_plain
 from .tui import run_tui
 
 if TYPE_CHECKING:
-    from agents_gateway.client import GatewayClient
+    from agents_relay.client import GatewayClient
 
 
 def _default_project() -> str:
@@ -31,7 +31,7 @@ def _gateway_client(
     persona: str,
     session: str,
 ) -> GatewayClient:
-    from agents_gateway.client import GatewayClient
+    from agents_relay.client import GatewayClient
 
     proj = (project or "").strip() or _default_project()
     client = GatewayClient(

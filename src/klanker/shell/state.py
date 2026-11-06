@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from agents_gateway.client import GatewayClient
+    from agents_relay.client import GatewayClient
 
 
 @dataclass
