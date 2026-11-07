@@ -120,7 +120,20 @@ def test_clipped_trace_is_recovered_via_read_content(monkeypatch, tmp_path):
 
 
 def test_saved_claim_without_receipt_triggers_revision_flag(monkeypatch, tmp_path, capsys):
+    """Live loop path. Skips when the stack cannot start a turn.
+
+    runner.loop reads UserRecord.timezone. Current agents-traces UserRecord
+    has no such field, so this is not an end-to-end pass and it is not shimmed.
+    """
     pytest.importorskip("runner")
+    from agents_traces.identity import UserRecord
+
+    if not hasattr(UserRecord, "timezone"):
+        pytest.skip(
+            "blocked E2E: runner.loop reads UserRecord.timezone; "
+            "agents-traces UserRecord has no timezone. Not shimmed. "
+            "Receipt gates are unit tests in test_receipt_guards.py."
+        )
     monkeypatch.setenv("AGENTS_TRACES_DIR", str(tmp_path / "traces"))
     monkeypatch.setenv("AGENTS_CONTENT_DIR", str(tmp_path / "content"))
     monkeypatch.setenv("AGENTS_IDENTITY_PATH", str(tmp_path / "identity.json"))

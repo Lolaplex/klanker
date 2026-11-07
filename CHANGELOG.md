@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A memory save counts only when `verified` is the boolean true on a memory-tool receipt. A receipt nested in another tool, or a receipt for a different target, does not clear the claim. A named target with no `id` or `path` on the receipt stays unsupported.
+- `read_content` and `mcp.terminal.read` count as a full source only when page offset, length, and EOF cover the body from the start. A positive limit alone does not.
+- The final check flags a claim that files do not exist. A memory miss is not that proof, and the check does not see read-only searches.
+- `klanker evidence` also lists dated markdown under `$AGENTS_HOME/briefings`. The report names paths and does not treat the listing as the file body.
+- README no longer lists `agents-docs` as an integrated package. It is not a dependency.
+
 ### Added
 - Finished routine runs (including `NO_UPDATE` and failures) are recorded under `routine-runs` (`index.jsonl` and one markdown file per run) so a later turn can find scheduled output that was never added to memory.
 - `klanker evidence --from YYYY-MM-DD --to YYYY-MM-DD` lists routine-run and workspace files for every day in the range. Memory and traces stay separate tool checks.
@@ -17,9 +24,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The system prompt sends clipped trace text to `read_content` and workspace reads to `mcp.terminal.list|read|grep|stat` instead of a shell or a permission ask.
-
-### Fixed
-- README no longer lists `agents-docs` as an integrated package. It is not a dependency.
 
 ## [0.2.1] - 2026-10-21
 

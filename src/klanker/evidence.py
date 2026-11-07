@@ -89,6 +89,25 @@ _MEMORY_CLAIM = re.compile(
     r"(?:\W+(?!memory\b)\w+){0,10}\W+\bmemory\b",
     re.IGNORECASE,
 )
+_NAMED_SAVE = re.compile(
+    r"\b(?:saved|wrote|written|persisted|stored|remembered)\b"
+    r"\s+the\s+([A-Za-z0-9_./-]+)\s+(?:note|briefing|file|summary)\b",
+    re.IGNORECASE,
+)
+_GENERIC_SAVE_NAMES = frozenset(
+    {
+        "summary",
+        "this",
+        "that",
+        "it",
+        "text",
+        "fact",
+        "note",
+        "file",
+        "briefing",
+        "thing",
+    }
+)
 _FILE_SAVE = re.compile(
     r"\b(?:saved|wrote|written|persisted) (?:the |a |this |that )?(?:file|note|summary)\b",
     re.IGNORECASE,
@@ -224,6 +243,7 @@ def evidence_policy_lines() -> list[str]:
     """Prompt section. Paths match the directories this process actually uses."""
     runs = routine_runs_path().as_posix()
     work = workspace_path().as_posix()
+    dated = briefings_path().as_posix()
     from .routine import schedules_path
 
     sched = schedules_path().as_posix()
@@ -240,10 +260,11 @@ def evidence_policy_lines() -> list[str]:
         "   - Traces (`mcp.traces.sessions`, `mcp.traces.inspect`) include session `routine:<name>` and the chat session. Use them for past turns.",
         f"   - Routine outputs: `{runs}` (`index.jsonl` plus one markdown file per finished run, including status no_update). These files are not memory hits unless you added them. Retention removes runs {retention} (`AGENTS_ROUTINE_RUNS_KEEP_DAYS`, `AGENTS_ROUTINE_RUNS_KEEP_COUNT`). A day removed that way is 'no record', not 'does not exist'. `klanker evidence --from YYYY-MM-DD --to YYYY-MM-DD` lists them with workspace files, per day. That command does not search memory or traces.",
         f"   - Workspace: `{work}`. List it. Read dated and undated files before calling a day empty. A date mentioned inside a file is not a record for that day unless the file itself is that day's output.",
+        f"   - Dated markdown under `{dated}` is scanned with the workspace. A memory miss does not hide those files. A listed path is not the file body.",
         f"   - Schedules: `{sched}` shows configured jobs. A job file is not proof that a day ran.",
         "   - Date range: cover every calendar day from the first day through the last day, inclusive. Report each day as a record (path or session) or as a gap. A gap means no record in the sources you checked.",
         "   - Do not ask permission for a read-only investigation. Read-only terminal verbs are `mcp.terminal.list`, `mcp.terminal.read`, `mcp.terminal.grep`, and `mcp.terminal.stat` (declared side_effects read-only). Use them for workspace files. Do not ask, and do not use `mcp.terminal.run` for a read those verbs already cover. `mcp.terminal.run` is mutating. Ask only when a mutating tool needs an approval this host actually requires.",
-        "   - If a tool result or earlier turn is truncated, omitted, clipped, or carries a `<ref digest=\"...\"/>`, call `read_content` with that digest, offset, and limit before you summarize. Page with offset plus the length of the returned text. If `read_content` says the content is unavailable, name the missing span. Do not invent it. Facts, counts, and statuses that are not in the retrieved text must not appear in the reply.",
+        "   - If a tool result or earlier turn is truncated, omitted, clipped, or carries a `<ref digest=\"...\"/>`, call `read_content` with that digest, offset, and limit before you summarize. A page is the full source only when its offset, length, and EOF (`truncated` false) cover the body from the start. A positive limit without that metadata is not a full read. If `read_content` says the content is unavailable, name the missing span. Do not invent it. Facts, counts, and statuses that are not in the retrieved text must not appear in the reply.",
         "   - Claim a side effect (saved, written, sent, scheduled, remembered) only when this turn has a successful tool receipt (`agents_harness.tool_receipt.v1`, success true) for that action (`mcp.memory.add`, `mcp.memory.write`, `mcp.schedule.add`, a real write, or a send). A memory save also needs a nested `agents_memory.write_receipt.v1`. A sentence that says you saved something is not a save.",
     ]
 
@@ -422,12 +443,18 @@ def schedule_note(root: Path) -> str:
     return f"{count} configured routine(s)"
 
 
+def briefings_path() -> Path:
+    """Dated markdown under the agents home. Not created here."""
+    return agents_home() / "briefings"
+
+
 def default_roots() -> list[tuple[str, Path]]:
     from .routine import schedules_path
 
     return [
         ("routine_runs", routine_runs_path()),
         ("workspace", workspace_path()),
+        ("briefings", briefings_path()),
         ("schedules", schedules_path()),
     ]
 
@@ -533,6 +560,8 @@ def _statement(report: Mapping[str, Any]) -> str:
         lines.append(
             f"{len(undated)} undated record(s). Read them before treating a gap as empty."
         )
+    if any(not row.get("gap") for row in report.get("days") or []):
+        lines.append("Listed paths were not opened, so a path is not the file body.")
     gaps = report.get("gaps") or []
     if gaps:
         lines.append("Gaps: " + ", ".join(str(day) for day in gaps))
@@ -966,15 +995,89 @@ def _has_send(calls: list[Mapping[str, Any]]) -> bool:
     return False
 
 
+def _as_int(value: Any) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned.lstrip("-").isdigit():
+            return int(cleaned)
+    return None
+
+
+def _call_args(call: Mapping[str, Any]) -> dict[str, Any]:
+    args = call.get("arguments") if isinstance(call.get("arguments"), dict) else None
+    if args is None and isinstance(call.get("args"), dict):
+        args = call["args"]
+    return args or {}
+
+
+def _page_meta(call: Mapping[str, Any]) -> dict[str, Any]:
+    for key in ("page", "result", "read"):
+        value = call.get(key)
+        if isinstance(value, dict):
+            return value
+    return {}
+
+
+def _is_paging_read(call: Mapping[str, Any]) -> bool:
+    blob = _call_blob(call)
+    name = str(call.get("name") or call.get("tool") or "").lower()
+    return name in {"read_content", "mcp.terminal.read"} or "read_content" in blob or "mcp.terminal.read" in blob
+
+
+def paging_read_covers_source(call: Mapping[str, Any]) -> bool:
+    """True when this page's offset, length, and EOF cover the source from the start.
+
+    ``read_content`` and ``mcp.terminal.read`` page. A positive ``limit`` with no
+    EOF metadata does not prove the rest of the body was retrieved.
+    """
+    if not _succeeded(call) or not _is_paging_read(call):
+        return False
+    args = _call_args(call)
+    page = _page_meta(call)
+    offset = _as_int(page.get("offset"))
+    if offset is None:
+        offset = _as_int(args.get("offset"))
+    if offset is None:
+        offset = 0
+    if offset != 0:
+        return False
+    limit = _as_int(page.get("limit"))
+    if limit is None and "limit" in args:
+        limit = _as_int(args.get("limit"))
+    text = page.get("text")
+    length = len(text) if isinstance(text, str) else None
+    total = _as_int(page.get("total_chars"))
+    if total is None:
+        total = _as_int(page.get("total"))
+    truncated = page.get("truncated") if "truncated" in page else None
+    eof = page.get("eof") if "eof" in page else None
+    if truncated is True or eof is False:
+        return False
+    reached_eof = eof is True or truncated is False
+    if not reached_eof:
+        return False
+    if total is not None and length is not None:
+        return length >= total
+    if limit is not None and limit >= 0:
+        return False
+    return True
+
+
 def is_full_read(call: Mapping[str, Any]) -> bool:
     """True when the call retrieved a whole source, not a preview."""
     if not _succeeded(call):
         return False
+    if _is_paging_read(call):
+        return paging_read_covers_source(call)
     blob = _call_blob(call)
     name = str(call.get("name") or call.get("tool") or "").lower()
-    if name in {"mcp.memory.read", "mcp.traces.inspect", "read_content", "mcp.terminal.read"}:
+    if name in {"mcp.memory.read", "mcp.traces.inspect"}:
         return True
-    if "mcp.memory.read" in blob or "mcp.traces.inspect" in blob or "read_content" in blob or "mcp.terminal.read" in blob:
+    if "mcp.memory.read" in blob or "mcp.traces.inspect" in blob:
         return True
     command = _command(call)
     if not re.search(r"(?:^|[;&|]\s*)(?:cat|type)\s+\S+", command):
@@ -1062,8 +1165,8 @@ def receipts_as_tool_calls(receipts: list[Any] | None) -> list[dict[str, Any]]:
 
     A receipt counts only when ``success`` is true and the schema is
     ``agents_harness.tool_receipt.v1``. A memory add or write counts only when
-    the nested payload is ``agents_memory.write_receipt.v1`` and is not
-    ``verified: false``.
+    its own nested payload is ``agents_memory.write_receipt.v1`` and
+    ``verified`` is the boolean true. A schema on another tool does not count.
     """
     calls: list[dict[str, Any]] = []
     for item in receipts or []:
@@ -1073,15 +1176,129 @@ def receipts_as_tool_calls(receipts: list[Any] | None) -> list[dict[str, Any]]:
         if schema != HARNESS_RECEIPT_SCHEMA:
             continue
         tool = str(item.get("tool") or "")
-        nested = item.get("receipt") if isinstance(item.get("receipt"), dict) else None
-        nested_schema = str((nested or {}).get("schema") or "")
-        if _is_memory_write_tool(tool) or nested_schema == MEMORY_WRITE_RECEIPT_SCHEMA:
-            if nested_schema != MEMORY_WRITE_RECEIPT_SCHEMA or (nested or {}).get("verified") is False:
-                continue
-            calls.append({"name": tool or "mcp.memory.write", "ok": True, "arguments": nested})
+        if not _is_memory_write_tool(tool):
+            calls.append({"name": tool, "ok": True, "arguments": {}})
             continue
-        calls.append({"name": tool, "ok": True, "arguments": nested or {}})
+        nested = item.get("receipt")
+        if not isinstance(nested, dict) or not _verified_memory_write(nested):
+            continue
+        calls.append({"name": tool, "ok": True, "arguments": {"id": nested.get("id"), "path": nested.get("path")}})
     return calls
+
+
+def _verified_memory_write(nested: Any) -> bool:
+    """A memory write counts only when ``verified`` is the boolean true."""
+    if not isinstance(nested, dict):
+        return False
+    if str(nested.get("schema") or "") != MEMORY_WRITE_RECEIPT_SCHEMA:
+        return False
+    return nested.get("verified") is True
+
+
+def explicit_save_targets(sentence: str) -> list[str]:
+    """Names in ``saved the <name> note|briefing|file to memory``.
+
+    Generic words such as ``summary`` are not targets. Other tokens are not guessed.
+    """
+    names: list[str] = []
+    for match in _NAMED_SAVE.finditer(sentence or ""):
+        name = match.group(1)
+        if name.lower() in _GENERIC_SAVE_NAMES:
+            continue
+        names.append(name)
+    return names
+
+
+def verified_memory_receipts(receipts: list[Any] | None) -> list[dict[str, Any]]:
+    """Verified write payloads from memory-tool receipts only.
+
+    A nested schema on another tool, including a schedule result, is not a write.
+    """
+    found: list[dict[str, Any]] = []
+    for item in receipts or []:
+        if not isinstance(item, dict) or item.get("success") is not True:
+            continue
+        if str(item.get("schema") or "") != HARNESS_RECEIPT_SCHEMA:
+            continue
+        if not _is_memory_write_tool(str(item.get("tool") or "")):
+            continue
+        nested = item.get("receipt")
+        if _verified_memory_write(nested):
+            found.append(nested)
+    return found
+
+
+def _target_matches(target: str, nested: Mapping[str, Any]) -> bool:
+    for key in ("id", "path"):
+        value = nested.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        cleaned = value.strip()
+        if target == cleaned:
+            return True
+        tail = cleaned.rstrip("/").split("/")[-1]
+        if tail and target == tail:
+            return True
+    return False
+
+
+def memory_save_findings(text: str, receipts: list[Any] | None) -> list[str]:
+    """Per-sentence save findings.
+
+    A sentence with no explicit target needs one verified memory-tool receipt.
+    A named target must equal that receipt's ``id``, ``path``, or final path
+    segment. A receipt with neither ``id`` nor ``path`` does not support a
+    named target. Unmatched names are rejected; they are not guessed from
+    other words.
+    """
+    backed = verified_memory_receipts(receipts)
+    issues: list[str] = []
+    for sentence in _sentences(text):
+        if _NEGATED_EFFECT.search(sentence) or not _MEMORY_CLAIM.search(sentence):
+            continue
+        targets = explicit_save_targets(sentence)
+        if not backed:
+            issues.append(
+                "memory write claimed without a verified agents_memory.write_receipt.v1 from a memory write tool in this turn"
+            )
+            continue
+        unmatched = [name for name in targets if not any(_target_matches(name, rec) for rec in backed)]
+        if unmatched:
+            issues.append(
+                "memory save names "
+                + ", ".join(unmatched)
+                + " but no verified write receipt for that target is in this turn"
+            )
+    return issues
+
+
+def findings_from_receipts(text: str, receipts: list[Any] | None) -> list[str]:
+    """Final-check findings the hook can actually support.
+
+    Read-only searches are not receipts, so a claim that files do not exist
+    is not treated as proved by a memory miss.
+    """
+    issues = memory_save_findings(text, receipts)
+    calls: list[dict[str, Any]] = []
+    for item in receipts or []:
+        if not isinstance(item, dict) or item.get("success") is not True:
+            continue
+        if str(item.get("schema") or "") != HARNESS_RECEIPT_SCHEMA:
+            continue
+        tool = str(item.get("tool") or "")
+        if _is_memory_write_tool(tool):
+            continue
+        calls.append({"name": tool, "ok": True, "arguments": {}})
+    for sentence in _sentences(text):
+        if _MEMORY_CLAIM.search(sentence):
+            continue
+        issues.extend(flag_unbacked_side_effects(sentence, calls))
+    if claims_global_absence(text):
+        issues.append(
+            "absence: a memory miss does not show that files are absent, "
+            "and these receipts do not include a read of the dated files"
+        )
+    return list(dict.fromkeys(issues))
 
 
 def review_turn(
@@ -1099,11 +1316,13 @@ def review_turn(
 
     ``checked`` maps a source id to the result string (``no hit``, ``not scanned``,
     ``3 record(s)``, …). ``evidence`` is the text actually retrieved.
-    ``receipts`` are ``agents_harness.tool_receipt.v1`` objects and replace
-    ``tool_calls`` for the side-effect check. ``scope="side_effects"`` is the
-    harness final check: it does not score absence or truncated text, because
-    that hook does not receive the retrieved sources.
+    ``receipts`` are ``agents_harness.tool_receipt.v1`` objects. With
+    ``scope="side_effects"`` they drive the harness final check, including a
+    memory-miss absence claim. That hook does not receive file reads, so it
+    does not treat a memory miss as proof the files are gone.
     """
+    if scope == "side_effects" and receipts is not None:
+        return findings_from_receipts(assistant_text, receipts)
     calls = receipts_as_tool_calls(receipts) if receipts is not None else list(tool_calls or [])
     if scope == "side_effects":
         return [f"side_effect: {item}" for item in flag_unbacked_side_effects(assistant_text, calls)]
@@ -1136,7 +1355,7 @@ def harness_final_check(text: str, receipts: list[Any]) -> list[str]:
 
     An empty list means the reply is acceptable. Leftover strings are findings.
     """
-    return review_turn(text, receipts=receipts, scope="side_effects")
+    return findings_from_receipts(text, receipts)
 
 
 def run_evidence(args: argparse.Namespace) -> int:
