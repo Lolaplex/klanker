@@ -83,13 +83,13 @@ class DaemonTests(unittest.TestCase):
             pid_file.write_text("5555")
             with patch.object(daemon, "daemon_pid_path", return_value=pid_file), \
                  patch.object(daemon, "relay_health", return_value=False), \
-                 patch("subprocess.run") as run, \
+                 patch("os.kill") as kill, \
                  patch("time.sleep", return_value=None):
                 rc = daemon.stop_daemon("http://127.0.0.1:8787")
             self.assertEqual(rc, 0)
             self.assertFalse(pid_file.exists())
-            run.assert_called_once()
-            self.assertIn("5555", run.call_args[0][0])
+            kill.assert_called_once()
+            self.assertEqual(kill.call_args[0][0], 5555)
 
     def test_stop_daemon_no_pidfile(self):
         with patch.object(daemon, "daemon_pid_path", return_value=Path("nope.pid")):

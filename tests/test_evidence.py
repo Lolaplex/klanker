@@ -145,9 +145,12 @@ def test_saved_claim_requires_a_memory_write():
     assert flag_unbacked_side_effects(claim, [{"name": "mcp.memory.search", "ok": True}])
     assert flag_unbacked_side_effects(claim, [{"name": "mcp.memory.add", "ok": False}])
     assert flag_unbacked_side_effects(claim, [{"name": "mcp.memory.add", "status": "denied"}])
-    assert flag_unbacked_side_effects(claim, [{"name": "mcp.memory.add", "ok": True}]) == []
+    executed = flag_unbacked_side_effects(claim, [{"name": "mcp.memory.add", "ok": True}])
+    assert executed
+    assert "unevidenced save claim" in " ".join(executed)
+    assert "retry" not in " ".join(executed).lower()
     wrapped = [{"name": "call_job", "ok": True, "arguments": {"name": "mcp.memory.add", "fact": "summary"}}]
-    assert flag_unbacked_side_effects(claim, wrapped) == []
+    assert flag_unbacked_side_effects(claim, wrapped)
     assert flag_unbacked_side_effects("I scheduled a reminder.", [])
     assert flag_unbacked_side_effects("I sent the message.", [{"name": "mcp.memory.add", "ok": True}])
 
