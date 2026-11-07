@@ -265,7 +265,7 @@ def evidence_policy_lines() -> list[str]:
         "   - Date range: cover every calendar day from the first day through the last day, inclusive. Report each day as a record (path or session) or as a gap. A gap means no record in the sources you checked.",
         "   - Do not ask permission for a read-only investigation. Read-only terminal verbs are `mcp.terminal.list`, `mcp.terminal.read`, `mcp.terminal.grep`, and `mcp.terminal.stat` (declared side_effects read-only). Use them for workspace files. Do not ask, and do not use `mcp.terminal.run` for a read those verbs already cover. `mcp.terminal.run` is mutating. Ask only when a mutating tool needs an approval this host actually requires.",
         "   - If a tool result or earlier turn is truncated, omitted, clipped, or carries a `<ref digest=\"...\"/>`, call `read_content` with that digest, offset, and limit before you summarize. A page is the full source only when its offset, length, and EOF (`truncated` false) cover the body from the start. A positive limit without that metadata is not a full read. If `read_content` says the content is unavailable, name the missing span. Do not invent it. Facts, counts, and statuses that are not in the retrieved text must not appear in the reply.",
-        "   - Claim a side effect (saved, written, sent, scheduled, remembered) only when this turn has a successful tool receipt (`agents_harness.tool_receipt.v1`, success true) for that action (`mcp.memory.add`, `mcp.memory.write`, `mcp.schedule.add`, a real write, or a send). A memory save also needs a nested `agents_memory.write_receipt.v1`. A sentence that says you saved something is not a save.",
+        "   - Claim a side effect (saved, written, sent, scheduled, remembered) only when this turn has a successful tool receipt (`agents_harness.tool_receipt.v1`, success true) for that action (`mcp.memory.add`, `mcp.memory.write`, `mcp.schedule.add`, a real write, or a send). A nested `agents_memory.write_receipt.v1` (`verified`, `id`, `path`, `args_digest`, or stdout) does not make a memory save verified persistence. A successful call is not proof the bytes persisted, and missing evidence is not proof the call failed and is not a reason to run it again. Keep every sentence that does not claim a save.",
     ]
 
 
@@ -1100,10 +1100,7 @@ def flag_unbacked_side_effects(
         if _NEGATED_EFFECT.search(sentence):
             continue
         if _MEMORY_CLAIM.search(sentence):
-            if not _has_memory_write(calls):
-                issues.append(
-                    "memory write claimed without a successful agents_memory.write_receipt.v1 or mcp.memory.add in this turn"
-                )
+            issues.append(f"{_UNEVIDENCED_SAVE} Claim: {sentence.strip()}")
         elif _FILE_SAVE.search(sentence):
             if not _has_file_write(calls):
                 issues.append("file save claimed without a successful write in this turn")
@@ -1242,33 +1239,30 @@ def _target_matches(target: str, nested: Mapping[str, Any]) -> bool:
     return False
 
 
-def memory_save_findings(text: str, receipts: list[Any] | None) -> list[str]:
-    """Per-sentence save findings.
+# Until a current-call Memory result ABI exists, no legacy field is persistence evidence.
+_UNEVIDENCED_SAVE = (
+    "unevidenced save claim: do not present saving or persistence as verified. "
+    "A successful tool call is not verified content persistence. "
+    "Missing evidence does not mean the call failed and is not a reason to run it again. "
+    "Keep every sentence that does not claim a save."
+)
 
-    A sentence with no explicit target needs one verified memory-tool receipt.
-    A named target must equal that receipt's ``id``, ``path``, or final path
-    segment. A receipt with neither ``id`` nor ``path`` does not support a
-    named target. Unmatched names are rejected; they are not guessed from
-    other words.
+
+def memory_save_findings(text: str, receipts: list[Any] | None) -> list[str]:
+    """Flag save sentences. Legacy receipts do not clear them.
+
+    ``verified``, ``id``, ``path``, UUIDs, ``args_digest``, and stdout are not
+    a current-call persistence result. ``receipts`` is accepted so callers can
+    pass the turn list, and is not consulted to withdraw the finding. A
+    finding withholds the claim. It does not say the call failed and it does
+    not ask for a retry.
     """
-    backed = verified_memory_receipts(receipts)
+    del receipts
     issues: list[str] = []
     for sentence in _sentences(text):
         if _NEGATED_EFFECT.search(sentence) or not _MEMORY_CLAIM.search(sentence):
             continue
-        targets = explicit_save_targets(sentence)
-        if not backed:
-            issues.append(
-                "memory write claimed without a verified agents_memory.write_receipt.v1 from a memory write tool in this turn"
-            )
-            continue
-        unmatched = [name for name in targets if not any(_target_matches(name, rec) for rec in backed)]
-        if unmatched:
-            issues.append(
-                "memory save names "
-                + ", ".join(unmatched)
-                + " but no verified write receipt for that target is in this turn"
-            )
+        issues.append(f"{_UNEVIDENCED_SAVE} Claim: {sentence.strip()}")
     return issues
 
 

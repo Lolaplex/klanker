@@ -62,7 +62,9 @@ def test_saved_claim_needs_a_memory_write_receipt():
     assert harness_final_check(claim, [bare])
     unverified = _memory_receipt(verified=False)
     assert harness_final_check(claim, [unverified])
-    assert harness_final_check(claim, [_memory_receipt()]) == []
+    evidenced = harness_final_check(claim, [_memory_receipt()])
+    assert evidenced
+    assert "unevidenced save claim" in " ".join(evidenced)
 
 
 def test_content_backend_skips_when_traces_is_missing(monkeypatch):
@@ -120,20 +122,19 @@ def test_clipped_trace_is_recovered_via_read_content(monkeypatch, tmp_path):
 
 
 def test_saved_claim_without_receipt_triggers_revision_flag(monkeypatch, tmp_path, capsys):
-    """Live loop path. Skips when the stack cannot start a turn.
+    """Live scripted turn on the PR24 startup pin. Not a delivery fix.
 
-    runner.loop reads UserRecord.timezone. Current agents-traces UserRecord
-    has no such field, so this is not an end-to-end pass and it is not shimmed.
+    Requires runner.user_profile.turn_timezone (harness
+    4bfc58edb5523c01a3b48b93163f2d6d99c2ad40). Raw harness dev c24ce12
+    still crashes on UserRecord.timezone. No timezone shim. The scripted
+    provider repeats the draft, so the delivered reply still contains the
+    unevidenced save. Flags show the check ran. That is not a clean answer.
     """
     pytest.importorskip("runner")
     from agents_traces.identity import UserRecord
+    from runner.user_profile import turn_timezone
 
-    if not hasattr(UserRecord, "timezone"):
-        pytest.skip(
-            "blocked E2E: runner.loop reads UserRecord.timezone; "
-            "agents-traces UserRecord has no timezone. Not shimmed. "
-            "Receipt gates are unit tests in test_receipt_guards.py."
-        )
+    assert turn_timezone(UserRecord(id="u", aliases=[]), {}) == ""
     monkeypatch.setenv("AGENTS_TRACES_DIR", str(tmp_path / "traces"))
     monkeypatch.setenv("AGENTS_CONTENT_DIR", str(tmp_path / "content"))
     monkeypatch.setenv("AGENTS_IDENTITY_PATH", str(tmp_path / "identity.json"))
@@ -151,7 +152,9 @@ def test_saved_claim_without_receipt_triggers_revision_flag(monkeypatch, tmp_pat
 
         def complete(self, req):
             self.calls += 1
-            return CompletionResult(text="I saved the summary to memory.")
+            return CompletionResult(
+                text="The notes list ORANGE_DAY_19. I saved the summary to memory."
+            )
 
     provider = Sticky()
 
@@ -189,8 +192,11 @@ def test_saved_claim_without_receipt_triggers_revision_flag(monkeypatch, tmp_pat
     assert code == 0
     assert provider.calls == 2
     assert "response flagged" in captured.err
+    assert "The notes list ORANGE_DAY_19." in captured.out
     assert "I saved the summary to memory." in captured.out
     trailer = captured.out.split("---agents-loop-trailer---", 1)[1]
     payload = json.loads(trailer.strip().splitlines()[0])
-    assert payload["response_flags"]
-    assert any("memory" in flag for flag in payload["response_flags"])
+    flags = " ".join(payload["response_flags"])
+    assert "unevidenced save claim" in flags
+    assert "did not happen" not in flags.lower()
+    assert "retry" not in flags.lower()

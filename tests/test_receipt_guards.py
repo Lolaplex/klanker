@@ -43,25 +43,76 @@ def _receipt(tool: str, nested: dict | None, success: object = True) -> dict:
     return item
 
 
-def test_only_boolean_verified_true_clears_a_save():
+def _assert_unevidenced(findings: list[str]) -> None:
+    assert findings
+    blob = " ".join(findings).lower()
+    assert "unevidenced save claim" in blob
+    assert "did not happen" not in blob
+    assert "retry" not in blob
+    assert "keep every sentence" in blob
+
+
+def test_legacy_fields_do_not_clear_a_save():
     claim = "I saved the summary to memory."
     missing = _nested()
     missing.pop("verified")
-    flagged = {
-        "verified-false": _receipt("mcp.memory.add", _nested(verified=False)),
-        "verified-missing": _receipt("mcp.memory.add", missing),
-        "verified-null": _receipt("mcp.memory.add", _nested(verified=None)),
-        "verified-string-true": _receipt("mcp.memory.add", _nested(verified="true")),
-        "verified-string-false": _receipt("mcp.memory.add", _nested(verified="false")),
-        "verified-one": _receipt("mcp.memory.add", _nested(verified=1)),
-        "bare-success": _receipt("mcp.memory.add", None),
-        "success-false": _receipt("mcp.memory.add", _nested(), success=False),
-        "success-string": _receipt("mcp.memory.add", _nested(), success="true"),
+    cases = {
+        "no-receipt": [],
+        "verified-false": [_receipt("mcp.memory.add", _nested(verified=False))],
+        "verified-missing": [_receipt("mcp.memory.add", missing)],
+        "verified-null": [_receipt("mcp.memory.add", _nested(verified=None))],
+        "verified-string-true": [_receipt("mcp.memory.add", _nested(verified="true"))],
+        "verified-string-false": [_receipt("mcp.memory.add", _nested(verified="false"))],
+        "verified-one": [_receipt("mcp.memory.add", _nested(verified=1))],
+        "bare-success": [_receipt("mcp.memory.add", None)],
+        "success-false": [_receipt("mcp.memory.add", _nested(), success=False)],
+        "success-string": [_receipt("mcp.memory.add", _nested(), success="true")],
+        "verified-true": [_receipt("mcp.memory.add", _nested(verified=True))],
     }
-    for name, receipt in flagged.items():
-        assert harness_final_check(claim, [receipt]), name
-    assert harness_final_check(claim, [])
-    assert harness_final_check(claim, [_receipt("mcp.memory.add", _nested(verified=True))]) == []
+    for name, receipts in cases.items():
+        _assert_unevidenced(harness_final_check(claim, receipts))
+
+
+def test_stale_orange_and_current_violet_do_not_clear():
+    stale = _receipt(
+        "mcp.memory.add",
+        _nested(id="user/notes/orange", path="user/notes/orange", verified=True, sha256="aa" * 32),
+    )
+    current = _receipt(
+        "mcp.memory.add",
+        _nested(id="user/notes/violet", path="user/notes/violet", verified=False, sha256="bb" * 32),
+    )
+    claims = (
+        "I saved the summary to memory.",
+        "I saved the orange note to memory.",
+        "I saved the violet briefing to memory.",
+    )
+    for claim in claims:
+        _assert_unevidenced(harness_final_check(claim, [stale]))
+        _assert_unevidenced(harness_final_check(claim, [stale, current]))
+
+
+def test_contradictory_id_and_path_do_not_clear_either_name():
+    mixed = _receipt(
+        "mcp.memory.add",
+        _nested(id="user/notes/violet", path="user/notes/orange", verified=True),
+    )
+    for claim in (
+        "I saved the violet briefing to memory.",
+        "I saved the orange note to memory.",
+    ):
+        _assert_unevidenced(harness_final_check(claim, [mixed]))
+
+
+def test_same_path_does_not_clear_a_different_fact():
+    stored = _receipt(
+        "mcp.memory.add",
+        _nested(id="user/notes/orange", path="user/notes/orange", verified=True, sha256="aa" * 32),
+    )
+    _assert_unevidenced(harness_final_check("I saved the orange note to memory.", [stored]))
+    _assert_unevidenced(
+        harness_final_check("I saved the orange note to memory. The fact text is BETA.", [stored])
+    )
 
 
 def test_schedule_receipt_and_other_target_do_not_authorize_a_save():
@@ -73,11 +124,10 @@ def test_schedule_receipt_and_other_target_do_not_authorize_a_save():
         _nested(id="user/notes/unrelated", path="user/notes/unrelated"),
     )
     orange = _receipt("mcp.memory.add", _nested(id="user/notes/orange", path="user/notes/orange"))
-    assert harness_final_check(claim, [unrelated])
-    assert harness_final_check(violet, [orange])
-    both_flags = harness_final_check(both, [orange])
-    assert any("violet" in item for item in both_flags)
-    assert harness_final_check("I saved the orange note to memory.", [orange]) == []
+    _assert_unevidenced(harness_final_check(claim, [unrelated]))
+    _assert_unevidenced(harness_final_check(violet, [orange]))
+    _assert_unevidenced(harness_final_check(both, [orange]))
+    _assert_unevidenced(harness_final_check("I saved the orange note to memory.", [orange]))
 
 
 def test_named_target_without_receipt_id_is_not_supported():
@@ -89,6 +139,7 @@ def test_named_target_without_receipt_id_is_not_supported():
 
 
 def test_limit_without_eof_is_not_a_full_read():
+    """Unit check of review_turn only. The live final_check does not see reads."""
     prior = "tool output clipped:\nHEAD"
     evidence = "HEAD is the start of a longer file"
     partial = review_turn(

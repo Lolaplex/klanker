@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- A memory save counts only when `verified` is the boolean true on a memory-tool receipt. A receipt nested in another tool, or a receipt for a different target, does not clear the claim. A named target with no `id` or `path` on the receipt stays unsupported.
+- A memory save claim stays unevidenced until a current-call Memory result ABI exists. Nested `verified`, `id`, `path`, UUIDs, `args_digest`, and stdout do not clear it, including a generic save, the same path with a different fact, and contradictory `id`/`path`. The finding does not say the call failed and does not ask for a retry.
 - `read_content` and `mcp.terminal.read` count as a full source only when page offset, length, and EOF cover the body from the start. A positive limit alone does not.
 - The final check flags a claim that files do not exist. A memory miss is not that proof, and the check does not see read-only searches.
 - `klanker evidence` also lists dated markdown under `$AGENTS_HOME/briefings`. The report names paths and does not treat the listing as the file body.
