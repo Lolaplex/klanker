@@ -96,7 +96,7 @@ pip install "klanker[all]"       # All optional extensions
 | `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), Telegram long-poll, and the schedule ticker |
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
 | `klanker remind add --user <user> --channel <channel> --at <when> --text <msg>` | Fixed-text reminder on that channel |
-| `klanker routine add\|list\|remove\|run` | LLM routines (`prompt` + `at` or `cron`) |
+| `klanker routine add\|say\|list\|pause\|resume\|remove\|run` | LLM routines (`prompt` + `at` or `cron`). `say` is one sentence. `pause` keeps the job. |
 | `klanker evidence --from <day> --to <day>` | Per-day routine-run and workspace files (read-only; does not search memory or traces) |
 
 ---
@@ -119,6 +119,9 @@ Each finished routine run, including `NO_UPDATE` and failures, is written under 
 klanker remind add --user 123456 --channel telegram --at +10m --text "stand up"
 klanker remind add --user 123456 --channel telegram --cron "0 8 * * 1" --prompt "Weekly review" --timezone UTC
 klanker routine add --name morning --user 123456 --channel telegram --cron "0 8 * * *" --timezone UTC --prompt "Anything new?"
+klanker routine say "Anything new?" --name morning --user 123456 --cron "0 8 * * *"
+klanker routine pause morning
+klanker routine resume morning
 klanker routine list
 klanker routine run morning
 klanker routine remove morning

@@ -23,11 +23,17 @@ from klanker.helpjson import (
 from klanker.routine import (
     add_routine,
     claim_minute,
+    dispatch,
     harness_owns_tick_lock,
     is_no_update,
+    job_path,
     list_routines,
+    load_routine,
+    pause_routine,
     perform_routine,
     remove_routine,
+    resume_routine,
+    routine_handler,
     run_due_schedules,
     start_ticker,
     ticker_enabled,
@@ -269,6 +275,56 @@ class TestRoutines(unittest.TestCase):
         self.assertEqual(len(list_routines()), 1)
         self.assertTrue(remove_routine("morning"))
         self.assertEqual(list_routines(), [])
+
+    def test_say_pause_resume(self):
+        from argparse import Namespace
+        from io import StringIO
+
+        old_user = os.environ.pop("KLANKER_USER", None)
+        try:
+            buf = StringIO()
+            with patch("sys.stdout", buf):
+                code = dispatch(
+                    Namespace(
+                        routine_cmd="say",
+                        prompt="Scan the inbox",
+                        name="inbox",
+                        user="",
+                        at="",
+                        cron="15 8 * * *",
+                        timezone_name="UTC",
+                        timeout_sec=None,
+                        channel="",
+                    )
+                )
+        finally:
+            if old_user is not None:
+                os.environ["KLANKER_USER"] = old_user
+        self.assertEqual(code, 0)
+        row = list_routines()[0]
+        self.assertEqual(row["prompt"], "Scan the inbox")
+        self.assertEqual(row["user"], "local")
+        self.assertFalse(row["paused"])
+
+        pause_routine("inbox")
+        paused = list_routines()[0]
+        self.assertTrue(paused["paused"])
+        stored = json.loads(job_path("inbox").read_text(encoding="utf-8"))
+        self.assertTrue(stored["paused"])
+        self.assertEqual(stored["cron"], "15 8 * * *")
+        self.assertTrue(job_path("inbox").is_file())
+
+        called: list[int] = []
+        skipped = perform_routine(paused, force=True, turn=lambda _job: called.append(1) or (0, "x"))
+        self.assertEqual(skipped["status"], "SKIPPED")
+        self.assertEqual(called, [])
+        self.assertEqual(routine_handler(paused)["status"], "SKIPPED")
+
+        resume_routine("inbox")
+        self.assertFalse(list_routines()[0]["paused"])
+        self.assertTrue(job_path("inbox").is_file())
+        ran = perform_routine(load_routine("inbox"), force=True, turn=lambda _job: (0, "NO_UPDATE"))
+        self.assertEqual(ran["status"], "no_update")
 
     def test_no_update_and_delivery(self):
         job = add_routine(name="pulse", prompt="check", user="7", at="2026-01-01T00:00:00Z")

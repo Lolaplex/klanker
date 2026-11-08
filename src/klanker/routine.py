@@ -236,6 +236,15 @@ def resolve_channel(explicit: str = "") -> str:
     return env or "local"
 
 
+def default_routine_user(explicit: str = "") -> str:
+    """User for a one-sentence routine: explicit arg, then ``KLANKER_USER``, else local."""
+    chosen = str(explicit or "").strip()
+    if chosen:
+        return chosen
+    env = os.environ.get("KLANKER_USER", "").strip()
+    return env or "local"
+
+
 def relay_can_deliver(channel: str, user: str) -> bool:
     """Relay send is Telegram and needs a numeric chat id. Other channels stay local."""
     if str(channel or "").strip().lower() != "telegram":
@@ -349,6 +358,7 @@ def add_routine(
         "expected_exit": 0,
         "timeout_sec": int(timeout_sec or default_routine_timeout_sec()),
         "one_shot": bool(at) and not bool(cron),
+        "paused": False,
         "channel": resolve_channel(channel),
         "timezone": zone,
     }
@@ -377,6 +387,7 @@ def list_routines() -> list[dict[str, Any]]:
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(data, dict) and data.get("kind") == "routine":
+            data["paused"] = bool(data.get("paused"))
             data["_file"] = str(path)
             rows.append(data)
     return rows
@@ -395,6 +406,29 @@ def load_routine(name: str) -> dict[str, Any]:
         raise ValueError(f"{name} is not a routine")
     data["_file"] = str(path)
     return data
+
+
+def _write_job(path: Path, data: dict[str, Any]) -> None:
+    body = {key: value for key, value in data.items() if key != "_file"}
+    path.write_text(json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def set_paused(name: str, paused: bool) -> dict[str, Any]:
+    """Keep the job file. ``paused`` stops the ticker from running a turn."""
+    path = job_path(name)
+    job = load_routine(name)
+    job["paused"] = bool(paused)
+    _write_job(path, job)
+    job["_file"] = str(path)
+    return job
+
+
+def pause_routine(name: str) -> dict[str, Any]:
+    return set_paused(name, True)
+
+
+def resume_routine(name: str) -> dict[str, Any]:
+    return set_paused(name, False)
 
 
 def remove_routine(name: str) -> bool:
@@ -533,7 +567,19 @@ def perform_routine(
     attempt, so clearing the minute stamp on failure does not schedule a retry.
     The verb path (``--scheduled``) still releases the stamp so a failed run
     can be tried again in that minute.
+
+    A paused job returns ``SKIPPED`` before any turn. The harness keeps the
+    file and does not treat that as a finished one-shot.
     """
+    if job.get("paused"):
+        return {
+            "status": "SKIPPED",
+            "reply": "",
+            "name": job.get("name"),
+            "exit_code": 0,
+            "stdout_tail": "",
+            "stderr_tail": "paused",
+        }
     path = Path(str(job.get("_file") or job_path(str(job.get("name") or ""))))
     minute = minute_key(job)
     if not claim_minute(path, minute, force=force):
@@ -702,11 +748,14 @@ def start_ticker() -> threading.Event | None:
 def dispatch(args: argparse.Namespace) -> int:
     cmd = getattr(args, "routine_cmd", None)
     try:
-        if cmd == "add":
+        if cmd in ("add", "say"):
+            user = args.user
+            if cmd == "say":
+                user = default_routine_user(user)
             row = add_routine(
                 name=args.name,
                 prompt=args.prompt,
-                user=args.user,
+                user=user,
                 at=args.at or None,
                 cron=args.cron or None,
                 timezone_name=args.timezone_name,
@@ -717,6 +766,12 @@ def dispatch(args: argparse.Namespace) -> int:
             return 0
         if cmd == "list":
             print(json.dumps(list_routines(), indent=2, ensure_ascii=False))
+            return 0
+        if cmd == "pause":
+            print(json.dumps(pause_routine(args.name), indent=2, ensure_ascii=False))
+            return 0
+        if cmd == "resume":
+            print(json.dumps(resume_routine(args.name), indent=2, ensure_ascii=False))
             return 0
         if cmd == "remove":
             ok = remove_routine(args.name)
@@ -730,8 +785,8 @@ def dispatch(args: argparse.Namespace) -> int:
             force = bool(args.force or not args.scheduled)
             result = perform_routine(job, force=force)
             status = result["status"]
-            if status == "skipped":
-                print("skipped")
+            if status in ("skipped", "SKIPPED"):
+                print("paused" if job.get("paused") else "skipped")
                 return 0
             if status == "no_update":
                 print("NO_UPDATE")
@@ -745,5 +800,5 @@ def dispatch(args: argparse.Namespace) -> int:
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    print("usage: klanker routine add|list|remove|run", file=sys.stderr)
+    print("usage: klanker routine add|say|list|pause|resume|remove|run", file=sys.stderr)
     return 2

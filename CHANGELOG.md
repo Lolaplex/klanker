@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `klanker routine say "<sentence>"` creates a routine from one sentence plus `--at` (`+10m`) or `--cron`. `pause` and `resume` keep that job and stop it from firing; `list` shows `paused`.
 - Finished routine runs (including `NO_UPDATE` and failures) are recorded under `routine-runs` (`index.jsonl` and one markdown file per run) so a later turn can find scheduled output that was never added to memory.
 - `klanker evidence --from YYYY-MM-DD --to YYYY-MM-DD` lists routine-run and workspace files for every day in the range. Memory and traces stay separate tool checks.
 - System prompt rules: name each source checked and keep a miss distinct from non-existence; cover every day of a requested range; do read-only investigation without asking; retrieve truncated text before summarizing; claim a side effect only after a successful tool call in that turn.
