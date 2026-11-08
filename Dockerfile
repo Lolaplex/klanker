@@ -42,12 +42,10 @@ RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
     pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
-RUN useradd -m -d /data klanker && mkdir -p /data/.agents && chown -R klanker:klanker /data
+RUN useradd -m -d /data klanker && mkdir -p /data/.agents/memory /data/.agents/traces /data/.agents/docs && chown -R klanker:klanker /data
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
-
-RUN useradd -m -d /data klanker && mkdir -p /data/.agents/memory /data/.agents/traces /data/.agents/docs && chown -R klanker:klanker /data
 
 USER klanker
 ENV HOME=/data \
