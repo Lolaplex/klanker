@@ -74,7 +74,10 @@ class Nucleus:
             if seal:
                 cmd.append("--seal")
 
-            res = subprocess.run(cmd)
+            hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL}
+            if sys.platform == "win32":
+                hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
+            res = subprocess.run(cmd, **hidden)
             return res.returncode
         else:
             print(

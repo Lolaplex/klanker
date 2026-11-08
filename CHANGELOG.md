@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The system prompt sends clipped trace text to `read_content` and workspace reads to `mcp.terminal.list|read|grep|stat` instead of a shell or a permission ask.
 
 ### Fixed
+- On Windows, `klanker serve` starts its help-json probes without opening a console window.
 - README no longer lists `agents-docs` as an integrated package. It is not a dependency.
 
 ## [0.2.1] - 2026-10-21
