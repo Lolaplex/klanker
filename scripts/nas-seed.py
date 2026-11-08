@@ -3,12 +3,14 @@
 
 Runs ON the NAS via:  ssh sigmanas python3 - < scripts/nas-seed.py
 
-- Copies assistant .agents (memory, docs, rules, skills, identity.json)
-  into klanker's data dir. Missing files only — never overwrites, so it
-  is safe to re-run after klanker has started writing its own memory.
+- Copies assistant .agents (memory, docs, rules, skills, traces,
+  identity.json) into klanker's data dir. Missing files only — never
+  overwrites, so it is safe to re-run after klanker has started writing
+  its own memory.
 - Writes klanker .env from the assistant .env, keeping only keys the
-  relay/serve path reads. TELEGRAM_* is dropped on purpose: the assistant
-  owns telegram polling; klanker serve would poll the same bot twice.
+  relay/serve path reads — including TELEGRAM_*: klanker REPLACES the
+  assistant as the bot owner (assistant container is stopped on cutover
+  — two pollers on one token would race).
 - Ingests assistant.db messages -> klanker traces as agents-traces
   `message` events (origin "ingested", session telegram-<chat_id>),
   split into daily YYYY-MM-DD.jsonl files. Idempotent via sentinel.
@@ -25,10 +27,10 @@ from datetime import datetime, timezone
 
 ASSISTANT = "/volume1/docker/agents-assistant"
 KLANKER = "/volume1/docker/klanker"
-COPY_DIRS = ["memory", "docs", "rules", "skills"]
+COPY_DIRS = ["memory", "docs", "rules", "skills", "traces"]
 COPY_FILES = ["identity.json"]
-KEEP_ENV_PREFIXES = ("GATEWAY_", "RELAY_", "LLM_", "OPENAI_", "OPENROUTER_", "AGENTS_IDENTITY")
-DROP_ENV_PREFIXES = ("TELEGRAM_", "DB_PATH", "HOST_ADAPTER", "AGENTS_MEMORY_PATH", "AGENTS_TRACES_DIR", "AGENTS_HOME")
+KEEP_ENV_PREFIXES = ("GATEWAY_", "RELAY_", "LLM_", "OPENAI_", "OPENROUTER_", "AGENTS_IDENTITY", "TELEGRAM_")
+DROP_ENV_PREFIXES = ("DB_PATH", "HOST_ADAPTER", "AGENTS_MEMORY_PATH", "AGENTS_TRACES_DIR", "AGENTS_HOME")
 SENTINEL = os.path.join(KLANKER, "data/.agents/traces/.assistant-ingest")
 
 
