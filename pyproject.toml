@@ -24,7 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 tui = ["pyratatui>=0.2.9"]
 repl = [
-    "agents-relay @ git+https://github.com/Lolaplex/agents-relay.git@dev",
+    "agents-relay>=0.1.1",
     "pyratatui>=0.2.9",
 ]
 browser = [

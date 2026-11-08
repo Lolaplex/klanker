@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README no longer lists `agents-docs` as an integrated package. It is not a dependency.
 - `klanker.turn` refuses a `--system` that is not a readable file. `runner.loop` would otherwise keep the path string as the system prompt.
 - The running-daemon warning about `AGENTS_WORKSPACE_DIR` fires only when `--workspace` was passed, not when the variable happens to be exported.
+- The `repl` extra depends on `agents-relay>=0.1.1` instead of a git URL. A direct reference cannot be resolved from an index and does not belong in published metadata.
 
 ## [0.2.1] - 2026-10-21
 
