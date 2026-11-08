@@ -443,12 +443,16 @@ def default_turn(job: dict[str, Any]) -> tuple[int, str]:
     ]
     if loop_supports_detached_session():
         cmd.append("--detached-session")
+    hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL}
+    if sys.platform == "win32":
+        hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
     proc = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
         timeout=timeout,
         check=False,
+        **hidden,
     )
     return int(proc.returncode), extract_reply(proc.stdout or "")
 
@@ -466,11 +470,15 @@ def deliver_reply(user: str, text: str, channel: str = "") -> None:
         from agents_relay.config import RelayConfig
         from agents_relay.telegram_adapter import send_to_user
     except ImportError:
+        hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL}
+        if sys.platform == "win32":
+            hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = subprocess.run(
             [sys.executable, "-m", "agents_relay", "send", "--user", target, "--text", text],
             capture_output=True,
             text=True,
             check=False,
+            **hidden,
         )
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "send failed").strip()

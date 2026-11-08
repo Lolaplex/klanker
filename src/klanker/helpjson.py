@@ -412,6 +412,9 @@ def fetch_help_json(module: str, *, timeout: float = 15) -> dict[str, Any] | Non
     env = dict(os.environ)
     env["AGENTS_NO_UPDATE_CHECK"] = "1"
     try:
+        hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL}
+        if sys.platform == "win32":
+            hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
         proc = subprocess.run(
             [sys.executable, "-m", module, "--help-json"],
             capture_output=True,
@@ -419,6 +422,7 @@ def fetch_help_json(module: str, *, timeout: float = 15) -> dict[str, Any] | Non
             timeout=timeout,
             env=env,
             check=False,
+            **hidden,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         log.debug("help-json failed for %s: %s", module, exc)
