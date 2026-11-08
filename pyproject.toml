@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "klanker"
-version = "0.2.1"
+version = "0.2.2"
 description = "Adaptive autonomous agent runtime and terminal companion"
 readme = "README.md"
 license = "MIT"
@@ -12,8 +12,8 @@ license-files = ["LICENSE"]
 authors = [{ name = "Lolaplex" }]
 requires-python = ">=3.10"
 dependencies = [
-    "agents-harness[mcp]>=0.1.0",
-    "agents-relay>=0.1.0",
+    "agents-harness[mcp]>=0.1.2",
+    "agents-relay>=0.1.1",
     "agents-memory>=1.2.0",
     "agents-sync>=0.1.0",
     "agents-traces>=0.1.0",
