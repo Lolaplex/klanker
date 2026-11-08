@@ -29,6 +29,10 @@ klanker sense
 
 # One harness turn (non-interactive)
 klanker chat "ping"
+
+# Code in a repo: the workspace is the repo root
+klanker --workspace ~/Coding/my-repo
+klanker chat "fix the failing test" --workspace ~/Coding/my-repo
 ```
 
 Klanker is **self-equipping**: when you request tools or capabilities in chat (e.g. browser automation, agent key minting), Klanker autonomously installs and equips feelers via its terminal on demand.
@@ -90,9 +94,11 @@ pip install "klanker[all]"       # All optional extensions
 | Command | Description |
 | :--- | :--- |
 | `klanker` | Start interactive multi-turn REPL chat |
+| `klanker --workspace <path>` | REPL with `AGENTS_WORKSPACE_DIR` set to that directory |
 | `klanker "message"` | Run a single turn directly in terminal |
 | `klanker sense [--json]` | Probe host capabilities, installed agent packages, MCP servers, and skills |
-| `klanker prompt` | Inspect dynamic system prompt generated for current host |
+| `klanker prompt [--workspace <path>]` | Inspect dynamic system prompt generated for current host |
+| `klanker chat "message" [--workspace <path>]` | One turn with `AGENTS_WORKSPACE_DIR` set to that directory |
 | `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), Telegram long-poll, and the schedule ticker |
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
 | `klanker remind add --user <user> --channel <channel> --at <when> --text <msg>` | Fixed-text reminder on that channel |
@@ -113,7 +119,7 @@ Each finished routine run, including `NO_UPDATE` and failures, is written under 
 
 `klanker serve` sets `AGENTS_MODULES_DIR` to the overlay directory (`~/.agents/modules`, or `/data/.agents/modules` in the image) when it is unset. Harness ignores overlay modules, including `mcp.schedule.add`, unless that variable is set. A custom `LOOP_CMD` skips Klanker's system prompt and `klanker.turn` shims; serve logs a warning when it is set.
 
-`klanker.turn` is the process that runs the harness loop. When `agents-traces` is installed it registers `read_content` as the content backend, so a `<ref digest="..."/>` can be paged instead of summarized. It also registers the evidence check as the final-response hook: a side effect needs a successful `agents_harness.tool_receipt.v1`, and a memory save also needs `agents_memory.write_receipt.v1`. One revision pass runs; leftover findings are `response_flags`. Read-only terminal commands are `mcp.terminal.list`, `read`, `grep`, and `stat`.
+`klanker.turn` is the process that runs the harness loop. When `agents-traces` is installed it registers `read_content` as the content backend, so a `<ref digest="..."/>` can be paged instead of summarized. It also registers the evidence check as the final-response hook: a side effect needs a successful `agents_harness.tool_receipt.v1`, and a memory save also needs `agents_memory.write_receipt.v1`. One revision pass runs; leftover findings are `response_flags`. Read-only terminal commands are `mcp.terminal.list`, `read`, `grep`, and `stat`. File edits use `mcp.terminal.edit` for existing files and `mcp.terminal.write` for new ones; both are mutating, so they follow the approval mode below. `mcp.terminal.run` is not the file-edit path.
 
 ```bash
 klanker remind add --user 123456 --channel telegram --at +10m --text "stand up"

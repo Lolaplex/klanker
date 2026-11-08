@@ -243,6 +243,7 @@ def evidence_policy_lines() -> list[str]:
         f"   - Schedules: `{sched}` shows configured jobs. A job file is not proof that a day ran.",
         "   - Date range: cover every calendar day from the first day through the last day, inclusive. Report each day as a record (path or session) or as a gap. A gap means no record in the sources you checked.",
         "   - Do not ask permission for a read-only investigation. Read-only terminal verbs are `mcp.terminal.list`, `mcp.terminal.read`, `mcp.terminal.grep`, and `mcp.terminal.stat` (declared side_effects read-only). Use them for workspace files. Do not ask, and do not use `mcp.terminal.run` for a read those verbs already cover. `mcp.terminal.run` is mutating. Ask only when a mutating tool needs an approval this host actually requires.",
+        "   - File edits: change an existing file with `mcp.terminal.edit` (exact `old` to `new`), create a new file with `mcp.terminal.write`. Both are mutating. Do not use `mcp.terminal.run` for a file edit. They need an approval only when this host sets AGENTS_APPROVAL_MODE to ask or strict; unset mode is ungated.",
         "   - If a tool result or earlier turn is truncated, omitted, clipped, or carries a `<ref digest=\"...\"/>`, call `read_content` with that digest, offset, and limit before you summarize. Page with offset plus the length of the returned text. If `read_content` says the content is unavailable, name the missing span. Do not invent it. Facts, counts, and statuses that are not in the retrieved text must not appear in the reply.",
         "   - Claim a side effect (saved, written, sent, scheduled, remembered) only when this turn has a successful tool receipt (`agents_harness.tool_receipt.v1`, success true) for that action (`mcp.memory.add`, `mcp.memory.write`, `mcp.schedule.add`, a real write, or a send). A memory save also needs a nested `agents_memory.write_receipt.v1`. A sentence that says you saved something is not a save.",
     ]
@@ -944,12 +945,33 @@ def _has_file_write(calls: list[Mapping[str, Any]]) -> bool:
     for call in calls:
         if not _succeeded(call):
             continue
+        if _terminal_file_write(call):
+            return True
         command = _command(call)
         if re.search(r"\btee\b", command):
             return True
         if re.search(r"(?<![0-9&])>>?(?![>&])", command):
             return True
     return False
+
+
+def _terminal_file_write(call: Mapping[str, Any]) -> bool:
+    """True for a successful ``mcp.terminal.write`` or ``mcp.terminal.edit`` call."""
+    name = str(call.get("name") or call.get("tool") or "").lower()
+    if name in {"mcp.terminal.write", "mcp.terminal.edit"}:
+        return True
+    args = call.get("arguments")
+    if not isinstance(args, dict):
+        args = call.get("args")
+    if not isinstance(args, dict):
+        return False
+    if str(args.get("name") or "").lower() != "mcp.terminal":
+        return False
+    inner = args.get("arguments")
+    if not isinstance(inner, dict):
+        return False
+    verb = str(inner.get("command_name") or inner.get("command") or "").lower()
+    return verb in {"write", "edit"}
 
 
 def _has_schedule(calls: list[Mapping[str, Any]]) -> bool:

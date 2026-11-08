@@ -9,6 +9,20 @@ from .evidence import evidence_policy_lines, workspace_path
 from .sensing import HostCapabilities
 
 
+def coding_block(workspace: Path) -> list[str]:
+    """Repo rules when the workspace is a git checkout. Empty otherwise."""
+    if not (workspace / ".git").exists():
+        return []
+    return [
+        "",
+        "6. Coding workspace:",
+        f"   - Repo: `{workspace.as_posix()}`. Read `AGENTS.md` in the repo root before you change anything.",
+        "   - Change an existing file with `mcp.terminal.edit` (exact `old` to `new`). Create a new file with `mcp.terminal.write`. Do not use `mcp.terminal.run` for a file edit.",
+        "   - Flow: read the file (`mcp.terminal.read`), edit it, then run the project's tests through `mcp.terminal.run`.",
+        "   - Never `git push`. Leave commits and remotes to the user.",
+    ]
+
+
 def build_system_prompt(caps: HostCapabilities) -> str:
     """Render Klanker's adaptive system prompt based on probed host feelers."""
     installed = [mod for mod, present in caps.suite_modules.items() if present]
@@ -73,6 +87,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "   - Cryptographic hashes and seal digests verify authenticity for system briefings and audit logs.",
     ]
     lines.extend(evidence_policy_lines())
+    lines.extend(coding_block(workspace_path()))
 
     return "\n".join(lines).strip()
 

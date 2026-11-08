@@ -22,12 +22,30 @@ def channel_from_argv(argv: list[str]) -> str:
     return ""
 
 
+def system_from_argv(argv: list[str]) -> str:
+    """Return the ``--system`` value from a ``runner.loop`` argv, if present."""
+    for index, arg in enumerate(argv):
+        if arg == "--system" and index + 1 < len(argv):
+            return argv[index + 1].strip()
+        if arg.startswith("--system="):
+            return arg.split("=", 1)[1].strip()
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
+    from pathlib import Path
+
     from .gating import apply_approval_env
     from .overlay import publish_modules_dir
 
     publish_modules_dir()
     args = list(sys.argv[1:] if argv is None else argv)
+    # runner.loop keeps a non-file --system value as the literal prompt text, so a
+    # stale path would silently become the system prompt. Refuse instead.
+    system = system_from_argv(args)
+    if system and not Path(system).is_file():
+        print(f"Error: --system is not a readable file: {system}", file=sys.stderr)
+        return 2
     channel = channel_from_argv(args)
     if channel:
         os.environ["KLANKER_CHANNEL"] = channel

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `--workspace PATH` on `klanker` (REPL), `klanker chat`, and `klanker prompt`. It resolves the path, requires an existing directory (exit 2 otherwise), and sets `AGENTS_WORKSPACE_DIR` for this process and the spawned `runner.loop`.
+- System prompt: file edits use `mcp.terminal.edit` for existing files and `mcp.terminal.write` for new ones, never `mcp.terminal.run`. A git workspace adds a coding block with the repo path, the root `AGENTS.md`, the read → edit → test flow, and no `git push`.
+- Root `AGENTS.md` for coding agents: role, stack, commands, and the layering rule (no harness internals, suite via CLIs).
 - `klanker routine say "<sentence>"` creates a routine from one sentence plus `--at` (`+10m`) or `--cron`. `pause` and `resume` keep that job and stop it from firing; `list` shows `paused`.
 - Finished routine runs (including `NO_UPDATE` and failures) are recorded under `routine-runs` (`index.jsonl` and one markdown file per run) so a later turn can find scheduled output that was never added to memory.
 - `klanker evidence --from YYYY-MM-DD --to YYYY-MM-DD` lists routine-run and workspace files for every day in the range. Memory and traces stay separate tool checks.
@@ -18,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - The system prompt sends clipped trace text to `read_content` and workspace reads to `mcp.terminal.list|read|grep|stat` instead of a shell or a permission ask.
+- The evidence policy names `mcp.terminal.edit` and `mcp.terminal.write` beside the read-only verbs. Mutating file edits need an approval only when the host sets `AGENTS_APPROVAL_MODE` to `ask` or `strict`.
 
 ### Fixed
 - On Windows, `klanker serve` starts its help-json probes without opening a console window.

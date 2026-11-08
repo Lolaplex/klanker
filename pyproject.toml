@@ -17,7 +17,7 @@ dependencies = [
     "agents-memory>=1.2.0",
     "agents-sync>=0.1.0",
     "agents-traces>=0.1.0",
-    "agents-terminal>=0.0.5",
+    "agents-terminal>=0.0.6",
     "agents-calendar>=0.1.0",
 ]
 

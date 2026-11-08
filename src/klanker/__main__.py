@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+from pathlib import Path
 
 from .nucleus import Nucleus
 from .sensing import probe_host
@@ -25,6 +26,26 @@ def note_custom_loop_cmd() -> None:
     )
 
 
+def apply_workspace(raw: str | None) -> int | None:
+    """Point this process and its spawned turns at a coding workspace.
+
+    Returns an exit code when the path is unusable, otherwise ``None``.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    try:
+        resolved = Path(text).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError):
+        print(f"Error: workspace does not exist: {text}", file=sys.stderr)
+        return 2
+    if not resolved.is_dir():
+        print(f"Error: workspace is not a directory: {text}", file=sys.stderr)
+        return 2
+    os.environ["AGENTS_WORKSPACE_DIR"] = str(resolved)
+    return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="klanker",
@@ -33,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--user", type=str, default="user", help="User alias")
     parser.add_argument("--provider", type=str, default=None, help="LLM provider")
     parser.add_argument("--seal", action="store_true", help="Cryptographically seal tool trace records")
+    parser.add_argument(
+        "--workspace",
+        default=None,
+        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR for this process and spawned turns)",
+    )
 
     sub = parser.add_subparsers(dest="command")
 
@@ -41,7 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
     sense_p.add_argument("--json", action="store_true", help="Output JSON format")
 
     # 1b. Dump system prompt
-    sub.add_parser("prompt", help="Print the dynamic Klanker system prompt")
+    prompt_p = sub.add_parser("prompt", help="Print the dynamic Klanker system prompt")
+    prompt_p.add_argument(
+        "--workspace",
+        default=None,
+        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR)",
+    )
 
     # 1c. Audit trace integrity & replay
     audit_p = sub.add_parser("audit", help="Audit trace integrity and replay verification via agents-traces")
@@ -54,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
     chat_p.add_argument("--user", type=str, default="user", help="User alias")
     chat_p.add_argument("--provider", type=str, default=None, help="LLM provider")
     chat_p.add_argument("--seal", action="store_true", help="Cryptographically seal tool trace records")
+    chat_p.add_argument(
+        "--workspace",
+        default=None,
+        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR for this process and spawned turns)",
+    )
 
     # 3. Serve gateway
     serve_p = sub.add_parser("serve", help="Start I/O Gateway (HTTP /v1/turn & Telegram)")
@@ -169,6 +205,9 @@ def main(argv: list[str] | None = None) -> int:
         install_overlay(generate=False)
         return remind.main(raw[1:])
     args, direct_prompt = parse_cli_args(argv)
+    workspace_error = apply_workspace(getattr(args, "workspace", None))
+    if workspace_error is not None:
+        return workspace_error
     try:
         from . import __version__
         from .updates import check_for_updates
@@ -344,6 +383,12 @@ def main(argv: list[str] | None = None) -> int:
                     f"warning: no relay at {url} — agent tier unavailable",
                     file=sys.stderr,
                 )
+        elif getattr(args, "workspace", None):
+            print(
+                "warning: the running daemon keeps its own AGENTS_WORKSPACE_DIR; "
+                "`klanker stop` then retry to apply --workspace",
+                file=sys.stderr,
+            )
         rc = run_interactive_shell(
             user=user,
             provider=provider or "",
