@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -795,7 +796,13 @@ class TestGatingAndDocs(unittest.TestCase):
         self.assertIn("prompt", schedule["parameters"]["properties"])
         self.assertTrue(schedule["mutates"])
         self.assertFalse((root / "src/klanker/morph.py").exists())
-        self.assertEqual(__version__, "0.1.0")
+        declared = re.search(
+            r'^version = "([^"]+)"',
+            (root / "pyproject.toml").read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(declared)
+        self.assertEqual(__version__, declared.group(1))
         example = json.loads((root / "examples/mcp.json").read_text(encoding="utf-8"))
         self.assertIn("mcpServers", example)
 
