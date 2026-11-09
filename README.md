@@ -94,11 +94,11 @@ pip install "klanker[all]"       # All optional extensions
 | Command | Description |
 | :--- | :--- |
 | `klanker` | Start interactive multi-turn REPL chat |
-| `klanker --workspace <path>` | REPL with `AGENTS_WORKSPACE_DIR` set to that directory |
+| `klanker --workspace <path>` | REPL with `AGENTS_WORKSPACE_DIR` set and the workspace locked to that directory |
 | `klanker "message"` | Run a single turn directly in terminal |
 | `klanker sense [--json]` | Probe host capabilities, installed agent packages, MCP servers, and skills |
 | `klanker prompt [--workspace <path>]` | Inspect dynamic system prompt generated for current host |
-| `klanker chat "message" [--workspace <path>]` | One turn with `AGENTS_WORKSPACE_DIR` set to that directory |
+| `klanker chat "message" [--workspace <path>]` | One turn with `AGENTS_WORKSPACE_DIR` set and the workspace locked to that directory |
 | `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), Telegram long-poll, and the schedule ticker |
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
 | `klanker remind add --user <user> --channel <channel> --at <when> --text <msg>` | Fixed-text reminder on that channel |

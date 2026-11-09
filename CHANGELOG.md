@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `compose.nas.yaml` + `scripts/nas-{deploy,sync}.ps1`, `publish-registry.ps1`, `nas-pull-latest.sh`: SigmaNAS registry deploy flow (build → save → scp → NAS-side load/push → `pull-latest.sh` recreate). Container listens on 8000, host maps 8787 — the port klanker-desktop discovery probes first.
 - `scripts/nas-seed.py`: one-time NAS seed — inherits `.agents` (memory/docs/rules/skills/traces/identity, missing files only) from the assistant project, writes a filtered `.env` (keeps `TELEGRAM_*` — klanker takes over the bot on cutover, replacing the assistant), and ingests `assistant.db` `messages` as `origin:"ingested"` agents-traces `message` events into daily JSONL.
 
+### Changed
+- `--workspace` now also sets `AGENTS_WORKSPACE_LOCK=1`, so pointing a turn at a repo confines it to that repo. A server that only sets `AGENTS_WORKSPACE_DIR` keeps its previous reach.
+
 ### Fixed
 - Dockerfile ran `useradd` twice; the second invocation failed the build.
 - `compose.nas.yaml` starts the container as root (`user: "0"`) so `entrypoint.sh` can chown the bind-mounted `/data` before dropping to the `klanker` user — otherwise mkdir fails and the container restart-loops.

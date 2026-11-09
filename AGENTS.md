@@ -21,7 +21,7 @@ klanker serve                       # HTTP + Telegram gateway
 klanker cron                        # scheduled care flows
 ```
 
-`--workspace PATH` resolves the path, requires an existing directory, and sets `AGENTS_WORKSPACE_DIR` for this process and the spawned `runner.loop`. A missing path exits 2.
+`--workspace PATH` resolves the path, requires an existing directory, and sets `AGENTS_WORKSPACE_DIR` plus `AGENTS_WORKSPACE_LOCK=1` for this process and the spawned `runner.loop`. A missing path exits 2. The lock is a separate switch: a host that only sets `AGENTS_WORKSPACE_DIR` keeps its previous reach.
 
 ## Layering
 

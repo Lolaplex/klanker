@@ -3,6 +3,8 @@ set -e
 
 # Ensure data, workspace, and overlay directories exist
 mkdir -p /data /data/.agents /data/.agents/memory /data/.agents/skills /data/.agents/schedules /data/.agents/modules /data/traces /data/workspace
+# Start directory only. The workspace boundary stays off until a host sets
+# AGENTS_WORKSPACE_LOCK=1, so a server is never confined by accident.
 export AGENTS_WORKSPACE_DIR="${AGENTS_WORKSPACE_DIR:-/data/workspace}"
 export AGENTS_HOME="${AGENTS_HOME:-/data/.agents}"
 # Harness loads overlays only when this is set (default write path is invisible).

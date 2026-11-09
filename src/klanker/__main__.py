@@ -43,6 +43,7 @@ def apply_workspace(raw: str | None) -> int | None:
         print(f"Error: workspace is not a directory: {text}", file=sys.stderr)
         return 2
     os.environ["AGENTS_WORKSPACE_DIR"] = str(resolved)
+    os.environ["AGENTS_WORKSPACE_LOCK"] = "1"
     return None
 
 
@@ -57,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workspace",
         default=None,
-        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR for this process and spawned turns)",
+        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR and locks the workspace for this process and spawned turns)",
     )
 
     sub = parser.add_subparsers(dest="command")
@@ -71,7 +72,7 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_p.add_argument(
         "--workspace",
         default=None,
-        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR)",
+        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR and locks the workspace)",
     )
 
     # 1c. Audit trace integrity & replay
@@ -88,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     chat_p.add_argument(
         "--workspace",
         default=None,
-        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR for this process and spawned turns)",
+        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR and locks the workspace for this process and spawned turns)",
     )
 
     # 3. Serve gateway
@@ -385,7 +386,7 @@ def main(argv: list[str] | None = None) -> int:
                 )
         elif getattr(args, "workspace", None):
             print(
-                "warning: the running daemon keeps its own AGENTS_WORKSPACE_DIR; "
+                "warning: the running daemon keeps its own workspace settings; "
                 "`klanker stop` then retry to apply --workspace",
                 file=sys.stderr,
             )

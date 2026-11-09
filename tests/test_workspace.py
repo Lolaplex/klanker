@@ -51,6 +51,7 @@ def test_workspace_flag_sets_env_for_spawned_loop(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     monkeypatch.delenv("AGENTS_WORKSPACE_DIR", raising=False)
+    monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
     monkeypatch.setenv("AGENTS_HOME", str(tmp_path / "home"))
     caps = _caps()
     assert cli.apply_workspace(str(repo)) is None
@@ -67,11 +68,13 @@ def test_workspace_flag_sets_env_for_spawned_loop(tmp_path, monkeypatch):
     # subprocess.run inherits os.environ, so the child loop sees the workspace
     assert mock_run.call_args.kwargs.get("env") is None
     assert os.environ["AGENTS_WORKSPACE_DIR"] == str(repo.resolve())
+    assert os.environ["AGENTS_WORKSPACE_LOCK"] == "1"
 
 
 def test_workspace_missing_path_exits_2(tmp_path, monkeypatch, capsys):
     missing = tmp_path / "nope"
     monkeypatch.delenv("AGENTS_WORKSPACE_DIR", raising=False)
+    monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
     with patch("klanker.__main__.Nucleus") as nucleus_cls:
         rc = cli.main(["chat", "hi", "--workspace", str(missing)])
     assert rc == 2
@@ -83,6 +86,7 @@ def test_workspace_file_path_exits_2(tmp_path, monkeypatch, capsys):
     target = tmp_path / "file.txt"
     target.write_text("x", encoding="utf-8")
     monkeypatch.delenv("AGENTS_WORKSPACE_DIR", raising=False)
+    monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
     with patch("klanker.__main__.Nucleus") as nucleus_cls:
         rc = cli.main(["chat", "hi", "--workspace", str(target)])
     assert rc == 2
