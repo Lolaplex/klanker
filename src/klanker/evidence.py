@@ -21,6 +21,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+from agents_workspace import Workspace
+
 _MAX_RANGE_DAYS = 366
 _MAX_FILES = 2000
 _MAX_READ_BYTES = 1_000_000
@@ -193,18 +195,12 @@ class Artifact:
 
 
 def agents_home() -> Path:
-    raw = os.environ.get("AGENTS_HOME", "").strip()
-    if raw:
-        return Path(raw).expanduser()
-    return Path.home() / ".agents"
+    return Workspace.from_env().root
 
 
 def routine_runs_path() -> Path:
     """Directory of recorded routine replies. Does not create it."""
-    raw = os.environ.get("AGENTS_ROUTINE_RUNS_DIR", "").strip()
-    if raw:
-        return Path(raw).expanduser()
-    return agents_home() / "routine-runs"
+    return Workspace.from_env().routine_runs
 
 
 def routine_runs_dir() -> Path:

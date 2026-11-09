@@ -6,16 +6,15 @@ import os
 import shutil
 from pathlib import Path
 
+from agents_workspace import Workspace
+
 BUNDLED = Path(__file__).resolve().parent / "modules"
 OVERLAY_ALWAYS = frozenset({"mcp.schedule.add.json"})
 _default_ready = False
 
 
 def overlay_dir() -> Path:
-    raw = os.environ.get("AGENTS_MODULES_DIR", "").strip()
-    if raw:
-        return Path(raw).expanduser()
-    return Path.home() / ".agents" / "modules"
+    return Workspace.from_env().modules
 
 
 def publish_modules_dir() -> Path:
@@ -48,3 +47,8 @@ def ensure_default_overlay() -> Path:
     dest = install_overlay()
     _default_ready = True
     return dest
+
+
+def ensure_workspace_overlay(ws: Workspace) -> Path:
+    """Install the bundled overlay into one workspace's modules dir."""
+    return install_overlay(ws.modules)

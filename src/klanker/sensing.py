@@ -10,6 +10,8 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from agents_workspace import Workspace
+
 
 COMMON_RUNTIMES = ["git", "docker", "curl", "node", "npm", "uv", "sqlite3"]
 SUITE_MODULES = {
@@ -106,7 +108,7 @@ def probe_host() -> HostCapabilities:
 
     runtimes = {cmd: _has_cmd(cmd) for cmd in COMMON_RUNTIMES}
     modules = {alias: _has_mod(pkg) for alias, pkg in SUITE_MODULES.items()}
-    agents_home = Path.home() / ".agents"
+    agents_home = Workspace.from_env().root
 
     return HostCapabilities(
         os_name=platform.system(),

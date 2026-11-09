@@ -327,6 +327,31 @@ class TestRoutines(unittest.TestCase):
         ran = perform_routine(load_routine("inbox"), force=True, turn=lambda _job: (0, "NO_UPDATE"))
         self.assertEqual(ran["status"], "no_update")
 
+    def test_routine_workspace_field(self):
+        from agents_workspace import Workspace
+
+        with tempfile.TemporaryDirectory() as wsdir:
+            old = os.environ.get("AGENTS_WORKSPACES_DIR")
+            os.environ["AGENTS_WORKSPACES_DIR"] = wsdir
+            try:
+                ws = Workspace.create("demo")
+                job = add_routine(
+                    name="wsjob",
+                    prompt="check",
+                    user="7",
+                    cron="0 8 * * *",
+                    workspace="demo",
+                )
+                self.assertEqual(job["workspace"], "demo")
+                self.assertEqual(Path(job["_file"]).parent, ws.schedules)
+                stored = json.loads(Path(job["_file"]).read_text(encoding="utf-8"))
+                self.assertEqual(stored["workspace"], "demo")
+            finally:
+                if old is None:
+                    os.environ.pop("AGENTS_WORKSPACES_DIR", None)
+                else:
+                    os.environ["AGENTS_WORKSPACES_DIR"] = old
+
     def test_no_update_and_delivery(self):
         job = add_routine(name="pulse", prompt="check", user="7", at="2026-01-01T00:00:00Z")
         sent: list[str] = []

@@ -11,6 +11,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+from agents_workspace import Workspace
+
 # Same ${ENV_VAR} form as runner.mcp_client.interpolate. Unset names become empty.
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
@@ -19,14 +21,11 @@ def mcp_config_path() -> Path:
     raw = os.environ.get("AGENTS_MCP_CONFIG", "").strip()
     if raw:
         return Path(raw).expanduser()
-    return Path.home() / ".agents" / "mcp.json"
+    return Workspace.from_env().root / "mcp.json"
 
 
 def skills_dir() -> Path:
-    raw = os.environ.get("AGENTS_SKILLS_DIR", "").strip()
-    if raw:
-        return Path(raw).expanduser()
-    return Path.home() / ".agents" / "skills"
+    return Workspace.from_env().skills
 
 
 def expand_env(value: Any) -> Any:

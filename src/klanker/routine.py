@@ -37,6 +37,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agents_workspace import Workspace
+
 log = logging.getLogger("klanker.routine")
 
 TICK_INTERVAL_SEC = 60
@@ -54,10 +56,7 @@ DeliverFn = Callable[[str, str], None]
 
 def schedules_path() -> Path:
     """Schedule job directory. Does not create it."""
-    raw = os.environ.get("AGENTS_SCHEDULES_DIR", "").strip()
-    if raw:
-        return Path(raw).expanduser()
-    return Path.home() / ".agents" / "schedules"
+    return Workspace.from_env().schedules
 
 
 def schedules_dir() -> Path:
@@ -334,6 +333,7 @@ def add_routine(
     timezone_name: str = "",
     timeout_sec: int | None = None,
     channel: str = "",
+    workspace: str = "",
 ) -> dict[str, Any]:
     if not (prompt or "").strip():
         raise ValueError("prompt is required")
@@ -362,6 +362,8 @@ def add_routine(
         "channel": resolve_channel(channel),
         "timezone": zone,
     }
+    if (workspace or "").strip():
+        manifest["workspace"] = workspace.strip()
     if at:
         manifest["at"] = _normalize_at(at, zone)
         manifest["cadence"] = "one_shot"
@@ -370,31 +372,64 @@ def add_routine(
         manifest["cron"] = cron.strip()
         manifest["cadence"] = "cron"
         manifest["one_shot"] = False
-    path = schedules_dir() / f"{slug}.json"
+    target = schedules_dir()
+    if (workspace or "").strip():
+        from agents_workspace import Workspace
+
+        ws = Workspace.resolve(workspace)
+        if ws is None:
+            raise ValueError(f"unknown workspace: {workspace}")
+        target = ws.schedules
+        target.mkdir(parents=True, exist_ok=True)
+    path = target / f"{slug}.json"
     path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     manifest["_file"] = str(path)
     return manifest
 
 
+def _routine_dirs() -> list[tuple[str, Path]]:
+    """Every workspace schedules dir, labelled for listing."""
+    from agents_workspace import Workspace
+
+    rows: list[tuple[str, Path]] = []
+    seen: set[str] = set()
+    for ws in Workspace.list_all():
+        path = ws.schedules
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append((ws.label or ws.id or ws.root.name, path))
+    return rows
+
+
 def list_routines() -> list[dict[str, Any]]:
-    root = schedules_dir()
     rows: list[dict[str, Any]] = []
-    for path in sorted(root.glob("*.json")):
-        if path.name.startswith("."):
+    for label, root in _routine_dirs():
+        if not root.is_dir():
             continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict) and data.get("kind") == "routine":
-            data["paused"] = bool(data.get("paused"))
-            data["_file"] = str(path)
-            rows.append(data)
+        for path in sorted(root.glob("*.json")):
+            if path.name.startswith("."):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict) and data.get("kind") == "routine":
+                data["paused"] = bool(data.get("paused"))
+                data["workspace"] = label
+                data["_file"] = str(path)
+                rows.append(data)
     return rows
 
 
 def job_path(name: str) -> Path:
-    return schedules_dir() / f"{slugify(name)}.json"
+    slug = slugify(name)
+    for _label, root in _routine_dirs():
+        candidate = root / f"{slug}.json"
+        if candidate.is_file():
+            return candidate
+    return schedules_dir() / f"{slug}.json"
 
 
 def load_routine(name: str) -> dict[str, Any]:
@@ -676,6 +711,20 @@ def _register_once(sched: Any, handler: Callable[[dict[str, Any]], dict[str, Any
             return
 
 
+_WORKSPACE_ENV_KEYS = (
+    "AGENTS_WORKSPACE_ROOT",
+    "AGENTS_WORKDIR",
+    "AGENTS_MEMORY_PATH",
+    "AGENTS_TRACES_DIR",
+    "AGENTS_SCHEDULES_DIR",
+    "AGENTS_ROUTINE_RUNS_DIR",
+    "AGENTS_PERSONAS_DIR",
+    "AGENTS_SKILLS_DIR",
+    "AGENTS_MODULES_DIR",
+    "AGENTS_IDENTITY_PATH",
+)
+
+
 def default_tick() -> None:
     try:
         from runner import schedule as sched
@@ -695,7 +744,23 @@ def default_tick() -> None:
         kwargs["routine_handler"] = handler
     else:
         _register_once(sched, handler)
-    tick(**kwargs)
+
+    from agents_workspace import Workspace
+
+    for ws in Workspace.list_all():
+        env = ws.env()
+        previous = {key: os.environ.get(key) for key in _WORKSPACE_ENV_KEYS}
+        for key in _WORKSPACE_ENV_KEYS:
+            if key in env:
+                os.environ[key] = env[key]
+        try:
+            tick(**kwargs)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def run_due_schedules(tick_fn: Callable[[], None] | None = None) -> bool:
@@ -761,6 +826,7 @@ def dispatch(args: argparse.Namespace) -> int:
                 timezone_name=args.timezone_name,
                 timeout_sec=args.timeout_sec,
                 channel=getattr(args, "channel", "") or "",
+                workspace=getattr(args, "workspace", "") or "",
             )
             print(json.dumps(row, indent=2, ensure_ascii=False))
             return 0

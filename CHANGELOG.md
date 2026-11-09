@@ -8,11 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `agents-workspace` is a hard dependency: one root resolves memory, rules, skills, modules, schedules, traces, routine runs, relay state, personas, identity, and config. `AGENTS_WORKSPACE_ROOT` is the canonical root; `AGENTS_HOME` stays readable as a legacy alias.
+- Multi-workspace: `klanker serve` hosts the default workspace plus every workspace under `AGENTS_WORKSPACES_DIR`. `GET /v1/workspaces`, `POST /v1/workspaces {"label": ...}`, and a `"workspace"` field on `/v1/turn` and `/v1/stream`. `klanker routine add|say --workspace <ref>` pins a routine to a workspace; the ticker ticks every workspace.
+- `agents-workspace` CLI: `info`, `path`, `init`, `migrate`, `list`, `create`.
 - `compose.nas.yaml` + `scripts/nas-{deploy,sync}.ps1`, `publish-registry.ps1`, `nas-pull-latest.sh`: SigmaNAS registry deploy flow (build → save → scp → NAS-side load/push → `pull-latest.sh` recreate). Container listens on 8000, host maps 8787 — the port klanker-desktop discovery probes first.
 - `scripts/nas-seed.py`: one-time NAS seed — inherits `.agents` (memory/docs/rules/skills/traces/identity, missing files only) from the assistant project, writes a filtered `.env` (keeps `TELEGRAM_*` — klanker takes over the bot on cutover, replacing the assistant), and ingests `assistant.db` `messages` as `origin:"ingested"` agents-traces `message` events into daily JSONL.
 
 ### Changed
-- `--workspace` now also sets `AGENTS_WORKSPACE_LOCK=1`, so pointing a turn at a repo confines it to that repo. A server that only sets `AGENTS_WORKSPACE_DIR` keeps its previous reach.
+- `--workspace` now also sets `AGENTS_WORKSPACE_LOCK=1`, so pointing a turn at a repo confines it to that repo. A server that only sets `AGENTS_WORKSPACE_DIR` keeps its previous reach. It sets `AGENTS_WORKDIR` (and the legacy `AGENTS_WORKSPACE_DIR`).
+- Dockerfile installs `agents-workspace` from git before the rest of the suite; `CACHE_BUST=3`.
 
 ### Fixed
 - Dockerfile ran `useradd` twice; the second invocation failed the build.

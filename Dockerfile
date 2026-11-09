@@ -20,7 +20,8 @@ COPY src ./src
 # On your build platform, rebuild with --no-cache or bump CACHE_BUST, then confirm
 # `pip freeze | grep agents-` shows the git commits you expect.
 ARG SUITE_REF=dev
-ARG CACHE_BUST=1
+ARG CACHE_BUST=3
+ARG WORKSPACE_REF=${SUITE_REF}
 ARG HARNESS_REF=${SUITE_REF}
 ARG RELAY_REF=${SUITE_REF}
 ARG MEMORY_REF=${SUITE_REF}
@@ -29,6 +30,11 @@ ARG TERMINAL_REF=${SUITE_REF}
 ARG CALENDAR_REF=${SUITE_REF}
 ARG BROWSER_REF=${SUITE_REF}
 ARG SYNC_REF=${SUITE_REF}
+# Install the workspace contract first: every suite package depends on it and
+# it is not on PyPI yet.
+RUN pip install --no-cache-dir \
+    "agents-workspace @ git+https://github.com/Lolaplex/agents-workspace.git@${WORKSPACE_REF}"
+
 RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
     pip install --no-cache-dir \
         "agents-harness[mcp] @ git+https://github.com/Lolaplex/agents-harness.git@${HARNESS_REF}" \

@@ -56,12 +56,14 @@ pip install "klanker[all]"       # All optional extensions
 
 | Layer | Responsibility | Stack / Package |
 | :--- | :--- | :--- |
+| **Workspace** | One root for memory, traces, schedules, personas, relay state | `agents-workspace` |
 | **Brain** | Deterministic loop, LLM streaming, Cordis kernel, Koru schedules | `agents-harness` |
 | **Memory** | Persistent local markdown memory and typed facts. Search covers that tree only | `agents-memory` |
 | **Observability** | Append-only JSONL event logging & turn reconstruction | `agents-traces` |
 | **I/O Gateway** | Universal inbound/outbound HTTP (`/v1/turn`, `/v1/inject`) and Telegram long-poll | `agents-relay` |
 | **Tools & Feelers** | Jailed execution, CalDAV calendar, CDP browser, agent DID keys | `agents-terminal`, `agents-calendar`, `agents-browser`, `agents-keys` |
 
+- **Workspace (`agents-workspace`)**: Resolves every suite path from one root (`AGENTS_WORKSPACE_ROOT`, legacy `AGENTS_HOME`). No daemon, no network.
 - **Brain (`agents-harness`)**: Deterministic execution loop, LLM completions, Cordis job catalog, and Koru scheduled flows.
 - **Memory (`agents-memory`)**: Persistent local markdown memory and typed facts. A memory search covers that indexed tree only.
 - **Tracing (`agents-traces`)**: Zero-bloat JSONL observability and turn reconstruction.
@@ -94,16 +96,39 @@ pip install "klanker[all]"       # All optional extensions
 | Command | Description |
 | :--- | :--- |
 | `klanker` | Start interactive multi-turn REPL chat |
-| `klanker --workspace <path>` | REPL with `AGENTS_WORKSPACE_DIR` set and the workspace locked to that directory |
+| `klanker --workspace <path>` | REPL with `AGENTS_WORKDIR` set and the workspace locked to that directory |
 | `klanker "message"` | Run a single turn directly in terminal |
 | `klanker sense [--json]` | Probe host capabilities, installed agent packages, MCP servers, and skills |
 | `klanker prompt [--workspace <path>]` | Inspect dynamic system prompt generated for current host |
-| `klanker chat "message" [--workspace <path>]` | One turn with `AGENTS_WORKSPACE_DIR` set and the workspace locked to that directory |
-| `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), Telegram long-poll, and the schedule ticker |
+| `klanker chat "message" [--workspace <path>]` | One turn with `AGENTS_WORKDIR` set and the workspace locked to that directory |
+| `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), the PWA at `/` when `RELAY_WEB_TOKEN` is set, Telegram long-poll, and the schedule ticker |
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
 | `klanker remind add --user <user> --channel <channel> --at <when> --text <msg>` | Fixed-text reminder on that channel |
 | `klanker routine add\|say\|list\|pause\|resume\|remove\|run` | LLM routines (`prompt` + `at` or `cron`). `say` is one sentence. `pause` keeps the job. |
 | `klanker evidence --from <day> --to <day>` | Per-day routine-run and workspace files (read-only; does not search memory or traces) |
+
+---
+
+## Workspaces
+
+A workspace is one data boundary: memory, rules, skills, modules, schedules, traces, routine runs, relay state, personas, identity, config. `agents-workspace` resolves every path from one root.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AGENTS_WORKSPACE_ROOT` | `AGENTS_HOME`, else `~/.agents` | Workspace data root |
+| `AGENTS_WORKDIR` | `AGENTS_WORKSPACE_DIR`, else `root/workspace` | Terminal working directory |
+| `AGENTS_WORKSPACES_DIR` | `~/.agents-workspaces` | Additional workspaces |
+
+`AGENTS_HOME` and `AGENTS_WORKSPACE_DIR` stay readable as legacy aliases.
+
+```bash
+agents-workspace info
+agents-workspace list
+agents-workspace create --label personal
+agents-workspace path traces
+```
+
+`klanker serve` hosts every workspace under `AGENTS_WORKSPACES_DIR` plus the default. A turn picks one with `"workspace": "<id|label|path>"` in the `/v1/turn` body. `GET /v1/workspaces` lists them, `POST /v1/workspaces {"label": "..."}` creates one. `klanker routine add --workspace <ref>` pins a routine to a workspace.
 
 ---
 
@@ -143,6 +168,19 @@ If you keep one, it must run as the service user. A root shell (`docker exec` wi
 
 Do not flock `tick.lock` around that command. The harness locks it inside `tick()`, and a second flock in the same process deadlocks. `.tick.lock` is only the outer lock for harness builds that have no `register_routine_handler`.
 
+## Web app (PWA)
+
+`klanker serve` also serves the relay's built-in PWA at `/` when `RELAY_WEB_TOKEN` is set. That is the phone surface: open `https://<host>/`, paste the token once, and chat with streamed progress. `RELAY_WEB_USER` (default `felix`) is the harness `--user` for web turns, so web sessions are a separate session space from the Telegram chat id. The relay stays stateless; the browser keeps the thread and session id.
+
+```bash
+RELAY_WEB_TOKEN=<long random string>
+RELAY_WEB_USER=felix
+```
+
+Set `RELAY_SECRET` too if CLI clients still need header auth. Without it, the cookie is the only gate on every endpoint once the web surface is on.
+
+---
+
 ## Approvals
 
 `klanker serve` does not enable the approval gate. When `AGENTS_APPROVAL_MODE` is unset, mutating tools run with no Telegram Approve/Deny prompt.
@@ -166,11 +204,11 @@ The harness reads `~/.agents/skills/*/SKILL.md` (`AGENTS_SKILLS_DIR`). In the co
 
 ## Docker
 
-The image installs `agents-harness[mcp]` (stdio and HTTP MCP client) and `agents-browser` (CDP client: `mcp` + `websockets`). It does not install Chromium. Set `AGENTS_BROWSER_BIN` or install a browser on the host if you use it. `agents-browser` has no `--help-json` yet; `search`, `read`, `snapshot`, `open`, and `screenshot` are hand-written manifests.
+The image installs `agents-workspace` (path contract), `agents-harness[mcp]` (stdio and HTTP MCP client), and `agents-browser` (CDP client: `mcp` + `websockets`). It does not install Chromium. Set `AGENTS_BROWSER_BIN` or install a browser on the host if you use it. `agents-browser` has no `--help-json` yet; `search`, `read`, `snapshot`, `open`, and `screenshot` are hand-written manifests.
 
 Git installs are cached by the image layer. Rebuild with `--no-cache`, or change `CACHE_BUST` / `SUITE_REF`, or the harness and relay commits stay stale. After the image is running, `pip freeze | grep agents-` should list git commits. `AGENTS_VISION=1` makes image attachments vision parts (see `.env.example`).
 
-Dependency floors: `agents-harness[mcp]>=0.1.0`, `agents-relay>=0.1.0`, `agents-memory>=1.2.0`, `agents-traces>=0.1.0`, `agents-calendar>=0.1.0`. The image installs packages from git `main` (the latest releases) by default. Set `SUITE_REF`, or a per-package ref such as `HARNESS_REF`, to build from another branch or tag.
+Dependency floors: `agents-workspace>=0.1.0`, `agents-harness[mcp]>=0.1.0`, `agents-relay>=0.1.0`, `agents-memory>=1.2.0`, `agents-traces>=0.1.0`, `agents-calendar>=0.1.0`. The image installs packages from git `main` (the latest releases) by default. Set `SUITE_REF`, or a per-package ref such as `HARNESS_REF`, to build from another branch or tag.
 
 `agents-traces --help-json` is a raw argparse dump and does not list subcommands. `stats`, `inspect`, `sessions`, `verify`, and `cleanup` are hand-written. `audit` and `seal` stay the harness modules. Anything else is `mcp.traces.argv` after generation.
 

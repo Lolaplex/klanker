@@ -42,6 +42,7 @@ def apply_workspace(raw: str | None) -> int | None:
     if not resolved.is_dir():
         print(f"Error: workspace is not a directory: {text}", file=sys.stderr)
         return 2
+    os.environ["AGENTS_WORKDIR"] = str(resolved)
     os.environ["AGENTS_WORKSPACE_DIR"] = str(resolved)
     os.environ["AGENTS_WORKSPACE_LOCK"] = "1"
     return None
@@ -128,6 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     routine_add.add_argument("--cron", default="")
     routine_add.add_argument("--timezone", default="", dest="timezone_name")
     routine_add.add_argument("--timeout", type=int, default=None, dest="timeout_sec", help="Job timeout in seconds (default: approval wait + 330s)")
+    routine_add.add_argument("--workspace", default="", help="Workspace id, label, or path")
     routine_say = routine_sub.add_parser("say", help="Create a routine from one sentence plus --at or --cron")
     routine_say.add_argument("prompt", help="Prompt sentence")
     routine_say.add_argument("--name", default="")
@@ -137,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     routine_say.add_argument("--cron", default="")
     routine_say.add_argument("--timezone", default="", dest="timezone_name")
     routine_say.add_argument("--timeout", type=int, default=None, dest="timeout_sec")
+    routine_say.add_argument("--workspace", default="", help="Workspace id, label, or path")
     routine_sub.add_parser("list", help="List routines")
     routine_pause = routine_sub.add_parser("pause", help="Keep a routine and stop it firing")
     routine_pause.add_argument("name")
@@ -249,14 +252,19 @@ def main(argv: list[str] | None = None) -> int:
             print("Error: agents-relay is not installed. Install via pip install agents-relay", file=sys.stderr)
             return 1
 
+        from agents_workspace import Workspace
+
         from .gating import apply_approval_env, telegram_refusal, telegram_would_poll
-        from .overlay import ensure_default_overlay, publish_modules_dir
+        from .overlay import ensure_default_overlay, ensure_workspace_overlay, publish_modules_dir
 
         refusal = telegram_refusal(no_telegram=bool(getattr(args, "no_telegram", False)))
         if refusal:
             print(f"Error: {refusal}", file=sys.stderr)
             return 1
 
+        Workspace.from_env().ensure()
+        for _ws in Workspace.list_all():
+            ensure_workspace_overlay(_ws)
         publish_modules_dir()
         ensure_default_overlay()
         telegram_on = telegram_would_poll(no_telegram=bool(getattr(args, "no_telegram", False)))

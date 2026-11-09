@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+
+from agents_workspace import Workspace
+
 from . import __version__
 from .evidence import evidence_policy_lines, workspace_path
 from .sensing import HostCapabilities
@@ -93,9 +96,8 @@ def build_system_prompt(caps: HostCapabilities) -> str:
 
 
 def save_system_prompt(caps: HostCapabilities) -> Path:
-    """Save dynamic Klanker prompt under AGENTS_HOME (default ~/.agents)."""
-    override = os.environ.get("AGENTS_HOME", "").strip()
-    agents_dir = Path(override).expanduser() if override else (Path.home() / ".agents")
+    """Save dynamic Klanker prompt under the workspace root."""
+    agents_dir = Workspace.from_env().root
     agents_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = agents_dir / "klanker_prompt.txt"
     prompt_text = build_system_prompt(caps)
