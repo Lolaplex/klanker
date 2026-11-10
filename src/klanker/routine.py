@@ -479,11 +479,13 @@ def remove_routine(name: str) -> bool:
     return True
 
 
-def default_turn(job: dict[str, Any]) -> tuple[int, str]:
+def default_turn(
+    job: dict[str, Any], workspace: "Workspace | None" = None
+) -> tuple[int, str]:
     from .prompt import save_system_prompt
     from .sensing import probe_host
 
-    prompt_file = save_system_prompt(probe_host())
+    prompt_file = save_system_prompt(probe_host(), workspace=workspace)
     user = str(job.get("user") or "").strip() or "routine"
     channel = resolve_channel(str(job.get("channel") or ""))
     session = str(job.get("session") or f"routine:{job.get('name')}")
@@ -521,6 +523,7 @@ def default_turn(job: dict[str, Any]) -> tuple[int, str]:
         text=True,
         timeout=timeout,
         check=False,
+        env=workspace.env() if workspace is not None else None,
         **hidden,
     )
     return int(proc.returncode), extract_reply(proc.stdout or "")
@@ -574,16 +577,43 @@ def _send_to_user(send_to_user: Callable[..., Any], cfg: Any, chat_id: int, text
     send_to_user(**kwargs)
 
 
-def _record_run(job: dict[str, Any], minute: str, status: str, reply: str) -> str:
+def _record_run(
+    job: dict[str, Any],
+    minute: str,
+    status: str,
+    reply: str,
+    workspace: "Workspace | None" = None,
+) -> str:
     """Persist the reply. A recording failure must not hide the turn result."""
     try:
         from .evidence import record_routine_run
 
-        row = record_routine_run(job, minute=minute, status=status, reply=reply)
+        row = record_routine_run(
+            job, minute=minute, status=status, reply=reply, workspace=workspace
+        )
     except Exception:
         log.warning("could not record routine run %s (%s)", job.get("name"), status, exc_info=True)
         return ""
     return str(row.get("path") or "")
+
+
+def _job_workspace(job: dict[str, Any]) -> "Workspace | None":
+    """The workspace this routine belongs to: handler object > ref > env."""
+    ws = job.get("workspace_obj")
+    if ws is not None:
+        return ws
+    ref = str(job.get("workspace") or "").strip()
+    if ref:
+        try:
+            resolved = Workspace.resolve(ref)
+        except Exception:
+            resolved = None
+        if resolved is not None:
+            return resolved
+    try:
+        return Workspace.from_env()
+    except ValueError:
+        return None
 
 
 def perform_routine(
@@ -593,6 +623,7 @@ def perform_routine(
     turn: TurnFn | None = None,
     deliver: DeliverFn | None = None,
     under_harness: bool = False,
+    workspace: "Workspace | None" = None,
 ) -> dict[str, Any]:
     """Run one routine turn. Drop ``NO_UPDATE``. Otherwise deliver via relay.
 
@@ -619,7 +650,11 @@ def perform_routine(
     minute = minute_key(job)
     if not claim_minute(path, minute, force=force):
         return {"status": "skipped", "reply": "", "name": job.get("name")}
-    runner = turn or default_turn
+    ws = workspace or _job_workspace(job)
+    if turn is None:
+        runner = lambda j: default_turn(j, ws)
+    else:
+        runner = turn
     sender = deliver or deliver_reply
 
     def _release() -> None:
@@ -633,12 +668,12 @@ def perform_routine(
         _release()
         raise
     if code != 0:
-        artifact = _record_run(job, minute, "failed", reply)
+        artifact = _record_run(job, minute, "failed", reply, workspace=ws)
         _release()
         return {"status": "failed", "reply": reply, "name": job.get("name"), "artifact": artifact}
     if is_no_update(reply) or not reply.strip():
         quiet = "no_update" if reply.strip() else "empty"
-        artifact = _record_run(job, minute, quiet, reply)
+        artifact = _record_run(job, minute, quiet, reply, workspace=ws)
         _consume_one_shot(job, path)
         return {"status": quiet, "reply": reply, "name": job.get("name"), "artifact": artifact}
     user = str(job.get("user") or "").strip()
@@ -665,10 +700,10 @@ def perform_routine(
             print(reply)
             status = "local"
     except Exception:
-        _record_run(job, minute, "undelivered", reply)
+        _record_run(job, minute, "undelivered", reply, workspace=ws)
         _release()
         raise
-    artifact = _record_run(job, minute, status, reply)
+    artifact = _record_run(job, minute, status, reply, workspace=ws)
     _consume_one_shot(job, path)
     return {
         "status": status,
@@ -711,21 +746,12 @@ def _register_once(sched: Any, handler: Callable[[dict[str, Any]], dict[str, Any
             return
 
 
-_WORKSPACE_ENV_KEYS = (
-    "AGENTS_WORKSPACE_ROOT",
-    "AGENTS_WORKDIR",
-    "AGENTS_MEMORY_PATH",
-    "AGENTS_TRACES_DIR",
-    "AGENTS_SCHEDULES_DIR",
-    "AGENTS_ROUTINE_RUNS_DIR",
-    "AGENTS_PERSONAS_DIR",
-    "AGENTS_SKILLS_DIR",
-    "AGENTS_MODULES_DIR",
-    "AGENTS_IDENTITY_PATH",
-)
-
-
 def default_tick() -> None:
+    """Tick every workspace on this host with an explicit ``Workspace``.
+
+    The process env is never mutated: each workspace reaches the scheduler
+    as ``tick(workspace=ws)`` and child turns get ``ws.env()``.
+    """
     try:
         from runner import schedule as sched
     except ImportError:
@@ -745,22 +771,11 @@ def default_tick() -> None:
     else:
         _register_once(sched, handler)
 
-    from agents_workspace import Workspace
-
+    if "workspace" not in params:
+        tick(**kwargs)
+        return
     for ws in Workspace.list_all():
-        env = ws.env()
-        previous = {key: os.environ.get(key) for key in _WORKSPACE_ENV_KEYS}
-        for key in _WORKSPACE_ENV_KEYS:
-            if key in env:
-                os.environ[key] = env[key]
-        try:
-            tick(**kwargs)
-        finally:
-            for key, value in previous.items():
-                if value is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = value
+        tick(workspace=ws, **kwargs)
 
 
 def run_due_schedules(tick_fn: Callable[[], None] | None = None) -> bool:

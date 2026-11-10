@@ -95,9 +95,12 @@ def build_system_prompt(caps: HostCapabilities) -> str:
     return "\n".join(lines).strip()
 
 
-def save_system_prompt(caps: HostCapabilities) -> Path:
-    """Save dynamic Klanker prompt under the workspace root."""
-    agents_dir = Workspace.from_env().root
+def save_system_prompt(
+    caps: HostCapabilities, workspace: "Workspace | None" = None
+) -> Path:
+    """Save dynamic Klanker prompt under the workspace dir."""
+    ws = workspace or Workspace.from_env()
+    agents_dir = ws.dir
     agents_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = agents_dir / "klanker_prompt.txt"
     prompt_text = build_system_prompt(caps)

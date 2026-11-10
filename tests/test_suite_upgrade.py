@@ -277,6 +277,38 @@ class TestRoutines(unittest.TestCase):
         self.assertTrue(remove_routine("morning"))
         self.assertEqual(list_routines(), [])
 
+    def test_default_tick_per_workspace_no_env_mutation(self):
+        """tick(ws) is explicit; os.environ is never touched (C20)."""
+        import types as _types
+        from unittest.mock import patch as _patch
+        from agents_workspace import Host, Workspace
+        from klanker import routine as kr
+
+        tmp2 = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp2.cleanup)
+        host = Host.open(tmp2.name)
+        ws_a = host.create("a")
+        ws_b = host.create("b")
+        seen: list[str] = []
+
+        def fake_tick(base_time=None, *, wait=True, workspace=None):
+            seen.append(workspace.id)
+            return []
+
+        fake_sched = _types.ModuleType("runner.schedule")
+        fake_sched.tick = fake_tick
+        fake_runner = _types.ModuleType("runner")
+        fake_runner.schedule = fake_sched
+        env_before = dict(os.environ)
+        with _patch.dict(
+            "sys.modules",
+            {"runner": fake_runner, "runner.schedule": fake_sched},
+        ), _patch.object(Workspace, "list_all", return_value=[ws_a, ws_b]):
+            kr.default_tick()
+        self.assertEqual(sorted(seen), ["a", "b"])
+        self.assertEqual(dict(os.environ), env_before)
+        self.assertFalse(hasattr(kr, "_WORKSPACE_ENV_KEYS"))
+
     def test_say_pause_resume(self):
         from argparse import Namespace
         from io import StringIO
