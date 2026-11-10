@@ -24,5 +24,8 @@ def test_save_system_prompt_default_without_env(tmp_path, monkeypatch):
     fake_home.mkdir()
     monkeypatch.setattr("klanker.prompt.Path.home", lambda: fake_home)
     path = save_system_prompt(probe_host())
-    assert path == fake_home / ".agents" / "klanker_prompt.txt"
+    # first start creates the default workspace under the default host
+    assert path == (
+        fake_home / ".agents" / "workspaces" / "default" / "klanker_prompt.txt"
+    )
     assert path.is_file()

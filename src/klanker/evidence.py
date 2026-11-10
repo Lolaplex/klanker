@@ -203,8 +203,8 @@ def routine_runs_path() -> Path:
     return Workspace.from_env().routine_runs
 
 
-def routine_runs_dir() -> Path:
-    path = routine_runs_path()
+def routine_runs_dir(workspace: "Workspace | None" = None) -> Path:
+    path = workspace.routine_runs if workspace is not None else routine_runs_path()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -745,6 +745,7 @@ def record_routine_run(
     minute: str,
     status: str,
     reply: str,
+    workspace: "Workspace | None" = None,
 ) -> dict[str, str]:
     """Write one finished run where a later turn can find it.
 
@@ -762,7 +763,7 @@ def record_routine_run(
     channel = resolve_channel(str(job.get("channel") or ""))
     day = minute[:10] if parse_day(minute) else ""
     safe_minute = re.sub(r"[^0-9A-Za-zT._+-]", "-", minute).strip("-") or "run"
-    root = routine_runs_dir()
+    root = routine_runs_dir(workspace)
     folder = root / slug
     folder.mkdir(parents=True, exist_ok=True)
     path = (folder / f"{safe_minute}.md").resolve()

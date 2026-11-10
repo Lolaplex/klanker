@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - `--workspace` now also sets `AGENTS_WORKSPACE_LOCK=1`, so pointing a turn at a repo confines it to that repo. A server that only sets `AGENTS_WORKSPACE_DIR` keeps its previous reach. It sets `AGENTS_WORKDIR` (and the legacy `AGENTS_WORKSPACE_DIR`).
+- Routine ticker ticks each workspace with an explicit `tick(workspace=ws)` (requires agents-harness >= the workspace-aware tick). The process env is no longer mutated per workspace, so a concurrent turn on another workspace can never see ticked paths. Routine turns spawn with `ws.env()`; the handler accepts `workspace_obj` injected by the harness scheduler. `save_system_prompt` and `record_routine_run` accept `workspace=...`.
 - Dockerfile installs `agents-workspace` from git before the rest of the suite; `CACHE_BUST=3`.
 
 ### Fixed
