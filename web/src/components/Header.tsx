@@ -12,7 +12,7 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, onOpenSettings, 
   const url = activeInstance?.endpoint?.base_url || activeInstance?.base_url || window.location.host;
 
   return (
-    <header className="h-12 shrink-0 bg-[#000000] border-b border-[#262626] flex items-center justify-between px-3 select-none z-30">
+    <header className="min-h-12 shrink-0 bg-[#000000] border-b border-[#262626] flex items-center justify-between px-3 select-none z-30">
       <div className="flex items-center min-w-0 space-x-3 text-xs font-mono">
         <button
           onClick={onOpenNav}
