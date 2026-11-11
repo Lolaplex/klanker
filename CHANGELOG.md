@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `tests/test_gate_workspaces.py`: P1 gate — two workspaces in one process and
+  over real `serve_http` stay isolated (domains, env, memory/traces/relay
+  state, members, tick iteration, serve legacy refusal, HTTP `/v1/turn`
+  workspace routing + traversal 400).
+- `scripts/gate-container.sh`: container variant of the gate.
+
 ### Changed
 - `klanker serve` refuses a legacy host layout and points at
   `agents-workspace migrate` instead of silently bridging.
