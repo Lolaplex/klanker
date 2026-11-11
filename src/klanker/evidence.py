@@ -210,10 +210,14 @@ def routine_runs_dir(workspace: "Workspace | None" = None) -> Path:
 
 
 def workspace_path() -> Path:
-    raw = os.environ.get("AGENTS_WORKSPACE_DIR", "").strip()
+    """Session workdir: AGENTS_WORKDIR (alias AGENTS_WORKSPACE_DIR), else <ws>/work."""
+    raw = (
+        os.environ.get("AGENTS_WORKDIR", "").strip()
+        or os.environ.get("AGENTS_WORKSPACE_DIR", "").strip()
+    )
     if raw:
         return Path(raw).expanduser()
-    return agents_home() / "workspace"
+    return Workspace.from_env().workdir
 
 
 def evidence_policy_lines() -> list[str]:

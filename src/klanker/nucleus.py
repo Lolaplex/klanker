@@ -37,17 +37,22 @@ class Nucleus:
         provider: str | None = None,
         deliver: str = "buffered",
         seal: bool = False,
+        workspace: "Workspace | None" = None,
+        workdir: str = "",
     ) -> int:
         """Execute one conversational turn using available runner or fallback."""
+        from agents_workspace import Workspace
+
         selected_provider = provider or os.environ.get("LOOP_PROVIDER", "openai.default")
 
         # If agents-harness is installed, invoke runner.loop directly
         if self.caps.has_harness:
-            from .overlay import publish_modules_dir
+            from .overlay import ensure_default_overlay
             from .prompt import build_system_prompt
 
+            ws = workspace or Workspace.from_env()
             self.caps = probe_host()
-            publish_modules_dir()
+            ensure_default_overlay(ws, generate=False)
 
             system_prompt = build_system_prompt(self.caps)
 
@@ -74,7 +79,8 @@ class Nucleus:
             if seal:
                 cmd.append("--seal")
 
-            hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL}
+            env = ws.env(workdir=workdir) if workdir else ws.env()
+            hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL, "env": env}
             if sys.platform == "win32":
                 hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
             res = subprocess.run(cmd, **hidden)
