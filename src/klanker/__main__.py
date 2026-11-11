@@ -298,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Error: agents-relay is not installed. Install via pip install agents-relay", file=sys.stderr)
             return 1
 
-        from agents_workspace import Workspace
+        from agents_workspace import Host, Workspace
 
         from .gating import apply_approval_env, telegram_refusal, telegram_would_poll
         from .overlay import ensure_workspace_overlay
@@ -306,6 +306,15 @@ def main(argv: list[str] | None = None) -> int:
         refusal = telegram_refusal(no_telegram=bool(getattr(args, "no_telegram", False)))
         if refusal:
             print(f"Error: {refusal}", file=sys.stderr)
+            return 1
+
+        host = Host.from_env()
+        if host.has_legacy_layout():
+            print(
+                "Error: legacy host layout detected. Run "
+                "`agents-workspace migrate` first (explicit, one-shot).",
+                file=sys.stderr,
+            )
             return 1
 
         entry_ws = Workspace.from_env()

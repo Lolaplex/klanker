@@ -14,7 +14,12 @@ export AGENTS_HOST_DIR="${AGENTS_HOST_DIR:-/data/.agents}"
 # Optional auto-migration of a legacy host-level layout (container only).
 # Local serves never auto-migrate; run `agents-workspace migrate` by hand.
 if [ "${AGENTS_AUTO_MIGRATE:-0}" = "1" ]; then
-    python -m agents_workspace migrate 2>&1 | sed 's/^/[migrate] /' || true
+    if ! python -m agents_workspace migrate --yes > /tmp/migrate.log 2>&1; then
+        echo "[migrate] FAILED" >&2
+        cat /tmp/migrate.log >&2
+        exit 1
+    fi
+    sed 's/^/[migrate] /' /tmp/migrate.log
 fi
 
 python -c "from klanker.overlay import install_overlay; install_overlay()" 2>/dev/null || true
