@@ -30,6 +30,7 @@ def _gateway_client(
     provider: str,
     persona: str,
     session: str,
+    workspace: str = "",
 ) -> GatewayClient:
     from agents_relay.client import GatewayClient
 
@@ -42,6 +43,7 @@ def _gateway_client(
         provider=provider,
         persona=persona,
         project=proj,
+        workspace=workspace,
         prefs_path=_repl_prefs_path(),
     )
     if session:
@@ -63,6 +65,7 @@ def run_interactive_shell(
     provider: str = "",
     persona: str = "default",
     session: str = "",
+    workspace: str = "",
     no_gateway: bool = False,
 ) -> int:
     gateway = None
@@ -76,6 +79,7 @@ def run_interactive_shell(
                 provider=provider,
                 persona=persona,
                 session=session,
+                workspace=workspace,
             )
         except ImportError:
             pass

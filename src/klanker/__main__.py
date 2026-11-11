@@ -26,10 +26,11 @@ def note_custom_loop_cmd() -> None:
     )
 
 
-def apply_workspace(raw: str | None) -> int | None:
-    """Point this process and its spawned turns at a coding workspace.
+def apply_workdir(raw: str | None) -> int | None:
+    """Point this process and its spawned turns at a working directory.
 
-    Returns an exit code when the path is unusable, otherwise ``None``.
+    ``--workdir`` is the session cwd/jail (``AGENTS_WORKDIR``). Returns an
+    exit code when the path is unusable, otherwise ``None``.
     """
     text = (raw or "").strip()
     if not text:
@@ -37,15 +38,46 @@ def apply_workspace(raw: str | None) -> int | None:
     try:
         resolved = Path(text).expanduser().resolve(strict=True)
     except (OSError, RuntimeError):
-        print(f"Error: workspace does not exist: {text}", file=sys.stderr)
+        print(f"Error: workdir does not exist: {text}", file=sys.stderr)
         return 2
     if not resolved.is_dir():
-        print(f"Error: workspace is not a directory: {text}", file=sys.stderr)
+        print(f"Error: workdir is not a directory: {text}", file=sys.stderr)
         return 2
     os.environ["AGENTS_WORKDIR"] = str(resolved)
-    os.environ["AGENTS_WORKSPACE_DIR"] = str(resolved)
     os.environ["AGENTS_WORKSPACE_LOCK"] = "1"
     return None
+
+
+def apply_workspace(raw: str | None) -> int | None:
+    """Select the data workspace by id (``AGENTS_WORKSPACE=<id>``).
+
+    An existing directory is accepted one release as the old workdir meaning
+    (``--workdir`` now), with a deprecation warning.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return None
+    import warnings
+
+    from agents_workspace import Host
+
+    host = Host.from_env()
+    if host.workspace_exists(text):
+        os.environ["AGENTS_WORKSPACE"] = text
+        return None
+    candidate = Path(text).expanduser()
+    if candidate.is_dir():
+        warnings.warn(
+            "--workspace <dir> is deprecated as a workdir; "
+            "use --workdir for a directory and --workspace <id> for a "
+            "data workspace (alias removed after one release)",
+            DeprecationWarning,
+        )
+        os.environ["AGENTS_WORKDIR"] = str(candidate.resolve())
+        os.environ["AGENTS_WORKSPACE_LOCK"] = "1"
+        return None
+    print(f"Error: unknown workspace id: {text}", file=sys.stderr)
+    return 2
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,7 +91,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workspace",
         default=None,
-        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR and locks the workspace for this process and spawned turns)",
+        help="Data workspace id (AGENTS_WORKSPACE); a directory is accepted once as deprecated --workdir alias",
+    )
+    parser.add_argument(
+        "--workdir",
+        default=None,
+        help="Working directory for this session and spawned turns (AGENTS_WORKDIR)",
     )
 
     sub = parser.add_subparsers(dest="command")
@@ -73,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_p.add_argument(
         "--workspace",
         default=None,
-        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR and locks the workspace)",
+        help="Data workspace id (AGENTS_WORKSPACE)",
     )
 
     # 1c. Audit trace integrity & replay
@@ -90,7 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
     chat_p.add_argument(
         "--workspace",
         default=None,
-        help="Coding workspace directory (sets AGENTS_WORKSPACE_DIR and locks the workspace for this process and spawned turns)",
+        help="Data workspace id (AGENTS_WORKSPACE)",
+    )
+    chat_p.add_argument(
+        "--workdir",
+        default=None,
+        help="Working directory for the spawned turn (AGENTS_WORKDIR)",
     )
 
     # 3. Serve gateway
@@ -108,6 +150,7 @@ def build_parser() -> argparse.ArgumentParser:
     shell_p.add_argument("--provider", type=str, default="", help="LLM provider")
     shell_p.add_argument("--persona", type=str, default="default", help="Persona")
     shell_p.add_argument("--session", type=str, default="", help="Resume session id")
+    shell_p.add_argument("--workspace", type=str, default="", help="Data workspace id (AGENTS_WORKSPACE)")
     shell_p.add_argument("--no-gateway", action="store_true", help="Builtins/exec only, no agent tier")
 
     # 3c. Stop the local daemon
@@ -129,7 +172,7 @@ def build_parser() -> argparse.ArgumentParser:
     routine_add.add_argument("--cron", default="")
     routine_add.add_argument("--timezone", default="", dest="timezone_name")
     routine_add.add_argument("--timeout", type=int, default=None, dest="timeout_sec", help="Job timeout in seconds (default: approval wait + 330s)")
-    routine_add.add_argument("--workspace", default="", help="Workspace id, label, or path")
+    routine_add.add_argument("--workspace", default="", help="Workspace id")
     routine_say = routine_sub.add_parser("say", help="Create a routine from one sentence plus --at or --cron")
     routine_say.add_argument("prompt", help="Prompt sentence")
     routine_say.add_argument("--name", default="")
@@ -139,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
     routine_say.add_argument("--cron", default="")
     routine_say.add_argument("--timezone", default="", dest="timezone_name")
     routine_say.add_argument("--timeout", type=int, default=None, dest="timeout_sec")
-    routine_say.add_argument("--workspace", default="", help="Workspace id, label, or path")
+    routine_say.add_argument("--workspace", default="", help="Workspace id")
     routine_sub.add_parser("list", help="List routines")
     routine_pause = routine_sub.add_parser("pause", help="Keep a routine and stop it firing")
     routine_pause.add_argument("name")
@@ -212,6 +255,9 @@ def main(argv: list[str] | None = None) -> int:
     workspace_error = apply_workspace(getattr(args, "workspace", None))
     if workspace_error is not None:
         return workspace_error
+    workdir_error = apply_workdir(getattr(args, "workdir", None))
+    if workdir_error is not None:
+        return workdir_error
     try:
         from . import __version__
         from .updates import check_for_updates
@@ -255,22 +301,22 @@ def main(argv: list[str] | None = None) -> int:
         from agents_workspace import Workspace
 
         from .gating import apply_approval_env, telegram_refusal, telegram_would_poll
-        from .overlay import ensure_default_overlay, ensure_workspace_overlay, publish_modules_dir
+        from .overlay import ensure_workspace_overlay
 
         refusal = telegram_refusal(no_telegram=bool(getattr(args, "no_telegram", False)))
         if refusal:
             print(f"Error: {refusal}", file=sys.stderr)
             return 1
 
-        Workspace.from_env().ensure()
+        entry_ws = Workspace.from_env()
+        entry_ws.ensure()
         for _ws in Workspace.list_all():
             ensure_workspace_overlay(_ws)
-        publish_modules_dir()
-        ensure_default_overlay()
+        # Children spawned without an explicit workspace inherit this
+        # workspace's context; per-request turns override it via ws.env().
+        os.environ.update(entry_ws.env())
         telegram_on = telegram_would_poll(no_telegram=bool(getattr(args, "no_telegram", False)))
         apply_approval_env(telegram=telegram_on)
-        # HTTP is always on under serve. A turn overwrites KLANKER_CHANNEL from --channel.
-        os.environ.setdefault("KLANKER_CHANNEL", "http")
 
         # If LOOP_CMD is default and harness is present, inject Klanker's dynamic system prompt.
         # klanker.turn installs argv shims, then runs runner.loop.
@@ -278,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         if "LOOP_CMD" not in os.environ and nucleus.caps.has_harness:
             from .prompt import save_system_prompt
 
-            prompt_file = save_system_prompt(nucleus.caps)
+            prompt_file = save_system_prompt(nucleus.caps, workspace=entry_ws)
             os.environ["LOOP_CMD"] = f"{sys.executable} -m klanker.turn --system {prompt_file.as_posix()}"
 
         if nucleus.caps.has_harness:
@@ -342,6 +388,7 @@ def main(argv: list[str] | None = None) -> int:
             provider=getattr(args, "provider", "") or "",
             persona=getattr(args, "persona", "default") or "default",
             session=getattr(args, "session", "") or "",
+            workspace=getattr(args, "workspace", "") or "",
             no_gateway=bool(getattr(args, "no_gateway", False)),
         )
 
@@ -365,7 +412,11 @@ def main(argv: list[str] | None = None) -> int:
             from .overlay import ensure_default_overlay
 
             ensure_default_overlay()
-            return nucleus.run_turn(message=msg, user=user, provider=provider, seal=seal)
+            cli_workdir = os.environ.get("AGENTS_WORKDIR", "") or os.getcwd()
+            return nucleus.run_turn(
+                message=msg, user=user, provider=provider, seal=seal,
+                workdir=cli_workdir,
+            )
 
         # If piped input via stdin (e.g. echo "hi" | klanker)
         if not sys.stdin.isatty():
@@ -374,7 +425,11 @@ def main(argv: list[str] | None = None) -> int:
                 from .overlay import ensure_default_overlay
 
                 ensure_default_overlay()
-                return nucleus.run_turn(message=piped_msg, user=user, provider=provider, seal=seal)
+                cli_workdir = os.environ.get("AGENTS_WORKDIR", "") or os.getcwd()
+                return nucleus.run_turn(
+                    message=piped_msg, user=user, provider=provider, seal=seal,
+                    workdir=cli_workdir,
+                )
             return 0
 
         # Interactive shell: ensure local daemon, then agent shell client
@@ -401,6 +456,7 @@ def main(argv: list[str] | None = None) -> int:
         rc = run_interactive_shell(
             user=user,
             provider=provider or "",
+            workspace=getattr(args, "workspace", "") or "",
         )
         if _daemon.relay_health(url):
             print(f"\ndaemon still running at {url} — `klanker stop` to halt")

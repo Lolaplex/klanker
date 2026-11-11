@@ -15,13 +15,14 @@ python -m pytest -q                 # tests
 klanker sense                       # probe host, feelers, MCP servers, skills
 klanker prompt                      # print the dynamic system prompt
 klanker chat "…"                    # one harness turn
-klanker chat "…" --workspace PATH   # one turn inside a repo
-klanker --workspace PATH            # REPL inside a repo
+klanker chat "…" --workdir PATH     # one turn with cwd = PATH
+klanker chat "…" --workspace ID     # one turn inside data workspace ID
+klanker --workspace ID              # REPL inside data workspace ID
 klanker serve                       # HTTP + Telegram gateway
 klanker cron                        # scheduled care flows
 ```
 
-`--workspace PATH` resolves the path, requires an existing directory, and sets `AGENTS_WORKSPACE_DIR` plus `AGENTS_WORKSPACE_LOCK=1` for this process and the spawned `runner.loop`. A missing path exits 2. The lock is a separate switch: a host that only sets `AGENTS_WORKSPACE_DIR` keeps its previous reach.
+`--workspace <id>` selects the data workspace (`AGENTS_WORKSPACE=<id>`; unknown id exits 2). `--workdir <dir>` sets the session cwd (`AGENTS_WORKDIR`) plus `AGENTS_WORKSPACE_LOCK=1` for this process and the spawned `runner.loop`. A directory passed to `--workspace` still maps to workdir for one release with a deprecation warning.
 
 ## Layering
 

@@ -909,7 +909,9 @@ class TestGatingAndDocs(unittest.TestCase):
             with patch("klanker.nucleus.subprocess.run") as run:
                 run.return_value = types.SimpleNamespace(returncode=0)
                 Nucleus(caps).run_turn(message="hi")
-            self.assertTrue(os.environ.get("AGENTS_MODULES_DIR"))
+            child_env = run.call_args.kwargs.get("env") or {}
+            self.assertTrue(child_env.get("AGENTS_MODULES_DIR"))
+            self.assertIsNone(os.environ.get("AGENTS_MODULES_DIR"))
         finally:
             if old is None:
                 os.environ.pop("AGENTS_MODULES_DIR", None)

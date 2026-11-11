@@ -35,10 +35,13 @@ def system_from_argv(argv: list[str]) -> str:
 def main(argv: list[str] | None = None) -> int:
     from pathlib import Path
 
-    from .gating import apply_approval_env
-    from .overlay import publish_modules_dir
+    from agents_workspace import Workspace
 
-    publish_modules_dir()
+    from .gating import apply_approval_env
+
+    # Per-turn context: resolve the workspace this process was spawned for and
+    # point the harness at its module overlay. Never mutates a parent process.
+    os.environ.setdefault("AGENTS_MODULES_DIR", str(Workspace.from_env().modules))
     args = list(sys.argv[1:] if argv is None else argv)
     # runner.loop keeps a non-file --system value as the literal prompt text, so a
     # stale path would silently become the system prompt. Refuse instead.

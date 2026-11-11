@@ -50,48 +50,69 @@ def test_non_git_workspace_has_no_coding_block(tmp_path, monkeypatch):
 def test_workspace_flag_sets_env_for_spawned_loop(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
-    monkeypatch.delenv("AGENTS_WORKSPACE_DIR", raising=False)
+    monkeypatch.delenv("AGENTS_WORKDIR", raising=False)
     monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
-    monkeypatch.setenv("AGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "home"))
     caps = _caps()
-    assert cli.apply_workspace(str(repo)) is None
+    # A bare directory is the deprecated workdir alias for --workspace.
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        assert cli.apply_workspace(str(repo)) is None
 
     nucleus = cli.Nucleus(caps=caps)
     with patch("klanker.nucleus.probe_host", return_value=caps), \
-         patch("klanker.overlay.publish_modules_dir", return_value=None), \
          patch("subprocess.run") as mock_run:
         mock_run.return_value.returncode = 0
         rc = nucleus.run_turn(message="hi")
 
     assert rc == 0
     assert mock_run.called
-    # subprocess.run inherits os.environ, so the child loop sees the workspace
-    assert mock_run.call_args.kwargs.get("env") is None
-    assert os.environ["AGENTS_WORKSPACE_DIR"] == str(repo.resolve())
+    child_env = mock_run.call_args.kwargs["env"]
+    assert child_env["AGENTS_WORKDIR"] == str(repo.resolve())
+    assert os.environ["AGENTS_WORKDIR"] == str(repo.resolve())
+    assert os.environ["AGENTS_WORKSPACE_LOCK"] == "1"
+
+
+def test_workspace_id_selects_data_workspace(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "home"))
+    from agents_workspace import Host
+
+    Host.from_env().create("demo")
+    assert cli.apply_workspace("demo") is None
+    assert os.environ["AGENTS_WORKSPACE"] == "demo"
+
+
+def test_workdir_flag_sets_env(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    monkeypatch.delenv("AGENTS_WORKDIR", raising=False)
+    monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
+    assert cli.apply_workdir(str(repo)) is None
+    assert os.environ["AGENTS_WORKDIR"] == str(repo.resolve())
     assert os.environ["AGENTS_WORKSPACE_LOCK"] == "1"
 
 
 def test_workspace_missing_path_exits_2(tmp_path, monkeypatch, capsys):
     missing = tmp_path / "nope"
-    monkeypatch.delenv("AGENTS_WORKSPACE_DIR", raising=False)
-    monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "home"))
     with patch("klanker.__main__.Nucleus") as nucleus_cls:
         rc = cli.main(["chat", "hi", "--workspace", str(missing)])
     assert rc == 2
     nucleus_cls.assert_not_called()
-    assert "does not exist" in capsys.readouterr().err
+    assert "unknown workspace id" in capsys.readouterr().err
 
 
 def test_workspace_file_path_exits_2(tmp_path, monkeypatch, capsys):
     target = tmp_path / "file.txt"
     target.write_text("x", encoding="utf-8")
-    monkeypatch.delenv("AGENTS_WORKSPACE_DIR", raising=False)
-    monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "home"))
     with patch("klanker.__main__.Nucleus") as nucleus_cls:
         rc = cli.main(["chat", "hi", "--workspace", str(target)])
     assert rc == 2
     nucleus_cls.assert_not_called()
-    assert "not a directory" in capsys.readouterr().err
+    assert "unknown workspace id" in capsys.readouterr().err
 
 
 def test_terminal_edit_counts_as_a_file_write():

@@ -30,9 +30,10 @@ klanker sense
 # One harness turn (non-interactive)
 klanker chat "ping"
 
-# Code in a repo: the workspace is the repo root
-klanker --workspace ~/Coding/my-repo
-klanker chat "fix the failing test" --workspace ~/Coding/my-repo
+# Code in a repo: workdir is the repo root, workspace is the data id
+klanker --workdir ~/Coding/my-repo
+klanker chat "fix the failing test" --workdir ~/Coding/my-repo
+klanker chat "note this" --workspace work
 ```
 
 Klanker is **self-equipping**: when you request tools or capabilities in chat (e.g. browser automation, agent key minting), Klanker autonomously installs and equips feelers via its terminal on demand.
@@ -96,11 +97,11 @@ pip install "klanker[all]"       # All optional extensions
 | Command | Description |
 | :--- | :--- |
 | `klanker` | Start interactive multi-turn REPL chat |
-| `klanker --workspace <path>` | REPL with `AGENTS_WORKDIR` set and the workspace locked to that directory |
+| `klanker --workdir <path>` | REPL with `AGENTS_WORKDIR` set and the workdir locked to that directory |
 | `klanker "message"` | Run a single turn directly in terminal |
 | `klanker sense [--json]` | Probe host capabilities, installed agent packages, MCP servers, and skills |
-| `klanker prompt [--workspace <path>]` | Inspect dynamic system prompt generated for current host |
-| `klanker chat "message" [--workspace <path>]` | One turn with `AGENTS_WORKDIR` set and the workspace locked to that directory |
+| `klanker prompt [--workspace <id>]` | Inspect dynamic system prompt generated for current host |
+| `klanker chat "message" [--workspace <id>] [--workdir <path>]` | One turn inside data workspace `<id>` with session working dir |
 | `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), the PWA at `/` when `RELAY_WEB_TOKEN` is set, Telegram long-poll, and the schedule ticker |
 | `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
 | `klanker remind add --user <user> --channel <channel> --at <when> --text <msg>` | Fixed-text reminder on that channel |
@@ -111,24 +112,24 @@ pip install "klanker[all]"       # All optional extensions
 
 ## Workspaces
 
-A workspace is one data boundary: memory, rules, skills, modules, schedules, traces, routine runs, relay state, personas, identity, config. `agents-workspace` resolves every path from one root.
+A host (`AGENTS_HOST_DIR`, default `~/.agents`) holds shared infrastructure. A workspace (`<host>/workspaces/<id>`) is one data boundary: memory, rules, skills, modules, schedules, traces, routine runs, relay state, personas, config. `agents-workspace` resolves every path.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `AGENTS_WORKSPACE_ROOT` | `AGENTS_HOME`, else `~/.agents` | Workspace data root |
-| `AGENTS_WORKDIR` | `AGENTS_WORKSPACE_DIR`, else `root/workspace` | Terminal working directory |
-| `AGENTS_WORKSPACES_DIR` | `~/.agents-workspaces` | Additional workspaces |
+| `AGENTS_HOST_DIR` | `~/.agents` | Host root (keys, agents.json, workspaces/) |
+| `AGENTS_WORKSPACE` | `default` | Workspace id (not a path) |
+| `AGENTS_WORKDIR` | `<ws>/work` | Session working directory (the coding cwd) |
+| `AGENTS_WORKSPACE_DIR` | — | Deprecated alias for `AGENTS_WORKDIR` (one release) |
 
-`AGENTS_HOME` and `AGENTS_WORKSPACE_DIR` stay readable as legacy aliases.
+`AGENTS_HOME` stays readable as a legacy alias. `--workspace <dir>` once meant the workdir; that use warns and maps to `--workdir` for one release.
 
 ```bash
-agents-workspace info
 agents-workspace list
-agents-workspace create --label personal
-agents-workspace path traces
+agents-workspace create <id>
+agents-workspace show <id>
 ```
 
-`klanker serve` hosts every workspace under `AGENTS_WORKSPACES_DIR` plus the default. A turn picks one with `"workspace": "<id|label|path>"` in the `/v1/turn` body. `GET /v1/workspaces` lists them, `POST /v1/workspaces {"label": "..."}` creates one. `klanker routine add --workspace <ref>` pins a routine to a workspace.
+`klanker serve` hosts every workspace on the host. A turn picks one with `"workspace": "<id>"` in the `/v1/turn` body. `GET /v1/workspaces` lists them, `POST /v1/workspaces {"label": "..."}` creates one. `klanker routine add --workspace <id>` pins a routine to a workspace.
 
 ---
 
@@ -142,7 +143,7 @@ Routines are job files with `"kind": "routine"`. The verb is `python -m klanker 
 
 Each finished routine run, including `NO_UPDATE` and failures, is written under `~/.agents/routine-runs/<name>/` (`AGENTS_ROUTINE_RUNS_DIR`, or `$AGENTS_HOME/routine-runs`): `index.jsonl` plus one markdown file. Each write replaces the file in one step. Runs older than 90 days, and runs past the newest 2000, are removed (`AGENTS_ROUTINE_RUNS_KEEP_DAYS`, `AGENTS_ROUTINE_RUNS_KEEP_COUNT`). Those files are not part of the memory index unless a turn adds them. `klanker evidence --from YYYY-MM-DD --to YYYY-MM-DD` lists them and the workspace by day.
 
-`klanker serve` sets `AGENTS_MODULES_DIR` to the overlay directory (`~/.agents/modules`, or `/data/.agents/modules` in the image) when it is unset. Harness ignores overlay modules, including `mcp.schedule.add`, unless that variable is set. A custom `LOOP_CMD` skips Klanker's system prompt and `klanker.turn` shims; serve logs a warning when it is set.
+`klanker serve` installs the module overlay into each workspace's `modules/` dir at startup. Turns get `AGENTS_MODULES_DIR` through the workspace env (`ws.env()`), never through a process-global variable, so a turn on workspace B reads B's overlay. Harness ignores overlay modules, including `mcp.schedule.add`, unless that variable is set. A custom `LOOP_CMD` skips Klanker's system prompt and `klanker.turn` shims; serve logs a warning when it is set.
 
 `klanker.turn` is the process that runs the harness loop. When `agents-traces` is installed it registers `read_content` as the content backend, so a `<ref digest="..."/>` can be paged instead of summarized. It also registers the evidence check as the final-response hook: a side effect needs a successful `agents_harness.tool_receipt.v1`, and a memory save also needs `agents_memory.write_receipt.v1`. One revision pass runs; leftover findings are `response_flags`. Read-only terminal commands are `mcp.terminal.list`, `read`, `grep`, and `stat`. File edits use `mcp.terminal.edit` for existing files and `mcp.terminal.write` for new ones; both are mutating, so they follow the approval mode below. `mcp.terminal.run` is not the file-edit path.
 

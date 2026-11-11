@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import shutil
 from pathlib import Path
 
@@ -10,18 +9,11 @@ from agents_workspace import Workspace
 
 BUNDLED = Path(__file__).resolve().parent / "modules"
 OVERLAY_ALWAYS = frozenset({"mcp.schedule.add.json"})
-_default_ready = False
+_done: set[Path] = set()
 
 
-def overlay_dir() -> Path:
-    return Workspace.from_env().modules
-
-
-def publish_modules_dir() -> Path:
-    """Harness reads the overlay only when ``AGENTS_MODULES_DIR`` is set."""
-    path = overlay_dir()
-    os.environ.setdefault("AGENTS_MODULES_DIR", str(path))
-    return Path(os.environ["AGENTS_MODULES_DIR"]).expanduser()
+def overlay_dir(workspace: Workspace | None = None) -> Path:
+    return (workspace or Workspace.from_env()).modules
 
 
 def install_overlay(target: Path | None = None, *, generate: bool = True) -> Path:
@@ -39,13 +31,13 @@ def install_overlay(target: Path | None = None, *, generate: bool = True) -> Pat
     return dest
 
 
-def ensure_default_overlay() -> Path:
-    """Install the default overlay once per process."""
-    global _default_ready
-    if _default_ready:
-        return overlay_dir()
-    dest = install_overlay()
-    _default_ready = True
+def ensure_default_overlay(workspace: Workspace | None = None, *, generate: bool = True) -> Path:
+    """Install the overlay for ``workspace`` once per process per directory."""
+    dest = overlay_dir(workspace)
+    if dest in _done:
+        return dest
+    install_overlay(dest, generate=generate)
+    _done.add(dest)
     return dest
 
 
