@@ -31,8 +31,8 @@ klanker sense
 klanker chat "ping"
 
 # Code in a repo: workdir is the repo root, workspace is the data id
-klanker --workdir ~/Coding/my-repo
-klanker chat "fix the failing test" --workdir ~/Coding/my-repo
+klanker --workdir <repo>
+klanker chat "fix the failing test" --workdir <repo>
 klanker chat "note this" --workspace work
 ```
 
@@ -171,11 +171,11 @@ Do not flock `tick.lock` around that command. The harness locks it inside `tick(
 
 ## Web app (PWA)
 
-`klanker serve` also serves the relay's built-in PWA at `/` when `RELAY_WEB_TOKEN` is set. That is the phone surface: open `https://<host>/`, paste the token once, and chat with streamed progress. `RELAY_WEB_USER` (default `felix`) is the harness `--user` for web turns, so web sessions are a separate session space from the Telegram chat id. The relay stays stateless; the browser keeps the thread and session id.
+`klanker serve` also serves the relay's built-in PWA at `/` when `RELAY_WEB_TOKEN` is set. That is the phone surface: open `https://<host>/`, paste the token once, and chat with streamed progress. `RELAY_WEB_USER` (default `web`) is the harness `--user` for web turns, so web sessions are a separate session space from the Telegram chat id. The relay stays stateless; the browser keeps the thread and session id.
 
 ```bash
 RELAY_WEB_TOKEN=<long random string>
-RELAY_WEB_USER=felix
+RELAY_WEB_USER=web
 ```
 
 Set `RELAY_SECRET` too if CLI clients still need header auth. Without it, the cookie is the only gate on every endpoint once the web surface is on.

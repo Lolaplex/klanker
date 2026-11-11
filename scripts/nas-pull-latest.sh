@@ -1,13 +1,12 @@
 #!/bin/sh
-# Recreate a compose project only when its registry image moved.
-# Live copy: /volume1/docker/pull-latest.sh (host cron, not a container).
-# No Watchtower. Not Orisha. compose up re-reads compose.yml (group_add stays).
+# Recreate compose projects only when their registry image moved.
+# Dirs come from args or $PROJECT_DIRS (space-separated). No defaults.
 #
-#   nas-pull-latest.sh                         # koru + assistant + klanker
-#   nas-pull-latest.sh /volume1/docker/klanker
+#   pull-latest.sh /path/to/project-a /path/to/project-b
+#   PROJECT_DIRS="/path/a /path/b" pull-latest.sh
 set -eu
 PATH=/usr/local/bin:/usr/bin:/bin
-COMPOSE=/usr/local/bin/docker-compose
+COMPOSE="${DOCKER_COMPOSE:-docker-compose}"
 
 update() {
   dir=$1
@@ -20,11 +19,15 @@ update() {
     up -d --no-build --pull always --remove-orphans
 }
 
-if [ -n "${1:-}" ]; then
-  update "$1"
+if [ "$#" -gt 0 ]; then
+  for d in "$@"; do update "$d"; done
   exit 0
 fi
 
-update /volume1/docker/koru-orisha-media
-update /volume1/docker/agents-assistant
-update /volume1/docker/klanker
+if [ -n "${PROJECT_DIRS:-}" ]; then
+  for d in $PROJECT_DIRS; do update "$d"; done
+  exit 0
+fi
+
+echo "usage: pull-latest.sh <project-dir> [...]  (or set PROJECT_DIRS)" >&2
+exit 2

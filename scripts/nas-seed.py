@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""One-time seed for /volume1/docker/klanker on SigmaNAS.
+"""One-time seed: copy an existing agents data tree into a new host dir.
 
-Runs ON the NAS via:  ssh sigmanas python3 - < scripts/nas-seed.py
+Runs ON the target host via:  ssh <host> python3 - < scripts/nas-seed.py
+Configure via env:
+  SEED_SRC   source project root (holds data/.agents and .env) — required
+  SEED_DST   destination project root — required
 
-- Copies assistant .agents (memory, docs, rules, skills, traces,
-  identity.json) into klanker's data dir. Missing files only — never
-  overwrites, so it is safe to re-run after klanker has started writing
-  its own memory.
-- Writes klanker .env from the assistant .env, keeping only keys the
-  relay/serve path reads — including TELEGRAM_*: klanker REPLACES the
-  assistant as the bot owner (assistant container is stopped on cutover
-  — two pollers on one token would race).
-- Ingests assistant.db messages -> klanker traces as agents-traces
+- Copies agent domains (memory, docs, rules, skills, traces,
+  identity.json) into the destination data dir. Missing files only —
+  never overwrites, so it is safe to re-run after the service has
+  started writing its own memory.
+- Writes the destination .env from the source .env, keeping only keys
+  the relay/serve path reads — including TELEGRAM_* (two pollers on one
+  token would race; stop the source bot on cutover).
+- Ingests source messages.db -> destination traces as agents-traces
   `message` events (origin "ingested", session telegram-<chat_id>),
   split into daily YYYY-MM-DD.jsonl files. Idempotent via sentinel.
 
-Nothing here mutates the assistant project. Reads are read-only.
+The source project is never mutated. Reads are read-only.
 """
 import hashlib
 import json
@@ -25,8 +27,11 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 
-ASSISTANT = "/volume1/docker/agents-assistant"
-KLANKER = "/volume1/docker/klanker"
+ASSISTANT = os.environ.get("SEED_SRC", "")
+KLANKER = os.environ.get("SEED_DST", "")
+if not ASSISTANT or not KLANKER:
+    sys.exit("SEED_SRC and SEED_DST env are required")
+
 COPY_DIRS = ["memory", "docs", "rules", "skills", "traces"]
 COPY_FILES = ["identity.json"]
 KEEP_ENV_PREFIXES = ("GATEWAY_", "RELAY_", "LLM_", "OPENAI_", "OPENROUTER_", "AGENTS_IDENTITY", "TELEGRAM_")
@@ -73,7 +78,7 @@ def seed_env() -> int:
             if any(key.startswith(p) for p in KEEP_ENV_PREFIXES):
                 kept.append(stripped)
     with open(dst, "w", encoding="utf-8") as fh:
-        fh.write("# seeded from agents-assistant/.env (filtered) by nas-seed.py\n")
+        fh.write("# seeded from source .env (filtered) by nas-seed.py\n")
         fh.write("\n".join(kept) + "\n")
     return len(kept)
 
@@ -81,7 +86,7 @@ def seed_env() -> int:
 def ingest_messages() -> int:
     db_path = os.path.join(ASSISTANT, "data/assistant.db")
     if not os.path.isfile(db_path):
-        print("no assistant.db — nothing to ingest")
+        print("no source messages.db — nothing to ingest")
         return 0
     last_id = 0
     if os.path.isfile(SENTINEL):
