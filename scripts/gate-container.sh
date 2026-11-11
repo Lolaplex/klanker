@@ -3,6 +3,10 @@
 # Usage: scripts/gate-container.sh [image]   (default: image built from dev)
 set -eu
 
+# Git Bash on Windows would rewrite container paths (/bin/sh -> C:/...).
+MSYS2_ARG_CONV_EXCL="${MSYS2_ARG_CONV_EXCL:-*}"
+export MSYS2_ARG_CONV_EXCL
+
 IMAGE="${1:-klanker:gate}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
