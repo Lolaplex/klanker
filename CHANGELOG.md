@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `klanker serve` refuses a legacy host layout and points at
+  `agents-workspace migrate` instead of silently bridging.
+- Container `entrypoint.sh` auto-migration (`AGENTS_AUTO_MIGRATE=1`) fails
+  the entrypoint on migration errors instead of `|| true`.
+
+### Changed
 - Container host layout: `entrypoint.sh` exports only `AGENTS_HOST_DIR=/data/.agents` and creates `workspaces/`, `run/`, `cache/`, `keys/`, `logs/`. No process-global `AGENTS_WORKSPACE`, workdir, home/root aliases, or `AGENTS_*_DIR` domain overrides — every workspace owns its memory/traces/schedules. `AGENTS_AUTO_MIGRATE=1` runs `agents-workspace migrate` on boot (container only).
 - `Dockerfile`: `RELAY_HOST`/`RELAY_PORT` instead of legacy `GATEWAY_HOST`/`GATEWAY_PORT`; no docs/memory/traces dirs in the image.
 - `compose.nas.yaml` replaced by `compose.example.yaml` with `<placeholders>` — no personal values, no domain overrides.
