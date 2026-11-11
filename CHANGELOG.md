@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/gate-container.sh`: container variant of the gate.
 
 ### Changed
+- Deploy scripts take every host-specific value via env/args: `NAS_HOST`,
+  `NAS_PROJECT`, `REMOTE_REPO`, `PROJECT_DIRS`, `SEED_SRC`/`SEED_DST` —
+  no personal defaults (registry, user@host, volume paths) remain.
+- README/`RELAY_WEB_USER` example uses `web`; `.agents` memory files and
+  generated metadata no longer carry absolute local paths.
 - `klanker serve` refuses a legacy host layout and points at
   `agents-workspace migrate` instead of silently bridging.
 - Container `entrypoint.sh` auto-migration (`AGENTS_AUTO_MIGRATE=1`) fails
