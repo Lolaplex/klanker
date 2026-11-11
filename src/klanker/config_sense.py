@@ -18,9 +18,28 @@ _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def mcp_config_path() -> Path:
-    raw = os.environ.get("AGENTS_MCP_CONFIG", "").strip()
+    """Host ``mcp.json``. ``AGENTS_MCP_CONFIG_FILE`` wins (alias
+    ``AGENTS_MCP_CONFIG``, one release). Same contract as
+    ``runner.mcp_client.mcp_config_path``."""
+    raw = os.environ.get("AGENTS_MCP_CONFIG_FILE", "").strip()
+    if not raw:
+        raw = os.environ.get("AGENTS_MCP_CONFIG", "").strip()
+        if raw:
+            import warnings
+
+            warnings.warn(
+                "AGENTS_MCP_CONFIG is deprecated; use AGENTS_MCP_CONFIG_FILE "
+                "(alias removed after one release)",
+                DeprecationWarning,
+                stacklevel=2,
+            )
     if raw:
         return Path(raw).expanduser()
+    return Workspace.from_env().host.mcp_json
+
+
+def mcp_overlay_path() -> Path:
+    """Optional ``<ws>/mcp.json`` overlay; wins per-server over the host file."""
     return Workspace.from_env().root / "mcp.json"
 
 
@@ -82,15 +101,23 @@ def _probe_url(url: str, *, open_url: Callable[[str], Any] | None) -> str:
         return "unreachable"
 
 
-def mcp_report() -> dict[str, Any]:
-    path = mcp_config_path()
-    if not path.is_file():
-        return {"mcp_config": str(path), "mcp_servers": []}
+def _mcp_servers(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        return {"mcp_config": str(path), "mcp_servers": [], "mcp_error": str(exc)}
+    except (OSError, json.JSONDecodeError):
+        return {}
     servers = data.get("mcpServers") if isinstance(data, dict) else None
+    return servers if isinstance(servers, dict) else {}
+
+
+def mcp_report() -> dict[str, Any]:
+    path = mcp_config_path()
+    overlay = mcp_overlay_path()
+    if not path.is_file() and not overlay.is_file():
+        return {"mcp_config": str(path), "mcp_servers": []}
+    servers = _mcp_servers(path) if path.is_file() else {}
+    if overlay.is_file():
+        servers = {**servers, **_mcp_servers(overlay)}
     rows: list[dict[str, str]] = []
     if isinstance(servers, dict):
         for name, spec in servers.items():
