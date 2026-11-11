@@ -62,6 +62,27 @@ function seedBucket(session: string): ChatBucket {
   return { openId: id, items: [{ id, session, messages: [] }] };
 }
 
+const chatsKey = (instanceId: string) => `klanker.chats.${instanceId}`;
+
+function loadBucket(instanceId: string): ChatBucket | null {
+  try {
+    const raw = localStorage.getItem(chatsKey(instanceId));
+    if (!raw) return null;
+    const b = JSON.parse(raw) as ChatBucket;
+    if (!Array.isArray(b?.items) || b.items.length === 0) return null;
+    return { openId: b.items.some((i) => i.id === b.openId) ? b.openId : b.items[0].id, items: b.items };
+  } catch {
+    return null;
+  }
+}
+
+function saveBucket(instanceId: string, bucket: ChatBucket): void {
+  try {
+    const items = bucket.items.slice(-30).map((i) => ({ ...i, messages: i.messages.slice(-300) }));
+    localStorage.setItem(chatsKey(instanceId), JSON.stringify({ ...bucket, items }));
+  } catch {}
+}
+
 function mapChat(
   prev: Record<string, ChatBucket>,
   instanceId: string,
@@ -139,7 +160,8 @@ export function App() {
     if (!inst) return;
     setChats((prev) => {
       if (prev[inst.id]) return prev;
-      return { ...prev, [inst.id]: seedBucket(inst.session ?? "") };
+      const stored = loadBucket(inst.id);
+      return { ...prev, [inst.id]: stored ?? seedBucket(inst.session ?? "") };
     });
     setUnread((prev) => {
       if (!prev.has(inst.id)) return prev;
@@ -156,6 +178,19 @@ export function App() {
       const current = prev[instanceId];
       if (!current || current.openId === chatId || !current.items.some((item) => item.id === chatId)) return prev;
       return { ...prev, [instanceId]: { ...current, openId: chatId } };
+    });
+  };
+
+  const deleteChat = (chatId: string) => {
+    if (!activeInstance) return;
+    const instanceId = activeInstance.id;
+    setChats((prev) => {
+      const current = prev[instanceId];
+      if (!current) return prev;
+      const items = current.items.filter((i) => i.id !== chatId);
+      if (items.length === 0) items.push({ id: crypto.randomUUID(), session: mintSessionId(), messages: [] });
+      const openId = items.some((i) => i.id === current.openId) ? current.openId : items[items.length - 1].id;
+      return { ...prev, [instanceId]: { openId, items } };
     });
   };
 
@@ -220,6 +255,11 @@ export function App() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Persist chats per instance (localStorage)
+  useEffect(() => {
+    for (const [id, bucket] of Object.entries(chats)) saveBucket(id, bucket);
+  }, [chats]);
 
   // Health poll every 8s
   useEffect(() => {
@@ -658,6 +698,7 @@ export function App() {
           openChatId={openChat?.id ?? null}
           onSelectChat={(id) => { selectChat(id); setNavOpen(false); }}
           onNewChat={() => { newChat(); setNavOpen(false); }}
+          onDeleteChat={deleteChat}
         />
       </div>
 
@@ -667,6 +708,55 @@ export function App() {
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activeInstance ? (
             <>
+              {status?.state === "running" && (
+                <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-[#737373] overflow-x-auto">
+                  <span className="shrink-0">ws</span>
+                  <select
+                    value={activeInstance.workspace}
+                    onChange={(e) => void handleSaveInstance({ ...activeInstance, workspace: e.target.value })}
+                    className="bg-[#0a0a0a] border border-[#262626] rounded px-1 py-0.5 text-[#a3a3a3] max-w-[10rem] truncate"
+                  >
+                    <option value="">default</option>
+                    {workspaces
+                      .filter((w) => w.id !== activeInstance.workspace)
+                      .map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.label || w.id}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    type="button"
+                    title="New workspace"
+                    onClick={() => {
+                      const id = window.prompt("new workspace id");
+                      if (!id?.trim() || !activeInstance) return;
+                      void api
+                        .createWorkspace(activeInstance, id.trim())
+                        .then((wsId) => handleSaveInstance({ ...activeInstance, workspace: wsId }))
+                        .then(() => api.listWorkspaces(activeInstance).then(setWorkspaces))
+                        .catch((e) => setWsNote(`workspace: ${e instanceof Error ? e.message : e}`));
+                    }}
+                    className="shrink-0 px-1.5 py-0.5 border border-[#262626] rounded text-[#a3a3a3] hover:text-white hover:border-white"
+                  >
+                    +
+                  </button>
+                  <span className="shrink-0 ml-2">persona</span>
+                  <select
+                    value={activeInstance.persona || ""}
+                    onChange={(e) => void handleSaveInstance({ ...activeInstance, persona: e.target.value })}
+                    className="bg-[#0a0a0a] border border-[#262626] rounded px-1 py-0.5 text-[#a3a3a3] max-w-[10rem] truncate"
+                  >
+                    <option value="">default</option>
+                    {personas.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name || p.id}
+                      </option>
+                    ))}
+                  </select>
+                  {wsNote && <span className="ml-2 text-red-500 truncate">{wsNote}</span>}
+                </div>
+              )}
               <ChatConsole
                 key={`${activeInstance.id}:${openChat?.id ?? ""}`}
                 instance={activeInstance}

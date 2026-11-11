@@ -270,9 +270,10 @@ export const api = {
 
 export function localInstance(): KlankerInstance {
   const now = new Date().toISOString();
+  const host = (window.location.hostname.split(".")[0] || "klanker").toLowerCase();
   return {
     id: "local",
-    name: "This relay",
+    name: host === "localhost" || host === "127" ? "klanker" : host,
     slug: "local",
     role: "",
     provider: "",

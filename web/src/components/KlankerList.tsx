@@ -1,11 +1,13 @@
 import React, { useState } from "react";
-import { Plus, Radar } from "lucide-react";
-import { DiscoveredPeer, KlankerInstance, ProcessStatus } from "../types/klanker";
+import { Plus, Radar, X } from "lucide-react";
+import { ChatMessage, DiscoveredPeer, KlankerInstance, ProcessStatus } from "../types/klanker";
 import { api } from "../services/api";
 import { KlankerMark } from "./KlankerMark";
 
 interface ChatListRow {
   id: string;
+  session?: string;
+  messages?: ChatMessage[];
 }
 
 interface KlankerListProps {
@@ -20,6 +22,7 @@ interface KlankerListProps {
   openChatId: string | null;
   onSelectChat: (chatId: string) => void;
   onNewChat: () => void;
+  onDeleteChat: (chatId: string) => void;
 }
 
 function rowHealth(row: ProcessStatus | undefined): "up" | "down" | "busy" {
@@ -47,6 +50,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
   openChatId,
   onSelectChat,
   onNewChat,
+  onDeleteChat,
 }) => {
   const [discovering, setDiscovering] = useState(false);
   const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
@@ -100,17 +104,35 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                   <div className="max-h-24 overflow-y-auto">
                     {chats.map((chat, index) => {
                       const open = chat.id === openChatId;
+                      const first = chat.messages?.find((m) => m.role === "user")?.content?.trim();
+                      const label = first
+                        ? first.length > 26
+                          ? `${first.slice(0, 26)}…`
+                          : first
+                        : chat.session
+                          ? chat.session
+                          : `Chat ${index + 1}`;
                       return (
-                        <button
-                          key={chat.id}
-                          type="button"
-                          onClick={() => onSelectChat(chat.id)}
-                          className={`w-full text-left pl-7 pr-2 py-1 font-mono text-[11px] truncate transition-colors ${
-                            open ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
-                          }`}
-                        >
-                          Chat {index + 1}
-                        </button>
+                        <div key={chat.id} className="group flex items-center">
+                          <button
+                            type="button"
+                            onClick={() => onSelectChat(chat.id)}
+                            title={first || label}
+                            className={`flex-1 min-w-0 text-left pl-7 pr-1 py-1 font-mono text-[11px] truncate transition-colors ${
+                              open ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteChat(chat.id)}
+                            title="Delete chat"
+                            className="shrink-0 p-0.5 mr-1 text-[#525252] opacity-0 group-hover:opacity-100 hover:text-white transition-opacity"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
                       );
                     })}
                   </div>
