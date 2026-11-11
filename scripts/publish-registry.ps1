@@ -1,21 +1,27 @@
-# Build klanker:local and push into the live NAS registry.
-# Registry binds 127.0.0.1:9500 on SigmaNAS - this PC cannot docker-push to :9500.
+# Build a local image and push it into a private docker registry reachable
+# only on the remote host (e.g. bound to 127.0.0.1 there).
 # Flow: docker build (suite pinned via SUITE_REF git refs), save tar, scp -O,
-# then ssh docker load and docker push 127.0.0.1:9500.
-# No GHCR. GITHUB_TOKEN is passed as a build arg when set — needed while any
-# Lolaplex suite repo is private (agents-traces is). Never baked into a layer:
-# the Dockerfile removes the git url rewrite after install.
+# then ssh docker load + push. All host-specific values via env/args.
+#
+#   $env:NAS_HOST, $env:NAS_PROJECT, $env:REMOTE_REPO are required.
+# GITHUB_TOKEN is passed as a build arg when set — needed while any suite
+# repo is private. Never baked into a layer: the Dockerfile removes the
+# git url rewrite after install.
 param(
-    [string]$NasHost = $(if ($env:NAS_HOST) { $env:NAS_HOST } else { "cypoe@sigmanas" }),
+    [string]$NasHost = $env:NAS_HOST,
+    [string]$Dest = $env:NAS_PROJECT,
     [string]$LocalImage = $(if ($env:LOCAL_IMAGE) { $env:LOCAL_IMAGE } else { "klanker:local" }),
     [string]$SuiteRef = $(if ($env:SUITE_REF) { $env:SUITE_REF } else { "dev" })
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $NasHost) { throw "NAS_HOST env or -NasHost required" }
+if (-not $Dest) { throw "NAS_PROJECT env or -Dest required" }
+$RemoteRepo = $env:REMOTE_REPO
+if (-not $RemoteRepo) { throw "REMOTE_REPO env required (e.g. 127.0.0.1:<port>/<image>)" }
 $Root = Split-Path -Parent $PSScriptRoot
 $Tags = if ($env:TAGS) { $env:TAGS } else { "latest" }
 $SkipBuild = $env:SKIP_BUILD
-$RemoteRepo = "127.0.0.1:9500/klanker"
 
 if ($SkipBuild -ne "1") {
     $buildArgs = @("--build-arg", "SUITE_REF=$SuiteRef", "--build-arg", "CACHE_BUST=$(Get-Date -Format yyyyMMddHHmmss)")
@@ -50,18 +56,18 @@ foreach ($tag in ($Tags -split "\s+")) {
 }
 $push = $pushCmds -join " && "
 
-Write-Host "loading and pushing on NAS"
-ssh -o BatchMode=yes $NasHost "export PATH=/usr/local/bin:/usr/bin:/bin; docker load -i $remoteTar && $push && rm -f $remoteTar && curl -fsS http://127.0.0.1:9500/v2/_catalog"
-if ($LASTEXITCODE -ne 0) { throw "NAS load/push failed" }
+Write-Host "loading and pushing on remote host"
+ssh -o BatchMode=yes $NasHost "export PATH=/usr/local/bin:/usr/bin:/bin; docker load -i $remoteTar && $push && rm -f $remoteTar"
+if ($LASTEXITCODE -ne 0) { throw "remote load/push failed" }
 
 Remove-Item -Force $tar -ErrorAction SilentlyContinue
-scp -O "$Root\scripts\nas-pull-latest.sh" "${NasHost}:/volume1/docker/pull-latest.sh"
+scp -O "$Root\scripts
+as-pull-latest.sh" "${NasHost}:${Dest}/pull-latest.sh"
 if ($LASTEXITCODE -ne 0) { throw "scp pull-latest failed" }
-ssh -o BatchMode=yes $NasHost "chmod 755 /volume1/docker/pull-latest.sh && sed -i 's/\r$//' /volume1/docker/pull-latest.sh"
+ssh -o BatchMode=yes $NasHost "chmod 755 $Dest/pull-latest.sh && sed -i 's/$//' $Dest/pull-latest.sh"
 if ($LASTEXITCODE -ne 0) { throw "chmod pull-latest failed" }
-Write-Host "recreating NAS project if digest moved"
-ssh -o BatchMode=yes $NasHost "/volume1/docker/pull-latest.sh /volume1/docker/klanker"
+Write-Host "recreating remote project if digest moved"
+ssh -o BatchMode=yes $NasHost "$Dest/pull-latest.sh $Dest"
 if ($LASTEXITCODE -ne 0) { throw "pull-latest failed" }
 
 Write-Host "OK registry has $RemoteRepo tags: $Tags"
-Write-Host "CM compose image: sigmanas.local:9500/klanker:latest"
