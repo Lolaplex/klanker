@@ -5,15 +5,21 @@ import { api } from "../services/api";
 
 interface NewKlankerModalProps {
   isOpen: boolean;
+  autoDiscover?: boolean;
   onClose: () => void;
   onSave: (instance: KlankerInstance) => void;
 }
 
-export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClose, onSave }) => {
+export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, autoDiscover, onClose, onSave }) => {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [discovering, setDiscovering] = useState(false);
   const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
+
+  React.useEffect(() => {
+    if (isOpen && autoDiscover) void runDiscovery();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
