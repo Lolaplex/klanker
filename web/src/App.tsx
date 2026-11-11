@@ -743,7 +743,6 @@ export function App() {
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
           onNewHost={() => { setModalDiscover(false); setIsNewModalOpen(true); setNavOpen(false); }}
-          onDiscoverHosts={() => { setModalDiscover(true); setIsNewModalOpen(true); setNavOpen(false); }}
           onNewWorkspace={() => {
             if (!activeInstance) return;
             const id = window.prompt("new workspace id");

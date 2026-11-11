@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Radar, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { KlankerMark } from "./KlankerMark";
 
@@ -33,7 +33,6 @@ interface KlankerListProps {
   onNewChat: (ws: string, persona: string) => void;
   onDeleteChat: (ws: string, persona: string, row: SessionRow) => void;
   onNewHost: () => void;
-  onDiscoverHosts: () => void;
   onNewWorkspace: () => void;
 }
 
@@ -68,7 +67,6 @@ export const KlankerList: React.FC<KlankerListProps> = ({
   onNewChat,
   onDeleteChat,
   onNewHost,
-  onDiscoverHosts,
   onNewWorkspace,
 }) => {
   const [openWs, setOpenWs] = useState<ReadonlySet<string>>(new Set());
@@ -231,22 +229,14 @@ export const KlankerList: React.FC<KlankerListProps> = ({
         )}
       </div>
 
-      <div className="shrink-0 p-2 border-t border-[#262626] space-y-1.5">
-        <button
-          type="button"
-          onClick={onDiscoverHosts}
-          className="w-full flex items-center justify-center space-x-1.5 px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] text-[#a3a3a3] hover:text-white rounded text-xs font-mono transition-colors"
-        >
-          <Radar className="w-3.5 h-3.5" />
-          <span>Discover</span>
-        </button>
+      <div className="shrink-0 p-2 border-t border-[#262626]">
         <button
           type="button"
           onClick={onNewHost}
-          className="w-full flex items-center justify-center space-x-1.5 px-2.5 py-1.5 bg-white hover:bg-[#e5e5e5] text-black rounded text-xs font-mono font-medium transition-colors"
+          className="w-full flex items-center justify-center space-x-1.5 px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] text-[#a3a3a3] hover:text-white rounded text-xs font-mono transition-colors"
         >
           <Plus className="w-3.5 h-3.5" />
-          <span>New</span>
+          <span>add host</span>
         </button>
       </div>
     </aside>
