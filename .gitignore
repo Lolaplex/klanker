@@ -16,3 +16,7 @@ vision/
 # AGENTS.md stays tracked.
 .cursor/rules/user-rules.mdc
 CLAUDE.md
+
+web/node_modules/
+web/dist/
+src/klanker/_web/

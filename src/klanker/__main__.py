@@ -440,6 +440,15 @@ def main(argv: list[str] | None = None) -> int:
 
             start_ticker()
 
+        # Dashboard: vendored wheel assets are served when no explicit dir is
+        # configured. Static serving itself stays gated on RELAY_WEB_TOKEN.
+        if "AGENTS_RELAY_WEB_DIR" not in os.environ and "RELAY_STATIC_DIR" not in os.environ:
+            from .web_assets import default_web_dir
+
+            web_dir = default_web_dir()
+            if web_dir is not None:
+                os.environ["AGENTS_RELAY_WEB_DIR"] = str(web_dir)
+
         try:
             from agents_relay.__main__ import main as relay_main
         except ImportError:
