@@ -1,0 +1,31 @@
+# Example compose for the klanker image (no build context).
+# Copy to compose.yml and fill the <placeholders>; keep secrets in .env.
+#
+# Port contract: the container listens on 8000 (RELAY_PORT in the image);
+# map the host port your clients probe (klanker-desktop checks 8787 first).
+services:
+  klanker:
+    image: <registry>/klanker:latest
+    pull_policy: always
+    restart: unless-stopped
+    # entrypoint.sh owns privilege drop: start as root so it can chown the
+    # bind-mounted /data, then setpriv down to the klanker user.
+    user: "0"
+    ports:
+      - "8787:8000"
+    env_file:
+      - .env
+    environment:
+      - TZ=<timezone>          # e.g. Europe/Berlin
+      # Host layout only. No AGENTS_*_DIR overrides: every workspace owns
+      # its memory/traces/schedules under <host>/workspaces/<id>/.
+      - AGENTS_HOST_DIR=/data/.agents
+      # Optional: fold a legacy host-level layout into a workspace on boot.
+      # - AGENTS_AUTO_MIGRATE=1
+    volumes:
+      - <host-data-dir>:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

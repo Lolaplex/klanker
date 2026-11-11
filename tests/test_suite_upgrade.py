@@ -830,9 +830,20 @@ class TestGatingAndDocs(unittest.TestCase):
         self.assertIn("mcp.json", readme)
         entry = (root / "entrypoint.sh").read_text(encoding="utf-8")
         self.assertNotIn("chmod 666", entry)
-        self.assertIn(".agents/skills", entry)
+        self.assertIn(".agents/workspaces", entry)
         self.assertIn("dockerhost", entry)
-        self.assertIn("AGENTS_MODULES_DIR", entry)
+        self.assertIn("AGENTS_HOST_DIR", entry)
+        # no global domain overrides, no process-global workspace/workdir
+        for stale in (
+            "AGENTS_MEMORY_PATH",
+            "AGENTS_TRACES_DIR",
+            "AGENTS_MODULES_DIR=",
+            "AGENTS_HOME",
+            "AGENTS_WORKSPACE_ROOT",
+            "AGENTS_WORKSPACE_DIR",
+            "AGENTS_WORKDIR",
+        ):
+            self.assertNotIn(stale, entry)
         self.assertNotIn("flocks the same", readme)
         docker = (root / "Dockerfile").read_text(encoding="utf-8")
         self.assertIn("agents-harness[mcp]", docker)
