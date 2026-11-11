@@ -205,7 +205,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="p-3 bg-[#0a0a0a] border-t border-[#262626]">
+      <div className="composer p-3 bg-[#0a0a0a] border-t border-[#262626]">
         <form onSubmit={handleSubmit} className="relative flex items-end">
           <textarea
             ref={textareaRef}

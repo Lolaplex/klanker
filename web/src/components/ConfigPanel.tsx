@@ -181,7 +181,7 @@ export const ConfigPanel: React.FC<ConfigPanelProps> = ({
 
   return (
     <details
-      className="shrink-0 border-t border-[#262626] bg-[#0a0a0a] font-mono text-xs"
+      className="shrink-0 border-t border-[#262626] bg-[#0a0a0a] font-mono text-xs max-md:hidden"
       onToggle={(event) => setPanelOpen(event.currentTarget.open)}
     >
       <summary className="list-none cursor-pointer px-3 py-2 text-[11px] uppercase tracking-wider text-[#737373] hover:text-white [&::-webkit-details-marker]:hidden">

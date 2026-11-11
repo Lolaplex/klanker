@@ -21,13 +21,19 @@
     overscroll-behavior: none;
   }
 
-  header, footer {
+  header {
     padding-left: max(0.75rem, env(safe-area-inset-left));
     padding-right: max(0.75rem, env(safe-area-inset-right));
+    padding-top: env(safe-area-inset-top);
   }
 
   aside {
     padding-left: env(safe-area-inset-left);
+    padding-top: env(safe-area-inset-top);
+  }
+
+  .composer {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
   }
 
   textarea, input, select {

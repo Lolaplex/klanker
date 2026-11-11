@@ -37,7 +37,7 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, onOpenSettings, 
           className="flex items-center space-x-1 px-2 py-1 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
         >
           <Settings className="w-3.5 h-3.5" />
-          <span>Settings</span>
+          <span className="hidden md:inline">Settings</span>
         </button>
       </div>
     </header>
