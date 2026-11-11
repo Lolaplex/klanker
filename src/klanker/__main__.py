@@ -44,7 +44,7 @@ def apply_workdir(raw: str | None) -> int | None:
         print(f"Error: workdir is not a directory: {text}", file=sys.stderr)
         return 2
     os.environ["AGENTS_WORKDIR"] = str(resolved)
-    os.environ["AGENTS_WORKSPACE_LOCK"] = "1"
+    os.environ["AGENTS_WORKDIR_LOCK"] = "1"
     return None
 
 
@@ -74,7 +74,7 @@ def apply_workspace(raw: str | None) -> int | None:
             DeprecationWarning,
         )
         os.environ["AGENTS_WORKDIR"] = str(candidate.resolve())
-        os.environ["AGENTS_WORKSPACE_LOCK"] = "1"
+        os.environ["AGENTS_WORKDIR_LOCK"] = "1"
         return None
     print(f"Error: unknown workspace id: {text}", file=sys.stderr)
     return 2
