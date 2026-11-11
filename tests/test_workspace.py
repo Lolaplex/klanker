@@ -51,7 +51,7 @@ def test_workspace_flag_sets_env_for_spawned_loop(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     monkeypatch.delenv("AGENTS_WORKDIR", raising=False)
-    monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
+    monkeypatch.delenv("AGENTS_WORKDIR_LOCK", raising=False)
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "home"))
     caps = _caps()
     # A bare directory is the deprecated workdir alias for --workspace.
@@ -72,7 +72,7 @@ def test_workspace_flag_sets_env_for_spawned_loop(tmp_path, monkeypatch):
     child_env = mock_run.call_args.kwargs["env"]
     assert child_env["AGENTS_WORKDIR"] == str(repo.resolve())
     assert os.environ["AGENTS_WORKDIR"] == str(repo.resolve())
-    assert os.environ["AGENTS_WORKSPACE_LOCK"] == "1"
+    assert os.environ["AGENTS_WORKDIR_LOCK"] == "1"
 
 
 def test_workspace_id_selects_data_workspace(tmp_path, monkeypatch):
@@ -88,10 +88,10 @@ def test_workdir_flag_sets_env(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()
     monkeypatch.delenv("AGENTS_WORKDIR", raising=False)
-    monkeypatch.delenv("AGENTS_WORKSPACE_LOCK", raising=False)
+    monkeypatch.delenv("AGENTS_WORKDIR_LOCK", raising=False)
     assert cli.apply_workdir(str(repo)) is None
     assert os.environ["AGENTS_WORKDIR"] == str(repo.resolve())
-    assert os.environ["AGENTS_WORKSPACE_LOCK"] == "1"
+    assert os.environ["AGENTS_WORKDIR_LOCK"] == "1"
 
 
 def test_workspace_missing_path_exits_2(tmp_path, monkeypatch, capsys):
