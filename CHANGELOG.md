@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `test_stop_daemon_kills_pidfile_process` is platform-aware: POSIX
+  `stop_daemon` signals the process group via `os.killpg`, it never calls
+  `subprocess.run`/`taskkill`.
+
 ### Changed
 - Docs (README, AGENTS.md, prompt/routine strings, `.env.example`) now name
   the Host > Workspace layout (`AGENTS_HOST_DIR`, `AGENTS_WORKSPACE=<id>`,
