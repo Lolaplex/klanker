@@ -98,11 +98,12 @@ def build_system_prompt(caps: HostCapabilities) -> str:
 def save_system_prompt(
     caps: HostCapabilities, workspace: "Workspace | None" = None
 ) -> Path:
-    """Save dynamic Klanker prompt under the workspace dir."""
+    """Save dynamic Klanker prompt under ``<host>/run`` per workspace."""
     ws = workspace or Workspace.from_env()
-    agents_dir = ws.dir
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    prompt_file = agents_dir / "klanker_prompt.txt"
+    run_dir = ws.host.run
+    run_dir.mkdir(parents=True, exist_ok=True)
+    name = f"klanker_prompt_{ws.id}.txt" if ws.id else "klanker_prompt.txt"
+    prompt_file = run_dir / name
     prompt_text = build_system_prompt(caps)
     prompt_file.write_text(prompt_text, encoding="utf-8")
     return prompt_file

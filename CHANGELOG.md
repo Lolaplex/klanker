@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `klanker serve` pid file moves from `~/.klanker/daemon.pid` to `<host>/run/serve.pid`; `stop`/`status` read the new path first and the legacy file once with a `DeprecationWarning`. Two hosts now keep independent pid files.
+- `save_system_prompt` writes `<host>/run/klanker_prompt_<workspace-id>.txt` instead of `<workspace>/klanker_prompt.txt` — generated prompts are host artifacts and differ per workspace.
+
+### Fixed
+- POSIX `klanker stop`/`stop_daemon` now signals the daemon's whole process group (SIGTERM, SIGKILL after a 5s timeout) instead of only the leader pid — in-flight `runner.loop` children can no longer be orphaned.
+
 ### Added
 - `agents-workspace` is a hard dependency: one root resolves memory, rules, skills, modules, schedules, traces, routine runs, relay state, personas, identity, and config. `AGENTS_WORKSPACE_ROOT` is the canonical root; `AGENTS_HOME` stays readable as a legacy alias.
 - Multi-workspace: `klanker serve` hosts the default workspace plus every workspace under `AGENTS_WORKSPACES_DIR`. `GET /v1/workspaces`, `POST /v1/workspaces {"label": ...}`, and a `"workspace"` field on `/v1/turn` and `/v1/stream`. `klanker routine add|say --workspace <ref>` pins a routine to a workspace; the ticker ticks every workspace.

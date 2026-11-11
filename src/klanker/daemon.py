@@ -27,7 +27,44 @@ def _is_loopback(url: str) -> bool:
 
 
 def daemon_pid_path() -> Path:
+    """Per-host pid file: ``<host>/run/serve.pid``."""
+    from agents_workspace import Host
+
+    return Host.from_env().run / "serve.pid"
+
+
+def _legacy_pid_path() -> Path:
     return Path.home() / ".klanker" / "daemon.pid"
+
+
+def _pid_path_candidates() -> list[Path]:
+    path = daemon_pid_path()
+    legacy = _legacy_pid_path()
+    return [path, legacy] if legacy != path else [path]
+
+
+_legacy_pid_warned = False
+
+
+def _read_pid() -> int | None:
+    global _legacy_pid_warned
+    for path in _pid_path_candidates():
+        try:
+            pid = int(path.read_text(encoding="utf-8").strip())
+        except Exception:
+            continue
+        if path == _legacy_pid_path() and not _legacy_pid_warned:
+            _legacy_pid_warned = True
+            import warnings
+
+            warnings.warn(
+                f"legacy daemon pid file {path} read once; run "
+                "`agents-workspace migrate`",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        return pid
+    return None
 
 
 def relay_health(url: str, *, timeout: float = 1.5) -> bool:
@@ -88,13 +125,6 @@ def ensure_daemon(url: str = DEFAULT_RELAY_URL, *, wait: float = 20.0) -> bool:
     return relay_health(base)
 
 
-def _read_pid() -> int | None:
-    try:
-        return int(daemon_pid_path().read_text(encoding="utf-8").strip())
-    except Exception:
-        return None
-
-
 def release_pid_file(path: Path, pid: int) -> None:
     """Remove the pid file only if it still names this process."""
     try:
@@ -116,12 +146,26 @@ def stop_daemon(url: str = DEFAULT_RELAY_URL) -> int:
             capture_output=True,
         )
     else:
+        # The daemon is its own process-group leader (start_new_session);
+        # signalling the group takes in-flight loop children down too.
         try:
-            os.kill(pid, signal.SIGTERM)
-        except ProcessLookupError:
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
             pass
-    path = daemon_pid_path()
-    release_pid_file(path, pid)
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+    for path in _pid_path_candidates():
+        release_pid_file(path, pid)
     time.sleep(0.5)
     if relay_health(url):
         print(f"warning: {url} still healthy after kill", file=sys.stderr)

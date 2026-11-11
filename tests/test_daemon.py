@@ -95,6 +95,82 @@ class DaemonTests(unittest.TestCase):
         with patch.object(daemon, "daemon_pid_path", return_value=Path("nope.pid")):
             self.assertEqual(daemon.stop_daemon(), 1)
 
+    def test_pid_path_per_host(self):
+        """Two AGENTS_HOST_DIR values -> two independent pid files (C41)."""
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            h1 = Path(td) / "h1"
+            h2 = Path(td) / "h2"
+            with patch.dict(os.environ, {"AGENTS_HOST_DIR": str(h1)}):
+                p1 = daemon.daemon_pid_path()
+            with patch.dict(os.environ, {"AGENTS_HOST_DIR": str(h2)}):
+                p2 = daemon.daemon_pid_path()
+        self.assertNotEqual(p1, p2)
+        self.assertEqual(p1, h1 / "run" / "serve.pid")
+        self.assertEqual(p2, h2 / "run" / "serve.pid")
+
+    def test_stop_daemon_reads_legacy_pid_once(self):
+        """Legacy ~/.klanker/daemon.pid still stops, with one warning."""
+        import tempfile
+        import warnings
+        with tempfile.TemporaryDirectory() as td:
+            legacy = Path(td) / "daemon.pid"
+            legacy.write_text("7777")
+            daemon._legacy_pid_warned = False
+            with patch.object(
+                daemon, "daemon_pid_path", return_value=Path(td) / "new.pid"
+            ), patch.object(
+                daemon, "_legacy_pid_path", return_value=legacy
+            ), patch.object(
+                daemon, "relay_health", return_value=False
+            ), patch("subprocess.run") as run, patch(
+                "time.sleep", return_value=None
+            ), warnings.catch_warnings(record=True) as seen:
+                warnings.simplefilter("always")
+                rc = daemon.stop_daemon("http://127.0.0.1:8787")
+        self.assertEqual(rc, 0)
+        self.assertFalse(legacy.exists())
+        run.assert_called_once()
+        self.assertTrue(
+            any("agents-workspace migrate" in str(w.message) for w in seen)
+        )
+
+    def test_stop_daemon_posix_signals_process_group(self):
+        """POSIX stop signals the daemon's process group, not just the pid
+        (C42: no orphan loop child)."""
+        import os
+        import signal
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            pid_file = Path(td) / "daemon.pid"
+            pid_file.write_text("4242")
+            calls = []
+            none_pid = Path(td) / "none"
+            fake_os = patch.object(daemon.os, "name", "posix")
+            real_kill = daemon.os.kill
+            with fake_os, patch.object(
+                daemon, "daemon_pid_path", return_value=pid_file
+            ), patch.object(
+                daemon, "_legacy_pid_path", return_value=none_pid
+            ), patch.object(
+                daemon.os, "killpg",
+                create=True,
+                side_effect=lambda pgid, sig: calls.append(("killpg", pgid, sig)),
+            ), patch.object(
+                daemon.os, "getpgid",
+                create=True,
+                side_effect=lambda pid: pid + 1000,
+            ), patch.object(
+                daemon.os, "kill",
+                side_effect=ProcessLookupError,
+            ), patch.object(
+                daemon, "relay_health", return_value=False
+            ), patch("time.sleep", return_value=None):
+                rc = daemon.stop_daemon("http://127.0.0.1:8787")
+        self.assertEqual(rc, 0)
+        self.assertIn(("killpg", 5242, signal.SIGTERM), calls)
+
 
 if __name__ == "__main__":
     unittest.main()
