@@ -1,0 +1,13 @@
+.git
+.agents
+__pycache__
+*.egg-info
+.pytest_cache
+.env
+*.env
+web/node_modules
+web/dist
+src/klanker/_web
+dist
+build
+tests

@@ -22,6 +22,13 @@ services:
       - AGENTS_HOST_DIR=/data/.agents
       # Optional: fold a legacy host-level layout into a workspace on boot.
       # - AGENTS_AUTO_MIGRATE=1
+      # Dashboard (static, served by the relay — no node at runtime):
+      # RELAY_WEB_TOKEN enables the web surface (static files + cookie login).
+      # The image ships the built dashboard at /app/web/dist; unset to run API-only.
+      - RELAY_WEB_TOKEN=<web-login-token>
+      - AGENTS_RELAY_WEB_DIR=/app/web/dist
+      # RELAY_SECRET is the bearer for non-cookie API clients.
+      # - RELAY_SECRET=<api-secret>
     volumes:
       - <host-data-dir>:/data
     healthcheck:

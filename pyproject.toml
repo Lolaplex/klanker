@@ -53,4 +53,4 @@ klanker = "klanker.__main__:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-klanker = ["modules/*.json"]
+klanker = ["modules/*.json", "_web/**/*"]

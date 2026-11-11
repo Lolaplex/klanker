@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `web/` — the Klanker dashboard, extracted from klanker-desktop as a standalone React/Vite PWA. It talks to `agents-relay` over `/v1/*` (chat SSE stream + stop, workspaces, personas, auth cookie login, approvals, traces) and stores the instance list/settings in the browser. Installable on phone (manifest + service worker + safe-area layout).
+- `klanker serve` serves the vendored dashboard automatically: `src/klanker/_web` (via `scripts/vendor-web.py` or the Docker build) becomes `AGENTS_RELAY_WEB_DIR` when no static dir is configured. `RELAY_WEB_TOKEN` still gates the web surface, so API-only operation stays the default.
+- Dockerfile is now multi-stage: a throwaway node stage builds `web/dist`; the final image stays Python-only.
+
 ### Fixed
 - `klanker chat` no longer crashes on inline `--system` prompt text: the stale-path guard only refuses path-like values (single line, <500 chars, missing file). Long inline prompts caused `OSError: File name too long` instead of reaching `runner.loop`.
 

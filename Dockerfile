@@ -1,3 +1,12 @@
+# --- stage 1: dashboard build (node is discarded, runtime is python-only) ---
+FROM node:22-alpine AS web
+RUN corepack enable
+WORKDIR /web
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web ./
+RUN pnpm build
+
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl git && rm -rf /var/lib/apt/lists/*
@@ -14,6 +23,9 @@ RUN if [ -n "$GITHUB_TOKEN" ]; then \
 # set AGENTS_BROWSER_BIN when a browser binary is required.
 COPY pyproject.toml README.md ./
 COPY src ./src
+# Vendored dashboard: klanker serve picks src/klanker/_web up automatically
+# (RELAY_WEB_TOKEN still gates the web surface; unset = API-only).
+COPY --from=web /web/dist ./src/klanker/_web
 # SUITE_REF is the default git ref for every suite package (main = latest
 # release; override per package with *_REF). CACHE_BUST
 # invalidates this layer when the branch tip moved but the ref name did not.
