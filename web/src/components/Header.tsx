@@ -1,18 +1,26 @@
 import React from "react";
-import { Globe, Settings } from "lucide-react";
+import { Globe, Menu, Settings } from "lucide-react";
 import { KlankerInstance } from "../types/klanker";
 
 interface HeaderProps {
   activeInstance: KlankerInstance | null;
   onOpenSettings: () => void;
+  onOpenNav: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeInstance, onOpenSettings }) => {
+export const Header: React.FC<HeaderProps> = ({ activeInstance, onOpenSettings, onOpenNav }) => {
   const url = activeInstance?.endpoint?.base_url || activeInstance?.base_url || window.location.host;
 
   return (
     <header className="h-12 shrink-0 bg-[#000000] border-b border-[#262626] flex items-center justify-between px-3 select-none z-30">
       <div className="flex items-center min-w-0 space-x-3 text-xs font-mono">
+        <button
+          onClick={onOpenNav}
+          className="md:hidden -ml-1 p-1 text-[#a3a3a3] hover:text-white"
+          aria-label="Open navigation"
+        >
+          <Menu className="w-4 h-4" />
+        </button>
         {activeInstance && (
           <div className="flex items-center space-x-1 text-[#737373] text-[11px] min-w-0">
             <Globe className="w-3 h-3 text-[#525252] shrink-0" />

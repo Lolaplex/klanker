@@ -268,7 +268,7 @@ export const api = {
   },
 };
 
-function localInstance(): KlankerInstance {
+export function localInstance(): KlankerInstance {
   const now = new Date().toISOString();
   return {
     id: "local",

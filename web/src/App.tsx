@@ -13,7 +13,7 @@ import {
   ChatMessage,
   PendingApproval,
 } from "./types/klanker";
-import { api } from "./services/api";
+import { api, localInstance } from "./services/api";
 import {
   choiceOf,
   DEFAULT_SETTINGS,
@@ -98,6 +98,13 @@ export function App() {
   const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
   const [personas, setPersonas] = useState<{ id: string; name?: string }[]>([]);
   const [wsNote, setWsNote] = useState<string | null>(null);
+  // Same-origin relay auth gate: "checking" until /v1/auth/status answers,
+  // "needed" shows the token prompt, "ok" runs the dashboard.
+  const [auth, setAuth] = useState<"checking" | "needed" | "ok">("checking");
+  const [loginToken, setLoginToken] = useState("");
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginBusy, setLoginBusy] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const instancesRef = useRef(instances);
   instancesRef.current = instances;
   const activeIdRef = useRef<string | null>(null);
@@ -177,9 +184,19 @@ export function App() {
     return run;
   }, []);
 
-  // Boot: instances + settings
+  // Boot: same-origin auth check first, then instances + settings
   useEffect(() => {
     void (async () => {
+      try {
+        const st = await api.authStatus(localInstance());
+        if (st.enabled && !st.authenticated) {
+          setAuth("needed");
+          return;
+        }
+      } catch {
+        // Relay unreachable or older relay without /v1/auth/*: proceed anyway.
+      }
+      setAuth("ok");
       try {
         const list = await api.listKlankers();
         setInstances(list);
@@ -580,24 +597,80 @@ export function App() {
     }
   };
 
+  const submitLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (loginBusy || !loginToken.trim()) return;
+    setLoginBusy(true);
+    setLoginError(null);
+    try {
+      await api.login(localInstance(), loginToken.trim());
+      window.location.reload();
+    } catch (err) {
+      setLoginError(err instanceof Error ? err.message : String(err));
+      setLoginBusy(false);
+    }
+  };
+
+  if (auth !== "ok") {
+    return (
+      <div className="h-dvh w-screen flex items-center justify-center bg-[#000000] text-white font-sans">
+        {auth === "needed" ? (
+          <form onSubmit={submitLogin} className="w-72 flex flex-col gap-3 font-mono text-xs">
+            <div className="text-[#a3a3a3] tracking-widest uppercase">KLANKER</div>
+            <input
+              type="password"
+              value={loginToken}
+              onChange={(e) => setLoginToken(e.target.value)}
+              placeholder="relay web token"
+              autoFocus
+              className="bg-[#0a0a0a] border border-[#262626] px-3 py-2 outline-none focus:border-[#525252]"
+            />
+            {loginError && <div className="text-red-500">{loginError}</div>}
+            <button
+              type="submit"
+              disabled={loginBusy}
+              className="border border-[#262626] px-3 py-2 hover:bg-[#171717] disabled:opacity-50"
+            >
+              {loginBusy ? "..." : "unlock"}
+            </button>
+          </form>
+        ) : (
+          <div className="text-[#525252] font-mono text-xs">…</div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="h-dvh w-screen flex bg-[#000000] text-white overflow-hidden select-none font-sans">
-      <KlankerList
-        instances={instances}
-        activeId={activeInstance?.id ?? null}
-        unread={unread}
-        statuses={herd}
-        onSelect={selectInstance}
-        onNew={() => setIsNewModalOpen(true)}
-        onAddDiscovered={handleAddDiscovered}
-        chats={bucket?.items ?? []}
-        openChatId={openChat?.id ?? null}
-        onSelectChat={selectChat}
-        onNewChat={newChat}
-      />
+      {navOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/60"
+          onClick={() => setNavOpen(false)}
+        />
+      )}
+      <div
+        className={`fixed inset-y-0 left-0 z-50 transform transition-transform md:static md:z-auto md:transform-none ${
+          navOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        }`}
+      >
+        <KlankerList
+          instances={instances}
+          activeId={activeInstance?.id ?? null}
+          unread={unread}
+          statuses={herd}
+          onSelect={(inst) => { selectInstance(inst); setNavOpen(false); }}
+          onNew={() => { setIsNewModalOpen(true); setNavOpen(false); }}
+          onAddDiscovered={handleAddDiscovered}
+          chats={bucket?.items ?? []}
+          openChatId={openChat?.id ?? null}
+          onSelectChat={(id) => { selectChat(id); setNavOpen(false); }}
+          onNewChat={() => { newChat(); setNavOpen(false); }}
+        />
+      </div>
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <Header activeInstance={activeInstance} onOpenSettings={openSettings} />
+        <Header activeInstance={activeInstance} onOpenSettings={openSettings} onOpenNav={() => setNavOpen(true)} />
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activeInstance ? (
