@@ -35,7 +35,7 @@ class HostCapabilities:
     python_version: str
     runtimes: dict[str, bool] = field(default_factory=dict)
     suite_modules: dict[str, bool] = field(default_factory=dict)
-    has_agents_home: bool = False
+    has_workspace: bool = False
     python_executable: str = field(default_factory=lambda: sys.executable)
 
     # Backwards-compatible convenience properties
@@ -89,7 +89,7 @@ class HostCapabilities:
             "is_tty": self.is_tty,
             "python_version": self.python_version,
             "python_executable": self.python_executable,
-            "has_agents_home": self.has_agents_home,
+            "has_workspace": self.has_workspace,
             "runtimes": self.runtimes,
             "suite_modules": self.suite_modules,
         }
@@ -108,7 +108,7 @@ def probe_host() -> HostCapabilities:
 
     runtimes = {cmd: _has_cmd(cmd) for cmd in COMMON_RUNTIMES}
     modules = {alias: _has_mod(pkg) for alias, pkg in SUITE_MODULES.items()}
-    agents_home = Workspace.from_env().root
+    ws_root = Workspace.from_env().root
 
     return HostCapabilities(
         os_name=platform.system(),
@@ -117,6 +117,6 @@ def probe_host() -> HostCapabilities:
         python_executable=sys.executable,
         runtimes=runtimes,
         suite_modules=modules,
-        has_agents_home=agents_home.exists(),
+        has_workspace=ws_root.exists(),
     )
 
