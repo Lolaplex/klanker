@@ -171,6 +171,21 @@ def build_parser() -> argparse.ArgumentParser:
     persona_add.add_argument("--workspace", default="", help="Data workspace id")
     persona_add.add_argument("--role", default="", help="Role description (text, not a layer)")
     persona_add.add_argument("--system-append", default="", dest="system_append", help="System prompt fragment")
+    persona_inbox = persona_sub.add_parser("inbox", help="List tasks in a persona's inbox")
+    persona_inbox.add_argument("id", help="Persona id")
+    persona_inbox.add_argument("--workspace", default="", help="Data workspace id")
+    persona_task = persona_sub.add_parser("task", help="Create a task owned by a persona")
+    persona_task.add_argument("id", help="Persona id (task owner)")
+    persona_task.add_argument("title", help="Task title")
+    persona_task.add_argument("--note", default="", help="Free-form note")
+    persona_task.add_argument("--user", default="", help="Creating user")
+    persona_task.add_argument("--workspace", default="", help="Data workspace id")
+    persona_hand = persona_sub.add_parser("handoff", help="Move a task to another persona (explicit ownership)")
+    persona_hand.add_argument("task", help="Task id (tsk_...)")
+    persona_hand.add_argument("--to", required=True, help="Target persona id")
+    persona_hand.add_argument("--from", dest="from_persona", default="", help="Expected current owner (fails on mismatch)")
+    persona_hand.add_argument("--note", default="", help="Handoff note")
+    persona_hand.add_argument("--workspace", default="", help="Data workspace id")
 
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
@@ -312,7 +327,40 @@ def main(argv: list[str] | None = None) -> int:
         except (KeyError, ValueError, RuntimeError) as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
-        if getattr(args, "persona_cmd", "") == "add":
+        cmd = getattr(args, "persona_cmd", "")
+        if cmd in ("inbox", "task", "handoff"):
+            from agents_workspace.inbox import create_task, handoff, list_inbox
+            if cmd == "inbox":
+                rows = list_inbox(ws, args.id)
+                for row in rows:
+                    note = row.get("note") or ""
+                    suffix = f" — {note}" if note else ""
+                    print(f"{row['id']}  {row.get('title','')}{suffix}")
+                return 0
+            if cmd == "task":
+                try:
+                    task = create_task(
+                        ws, args.id, args.title,
+                        note=getattr(args, "note", "") or "",
+                        user=getattr(args, "user", "") or "",
+                    )
+                except ValueError as exc:
+                    print(f"Error: {exc}", file=sys.stderr)
+                    return 2
+                print(f"task {task['id']} -> {task['owner']}: {task.get('title','')}")
+                return 0
+            try:
+                task = handoff(
+                    ws, args.task, args.to,
+                    from_persona=getattr(args, "from_persona", "") or "",
+                    note=getattr(args, "note", "") or "",
+                )
+            except ValueError as exc:
+                print(f"Error: {exc}", file=sys.stderr)
+                return 2
+            print(f"task {task['id']} -> {task['owner']}")
+            return 0
+        if cmd == "add":
             pid = args.id.strip()
             from agents_relay.turn import valid_id
             if not valid_id(pid):
