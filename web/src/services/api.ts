@@ -225,6 +225,7 @@ export const api = {
       workspace?: string;
       persona?: string;
       provider?: string;
+      model?: string;
       new_session?: boolean;
     }
   ): AsyncGenerator<{ type: string; text?: string; run?: string; session?: string; user_id?: string; returncode?: number }> {

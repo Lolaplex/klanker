@@ -595,7 +595,9 @@ export function App() {
     setStreamStatus(null);
 
     try {
-      const provider = choiceOf(inst) === "inherit" ? "" : inst.provider.trim();
+      const choice = choiceOf(inst);
+      const provider = choice === "inherit" ? "" : inst.provider.trim();
+      const model = (choice === "inherit" ? inst.model.trim() || settingsRef.current.model : inst.model).trim();
       const stream = api.streamChat(inst, {
         text,
         run: busy.run,
@@ -603,6 +605,7 @@ export function App() {
         workspace: selWs || undefined,
         persona: selPersona || undefined,
         provider: provider || undefined,
+        model: model || undefined,
       });
       for await (const ev of stream) {
         if (ev.type === "delta" && ev.text) {

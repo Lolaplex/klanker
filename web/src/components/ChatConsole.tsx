@@ -213,7 +213,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={`Message ${instance.name}... (Enter to send, Shift+Enter for newline)`}
+            placeholder={`Message ${instance.name}...`}
             className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded p-2.5 pr-20 text-white outline-none resize-none font-mono text-xs leading-tight placeholder-[#525252]"
           />
           <div className="absolute right-2 bottom-2 flex items-center space-x-1.5">
