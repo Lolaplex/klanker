@@ -254,6 +254,40 @@ export function App() {
     };
   }, [activeInstance?.id, activeInstance?.workspace, status?.state]);
 
+  // Session history: restore message bubbles from trace events when a chat
+  // with a pinned session is opened and has no local messages yet.
+  const historyTried = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const inst = activeInstance;
+    const chat = openChat;
+    if (!inst || !chat || !chat.session || chat.messages.length > 0) return;
+    const ws = inst.workspace.trim();
+    const persona = (inst.persona || "").trim();
+    if (!ws || !persona) return;
+    if (historyTried.current.has(chat.id)) return;
+    historyTried.current.add(chat.id);
+    const instanceId = inst.id;
+    const chatId = chat.id;
+    void (async () => {
+      const events = await api.sessionEvents(inst, ws, persona, chat.session);
+      if (!events) return;
+      const restored: ChatMessage[] = events
+        .filter((e) => e?.type === "message" && e?.metadata?.content)
+        .map((e) => ({
+          id: crypto.randomUUID(),
+          role: e.metadata.role === "user" ? "user" : "klanker",
+          content: String(e.metadata.content),
+          timestamp: e.ts || new Date().toISOString(),
+        }));
+      if (restored.length === 0) return;
+      setChats((prev) =>
+        mapChat(prev, instanceId, chatId, (item) =>
+          item.messages.length > 0 ? item : { ...item, messages: restored }
+        )
+      );
+    })();
+  }, [activeInstance, openChat?.id, openChat?.session]);
+
   // Approvals poll
   useEffect(() => {
     const inst = activeInstance;
