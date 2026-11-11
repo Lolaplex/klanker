@@ -48,7 +48,7 @@ RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
     pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
-RUN useradd -m -d /data klanker && mkdir -p /data/.agents/memory /data/.agents/traces /data/.agents/docs && chown -R klanker:klanker /data
+RUN useradd -m -d /data klanker && mkdir -p /data/.agents/workspaces /data/.agents/run /data/.agents/cache /data/.agents/keys /data/.agents/logs && chown -R klanker:klanker /data
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
@@ -56,8 +56,8 @@ RUN chmod +x /entrypoint.sh
 USER klanker
 ENV HOME=/data \
     PYTHONUNBUFFERED=1 \
-    GATEWAY_HOST=0.0.0.0 \
-    GATEWAY_PORT=8000 \
+    RELAY_HOST=0.0.0.0 \
+    RELAY_PORT=8000 \
     LOOP_PROVIDER=openai.default
 
 EXPOSE 8000

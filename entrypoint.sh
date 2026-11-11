@@ -1,16 +1,22 @@
 #!/bin/sh
 set -e
 
-# Ensure data, workspace, and overlay directories exist
-mkdir -p /data /data/.agents /data/.agents/memory /data/.agents/skills /data/.agents/schedules /data/.agents/modules /data/.agents-workspaces /data/workspace
-# Start directory only. The workspace boundary stays off until a host sets
-# AGENTS_WORKSPACE_LOCK=1, so a server is never confined by accident.
-export AGENTS_HOME="${AGENTS_HOME:-/data/.agents}"
-export AGENTS_WORKSPACE_ROOT="${AGENTS_WORKSPACE_ROOT:-$AGENTS_HOME}"
-export AGENTS_WORKDIR="${AGENTS_WORKDIR:-${AGENTS_WORKSPACE_DIR:-/data/workspace}}"
-export AGENTS_WORKSPACE_DIR="${AGENTS_WORKSPACE_DIR:-$AGENTS_WORKDIR}"
-# Harness loads overlays only when this is set (default write path is invisible).
-export AGENTS_MODULES_DIR="${AGENTS_MODULES_DIR:-$AGENTS_HOME/modules}"
+# Host layout only: workspaces live under <host>/workspaces, host-level dirs
+# hold keys/run/cache/logs. No global domain overrides — every workspace owns
+# its memory/traces/schedules/modules (D-default-ws, D-workdir-default).
+mkdir -p /data /data/.agents/workspaces /data/.agents/run /data/.agents/cache /data/.agents/keys /data/.agents/logs
+export AGENTS_HOST_DIR="${AGENTS_HOST_DIR:-/data/.agents}"
+
+# Deliberately unset: process-global workspace, workdir, home/root aliases and
+# domain-dir overrides. First start creates workspace 'default'; several
+# workspaces with no selection is an explicit-choice error.
+
+# Optional auto-migration of a legacy host-level layout (container only).
+# Local serves never auto-migrate; run `agents-workspace migrate` by hand.
+if [ "${AGENTS_AUTO_MIGRATE:-0}" = "1" ]; then
+    python -m agents_workspace migrate 2>&1 | sed 's/^/[migrate] /' || true
+fi
+
 python -c "from klanker.overlay import install_overlay; install_overlay()" 2>/dev/null || true
 python -c "from klanker.git_identity import setup_git_identity; setup_git_identity()" 2>/dev/null || true
 chown -R klanker:klanker /data 2>/dev/null || true
