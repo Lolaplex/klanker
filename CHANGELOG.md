@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `klanker persona list|add <id> [--workspace <id>] [--role ..] [--system-append ..]` — manages equal workspace-scoped personas (`<ws>/personas/<id>/persona.json`). Bad ids (paths, labels) are rejected.
 - `klanker chat ... --persona <id>` — threads the persona into the spawned `runner.loop` (`--persona` argv + `AGENTS_PERSONA` in the child env). `klanker shell --persona` already reaches the relay `/v1/turn` body.
+- `klanker persona inbox <id>`, `klanker persona task <id> <title>`, `klanker persona handoff <task> --to <id> [--from <id>] [--note ..]` — explicit task handoffs between equal personas; a `--from` mismatch is refused (no silent steals, no default-persona privilege). Backed by `agents_workspace.inbox` and the relay inbox routes.
 
 ### Fixed
 - `test_stop_daemon_kills_pidfile_process` is platform-aware: POSIX
