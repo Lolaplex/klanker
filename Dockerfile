@@ -32,7 +32,7 @@ COPY --from=web /web/dist ./src/klanker/_web
 # On your build platform, rebuild with --no-cache or bump CACHE_BUST, then confirm
 # `pip freeze | grep agents-` shows the git commits you expect.
 ARG SUITE_REF=dev
-ARG CACHE_BUST=4
+ARG CACHE_BUST=5
 ARG WORKSPACE_REF=${SUITE_REF}
 ARG HARNESS_REF=${SUITE_REF}
 ARG RELAY_REF=${SUITE_REF}
