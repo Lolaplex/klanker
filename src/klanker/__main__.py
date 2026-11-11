@@ -134,6 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Working directory for the spawned turn (AGENTS_WORKDIR)",
     )
+    chat_p.add_argument(
+        "--persona",
+        default="",
+        help="Persona id for this turn (<ws>/personas/<id> or package; default: AGENTS_PERSONA or ws default_persona)",
+    )
 
     # 3. Serve gateway
     serve_p = sub.add_parser("serve", help="Start I/O Gateway (HTTP /v1/turn & Telegram)")
@@ -155,6 +160,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 3c. Stop the local daemon
     sub.add_parser("stop", help="Stop the local klanker daemon (pid file)")
+
+    # 3d. Personas (equal, workspace-scoped)
+    persona_p = sub.add_parser("persona", help="List or add personas in a workspace")
+    persona_sub = persona_p.add_subparsers(dest="persona_cmd")
+    persona_list = persona_sub.add_parser("list", help="List personas in the workspace")
+    persona_list.add_argument("--workspace", default="", help="Data workspace id")
+    persona_add = persona_sub.add_parser("add", help="Add an equal persona")
+    persona_add.add_argument("id", help="Persona id (ids only: no paths, no labels)")
+    persona_add.add_argument("--workspace", default="", help="Data workspace id")
+    persona_add.add_argument("--role", default="", help="Role description (text, not a layer)")
+    persona_add.add_argument("--system-append", default="", dest="system_append", help="System prompt fragment")
 
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
@@ -224,6 +240,7 @@ KNOWN_SUBCOMMANDS = {
     "audit",
     "routine",
     "evidence",
+    "persona",
     "-h",
     "--help",
 }
@@ -279,6 +296,40 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "prompt":
         from .prompt import build_system_prompt
         print(build_system_prompt(nucleus.caps))
+        return 0
+
+    elif args.command == "persona":
+        from agents_workspace import Host
+        from agents_relay.workspaces import create_persona, list_personas
+
+        host = Host.from_env()
+        ws_ref = getattr(args, "workspace", "") or ""
+        if ws_ref and not host.workspace_exists(ws_ref):
+            print(f"Error: unknown workspace: {ws_ref}", file=sys.stderr)
+            return 2
+        try:
+            ws = host.workspace(ws_ref) if ws_ref else host.select_workspace()
+        except (KeyError, ValueError, RuntimeError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        if getattr(args, "persona_cmd", "") == "add":
+            pid = args.id.strip()
+            from agents_relay.turn import valid_id
+            if not valid_id(pid):
+                print(f"Error: invalid persona id: {pid!r}", file=sys.stderr)
+                return 2
+            row = create_persona(ws, pid, {
+                "role": getattr(args, "role", "") or "",
+                "system_append": getattr(args, "system_append", "") or "",
+            })
+            print(f"persona {pid} added to workspace {ws.id}")
+            return 0
+        rows = list_personas(ws)
+        for row in rows:
+            rid = row.get("id", "?")
+            role = row.get("role") or ""
+            suffix = f" — {role}" if role else ""
+            print(f"{rid}{suffix}")
         return 0
 
     elif args.command == "audit":
@@ -425,6 +476,7 @@ def main(argv: list[str] | None = None) -> int:
             return nucleus.run_turn(
                 message=msg, user=user, provider=provider, seal=seal,
                 workdir=cli_workdir,
+                persona=getattr(args, "persona", "") or "",
             )
 
         # If piped input via stdin (e.g. echo "hi" | klanker)
