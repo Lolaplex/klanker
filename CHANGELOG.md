@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Docs (README, AGENTS.md, prompt/routine strings, `.env.example`) now name
+  the Host > Workspace layout (`AGENTS_HOST_DIR`, `AGENTS_WORKSPACE=<id>`,
+  `AGENTS_WORKDIR`, `<ws>/…`). Historic entries below document the old
+  `~/.agents` layout and stay untouched.
+
 ### Added
 - `tests/test_gate_workspaces.py`: P1 gate — two workspaces in one process and
   over real `serve_http` stay isolated (domains, env, memory/traces/relay
