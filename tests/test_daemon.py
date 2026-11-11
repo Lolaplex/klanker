@@ -88,8 +88,12 @@ class DaemonTests(unittest.TestCase):
                 rc = daemon.stop_daemon("http://127.0.0.1:8787")
             self.assertEqual(rc, 0)
             self.assertFalse(pid_file.exists())
-            run.assert_called_once()
-            self.assertIn("5555", run.call_args[0][0])
+            import os as _os
+            if _os.name == "nt":
+                run.assert_called_once()
+                self.assertIn("5555", run.call_args[0][0])
+            else:
+                run.assert_not_called()
 
     def test_stop_daemon_no_pidfile(self):
         with patch.object(daemon, "daemon_pid_path", return_value=Path("nope.pid")):
