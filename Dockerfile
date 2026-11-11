@@ -2,8 +2,8 @@
 FROM node:22-alpine AS web
 RUN corepack enable
 WORKDIR /web
-COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+RUN pnpm config set dangerouslyAllowAllBuilds true && pnpm install --frozen-lockfile
 COPY web ./
 RUN pnpm build
 
