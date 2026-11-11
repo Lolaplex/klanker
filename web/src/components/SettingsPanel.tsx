@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { X } from "lucide-react";
 import { DesktopSettings } from "../types/klanker";
-import { DEFAULT_WORKSPACE, LM_URL, ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
+import { LM_URL, ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
 import { ModelControl } from "./ModelControl";
 import { SecretField } from "./SecretField";
 
@@ -42,7 +42,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       model: provider === "echo" ? "" : draft.model.trim(),
       lmstudio_base_url: draft.lmstudio_base_url.trim() || LM_URL,
       openrouter_api_key: keyDraft.trim(),
-      workspace: draft.workspace.trim() || DEFAULT_WORKSPACE,
+      workspace: draft.workspace.trim(),
     });
   };
 
@@ -122,18 +122,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               onToggleStar={star}
             />
           )}
-
-          <div>
-            <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
-              Default workspace
-            </label>
-            <input
-              type="text"
-              value={draft.workspace}
-              onChange={(event) => setDraft({ ...draft, workspace: event.target.value })}
-              className={inputClass}
-            />
-          </div>
 
           <div className="flex items-center justify-end space-x-2">
             <button type="button" onClick={onClose} className="px-3 py-1.5 text-[#737373] hover:text-white">

@@ -22,12 +22,15 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, onOpenSettings, 
           <Menu className="w-4 h-4" />
         </button>
         {activeInstance && (
-          <div className="flex items-center space-x-1 text-[#737373] text-[11px] min-w-0">
-            <Globe className="w-3 h-3 text-[#525252] shrink-0" />
-            <span className="max-w-[280px] truncate">{url.replace(/^https?:\/\//, "")}</span>
-            {activeInstance.workspace && <span className="text-[#525252]">· ws {activeInstance.workspace}</span>}
-            {activeInstance.persona && <span className="text-[#525252]">· {activeInstance.persona}</span>}
-          </div>
+          <>
+            <span className="md:hidden font-semibold text-white truncate">{activeInstance.name}</span>
+            <div className="hidden md:flex items-center space-x-1 text-[#737373] text-[11px] min-w-0">
+              <Globe className="w-3 h-3 text-[#525252] shrink-0" />
+              <span className="max-w-[280px] truncate">{url.replace(/^https?:\/\//, "")}</span>
+              {activeInstance.workspace && <span className="text-[#525252]">· ws {activeInstance.workspace}</span>}
+              {activeInstance.persona && <span className="text-[#525252]">· {activeInstance.persona}</span>}
+            </div>
+          </>
         )}
       </div>
 

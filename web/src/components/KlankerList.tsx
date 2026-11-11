@@ -102,7 +102,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
     open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />;
 
   return (
-    <aside className="h-full w-52 shrink-0 flex flex-col border-r border-[#262626] bg-[#000000]">
+    <aside className="h-full w-[80vw] max-w-72 md:w-52 shrink-0 flex flex-col border-r border-[#262626] bg-[#000000]">
       <div className="h-12 shrink-0 flex items-center px-3 border-b border-[#262626] font-mono text-xs font-semibold tracking-wider text-white">
         <KlankerMark size={20} className="mr-2 shrink-0" />
         <span>KLANKER</span>
@@ -122,7 +122,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                   type="button"
                   onClick={() => onSelect(inst)}
                   title={rowHealth(row)}
-                  className={`w-full text-left px-3 py-2 flex items-center gap-2 font-mono text-xs transition-colors ${
+                  className={`w-full text-left px-3 py-3 md:py-2 flex items-center gap-2 font-mono text-xs transition-colors ${
                     selected ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
                   }`}
                 >
@@ -141,7 +141,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                           <button
                             type="button"
                             onClick={() => toggleWs(w.id)}
-                            className={`w-full text-left pl-6 pr-2 py-1 flex items-center gap-1 font-mono text-[11px] transition-colors ${
+                            className={`w-full text-left pl-6 pr-2 py-2 md:py-1 flex items-center gap-1 font-mono text-[11px] transition-colors ${
                               selWs === w.id ? "text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
                             }`}
                           >
@@ -159,7 +159,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                     <button
                                       type="button"
                                       onClick={() => togglePersona(w.id, p.id)}
-                                      className={`w-full text-left pl-9 pr-2 py-1 flex items-center gap-1 font-mono text-[11px] transition-colors ${
+                                      className={`w-full text-left pl-9 pr-2 py-2 md:py-1 flex items-center gap-1 font-mono text-[11px] transition-colors ${
                                         selPersona === p.id && selWs === w.id
                                           ? "text-white"
                                           : "text-[#a3a3a3] hover:bg-[#181818]"
@@ -176,7 +176,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                               type="button"
                                               onClick={() => onSelectChat(w.id, p.id, s.chatId)}
                                               title={s.session}
-                                              className={`flex-1 min-w-0 text-left pl-12 pr-1 py-0.5 font-mono text-[11px] truncate transition-colors ${
+                                              className={`flex-1 min-w-0 text-left pl-12 pr-1 py-2 md:py-0.5 font-mono text-[11px] truncate transition-colors ${
                                                 openChatId === s.chatId
                                                   ? "bg-[#141414] text-white"
                                                   : "text-[#a3a3a3] hover:bg-[#181818]"
@@ -188,7 +188,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                               type="button"
                                               onClick={() => onDeleteChat(w.id, p.id, s)}
                                               title="Delete session"
-                                              className="shrink-0 p-0.5 mr-1 text-[#525252] opacity-0 group-hover:opacity-100 hover:text-white transition-opacity"
+                                              className="shrink-0 p-0.5 mr-1 text-[#525252] opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity"
                                             >
                                               <X className="w-3 h-3" />
                                             </button>
@@ -197,7 +197,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                         <button
                                           type="button"
                                           onClick={() => onNewChat(w.id, p.id)}
-                                          className="w-full text-left pl-12 pr-2 py-0.5 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
+                                          className="w-full text-left pl-12 pr-2 py-2 md:py-0.5 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
                                         >
                                           new chat
                                         </button>
@@ -217,7 +217,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                     <button
                       type="button"
                       onClick={onNewWorkspace}
-                      className="w-full text-left pl-6 pr-2 py-1 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors flex items-center gap-1"
+                      className="w-full text-left pl-6 pr-2 py-2 md:py-1 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors flex items-center gap-1"
                     >
                       <Plus className="w-3 h-3" /> workspace
                     </button>
