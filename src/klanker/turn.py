@@ -43,10 +43,16 @@ def main(argv: list[str] | None = None) -> int:
     # point the harness at its module overlay. Never mutates a parent process.
     os.environ.setdefault("AGENTS_MODULES_DIR", str(Workspace.from_env().modules))
     args = list(sys.argv[1:] if argv is None else argv)
-    # runner.loop keeps a non-file --system value as the literal prompt text, so a
-    # stale path would silently become the system prompt. Refuse instead.
+    # runner.loop keeps a non-file --system value as the literal prompt text.
+    # Klanker passes the built prompt inline, so only refuse values that look
+    # like a path (single line, short) whose file does not exist.
     system = system_from_argv(args)
-    if system and not Path(system).is_file():
+    if (
+        system
+        and "\n" not in system
+        and len(system) < 500
+        and not Path(system).is_file()
+    ):
         print(f"Error: --system is not a readable file: {system}", file=sys.stderr)
         return 2
     channel = channel_from_argv(args)

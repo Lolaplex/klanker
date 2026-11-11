@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `klanker chat` no longer crashes on inline `--system` prompt text: the stale-path guard only refuses path-like values (single line, <500 chars, missing file). Long inline prompts caused `OSError: File name too long` instead of reaching `runner.loop`.
+
 ### Changed
 - `.mailmap` maps legacy `Klix`/`Felix Kempf` author names to `Klix927` (no history rewrite; display only).
 
