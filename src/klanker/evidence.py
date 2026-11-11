@@ -194,10 +194,6 @@ class Artifact:
         }
 
 
-def agents_home() -> Path:
-    return Workspace.from_env().root
-
-
 def routine_runs_path() -> Path:
     """Directory of recorded routine replies. Does not create it."""
     return Workspace.from_env().routine_runs
