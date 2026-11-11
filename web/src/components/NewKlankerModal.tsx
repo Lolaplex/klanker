@@ -1,24 +1,33 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Radar, X } from "lucide-react";
 import { DiscoveredPeer, KlankerInstance } from "../types/klanker";
 import { api } from "../services/api";
 
 interface NewKlankerModalProps {
   isOpen: boolean;
-  autoDiscover?: boolean;
   onClose: () => void;
   onSave: (instance: KlankerInstance) => void;
 }
 
-export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, autoDiscover, onClose, onSave }) => {
+export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClose, onSave }) => {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [discovering, setDiscovering] = useState(false);
   const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
 
-  React.useEffect(() => {
-    if (isOpen && autoDiscover) void runDiscovery();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Auto-scan when the modal opens.
+  useEffect(() => {
+    if (!isOpen) return;
+    let stop = false;
+    setDiscovering(true);
+    api
+      .discoverPeers()
+      .then((peers) => !stop && setOffers(peers))
+      .catch(() => !stop && setOffers([]))
+      .finally(() => !stop && setDiscovering(false));
+    return () => {
+      stop = true;
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -114,8 +123,8 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, autoDi
               disabled={discovering}
               className="w-full flex items-center justify-center gap-1.5 px-2 py-1 text-[#a3a3a3] hover:text-white disabled:opacity-40"
             >
-              <Radar className="w-3 h-3" />
-              <span>{discovering ? "scanning…" : "discover on network"}</span>
+              <Radar className={`w-3 h-3 ${discovering ? "animate-pulse" : ""}`} />
+              <span>{discovering ? "scanning…" : "rescan"}</span>
             </button>
             {offers !== null &&
               (offers.length === 0 ? (

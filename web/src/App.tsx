@@ -108,7 +108,6 @@ export function App() {
   const [turnBusy, setTurnBusy] = useState<TurnBusy | null>(null);
   const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set());
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
-  const [modalDiscover, setModalDiscover] = useState(false);
   const [settings, setSettings] = useState<DesktopSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [rankedIds, setRankedIds] = useState<string[]>([]);
@@ -742,7 +741,7 @@ export function App() {
           onSelectChat={(ws, p, id) => { selectChat(ws, p, id); setNavOpen(false); }}
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
-          onNewHost={() => { setModalDiscover(false); setIsNewModalOpen(true); setNavOpen(false); }}
+          onNewHost={() => { setIsNewModalOpen(true); setNavOpen(false); }}
           onNewWorkspace={() => {
             if (!activeInstance) return;
             const id = window.prompt("new workspace id");
@@ -815,7 +814,7 @@ export function App() {
         </div>
       </div>
 
-      <NewKlankerModal isOpen={isNewModalOpen} autoDiscover={modalDiscover} onClose={() => setIsNewModalOpen(false)} onSave={handleCreate} />
+      <NewKlankerModal isOpen={isNewModalOpen} onClose={() => setIsNewModalOpen(false)} onSave={handleCreate} />
       {settingsOpen && (
         <SettingsPanel
           settings={settings}
