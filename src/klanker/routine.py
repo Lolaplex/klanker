@@ -1,6 +1,6 @@
 """Klanker routines: LLM turns on a schedule, plus the serve ticker.
 
-Job files live in ``AGENTS_SCHEDULES_DIR`` or ``~/.agents/schedules`` and use
+Job files live in the workspace ``schedules/`` dir (``AGENTS_SCHEDULES_DIR``) and use
 ``kind=routine``. The verb is ``python -m klanker routine run <name> --scheduled``
 so a harness ``tick()`` that only knows verbs still runs them.
 
