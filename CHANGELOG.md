@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `.mailmap` maps legacy `Klix`/`Felix Kempf` author names to `Klix927` (no history rewrite; display only).
+
 ### Added
 - `klanker persona list|add <id> [--workspace <id>] [--role ..] [--system-append ..]` — manages equal workspace-scoped personas (`<ws>/personas/<id>/persona.json`). Bad ids (paths, labels) are rejected.
 - `klanker chat ... --persona <id>` — threads the persona into the spawned `runner.loop` (`--persona` argv + `AGENTS_PERSONA` in the child env). `klanker shell --persona` already reaches the relay `/v1/turn` body.
