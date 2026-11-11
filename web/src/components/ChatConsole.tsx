@@ -10,6 +10,8 @@ interface ChatConsoleProps {
   onStop: () => void;
   isLoading: boolean;
   sendHold: boolean;
+  streamStatus?: string | null;
+  sessionLabel?: string;
   pending: PendingApproval | null;
   deciding: boolean;
   decideError: string | null;
@@ -24,6 +26,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   onStop,
   isLoading,
   sendHold,
+  streamStatus,
+  sessionLabel,
   pending,
   deciding,
   decideError,
@@ -70,7 +74,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       <div className="h-9 bg-[#0a0a0a] border-b border-[#262626] flex items-center justify-between px-3 text-[#737373]">
         <div className="flex items-center space-x-2">
           <Terminal className="w-3.5 h-3.5 text-white" />
-          <span className="font-semibold text-white tracking-wider uppercase">REPL TURN STREAM</span>
+          <span className="font-semibold text-white tracking-wider uppercase truncate">
+            {instance.name}
+            <span className="text-[#525252] font-normal normal-case"> · {sessionLabel || "new"}</span>
+          </span>
         </div>
 
         <div className="flex items-center space-x-2">
@@ -189,7 +196,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             </div>
             <div className="bg-[#0a0a0a] border border-[#262626] rounded p-3 text-[#737373] flex items-center space-x-2">
               <span className="w-2 h-2 bg-white rounded-full animate-ping"></span>
-              <span>Streaming tokens from harness...</span>
+              <span>{streamStatus || "Streaming tokens from harness..."}</span>
             </div>
           </div>
         )}

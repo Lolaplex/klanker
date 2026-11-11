@@ -105,6 +105,7 @@ export function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const instancesRef = useRef(instances);
   instancesRef.current = instances;
   const activeIdRef = useRef<string | null>(null);
@@ -513,17 +514,7 @@ export function App() {
     setTurnBusy(busy);
     const started = Date.now();
 
-    const appendStatus = (line: string) => {
-      setChats((prev) =>
-        mapChat(prev, id, chatId, (item) => ({
-          ...item,
-          messages: [
-            ...item.messages,
-            { id: crypto.randomUUID(), role: "system", content: line, timestamp: new Date().toISOString() },
-          ],
-        }))
-      );
-    };
+    setStreamStatus(null);
 
     try {
       const provider = choiceOf(inst) === "inherit" ? "" : inst.provider.trim();
@@ -545,7 +536,7 @@ export function App() {
             }))
           );
         } else if (ev.type === "status" && ev.text) {
-          appendStatus(ev.text);
+          setStreamStatus(ev.text);
         } else if (ev.type === "error") {
           throw new Error(ev.text || "turn failed");
         } else if (ev.type === "trailer") {
@@ -559,7 +550,7 @@ export function App() {
             }))
           );
           if (ev.returncode && ev.returncode !== 0) {
-            appendStatus(`turn exited ${ev.returncode}`);
+            setStreamStatus(`turn exited ${ev.returncode}`);
           }
         }
       }
@@ -586,6 +577,7 @@ export function App() {
         turnBusyRef.current = null;
       }
       setTurnBusy((b) => (b?.instanceId === id && b.chatId === chatId ? null : b));
+      setStreamStatus(null);
       if (activeIdRef.current !== id) {
         setUnread((prev) => {
           if (prev.has(id) || activeIdRef.current === id) return prev;
@@ -688,6 +680,8 @@ export function App() {
                 }}
                 onStop={handleStop}
                 isLoading={isLoadingTurn}
+                streamStatus={streamStatus}
+                sessionLabel={openChat?.session || "new"}
                 sendHold={sendHold}
                 pending={pending}
                 deciding={deciding}
