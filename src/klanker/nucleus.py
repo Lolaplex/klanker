@@ -39,6 +39,7 @@ class Nucleus:
         seal: bool = False,
         workspace: "Workspace | None" = None,
         workdir: str = "",
+        persona: str = "",
     ) -> int:
         """Execute one conversational turn using available runner or fallback."""
         from agents_workspace import Workspace
@@ -76,10 +77,13 @@ class Nucleus:
             ]
             if session:
                 cmd.extend(["--session", session])
+            if persona:
+                cmd.extend(["--persona", persona])
             if seal:
                 cmd.append("--seal")
 
-            env = ws.env(workdir=workdir) if workdir else ws.env()
+            env = ws.env(persona=persona, workdir=workdir) if workdir \
+                else ws.env(persona=persona)
             hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL, "env": env}
             if sys.platform == "win32":
                 hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
