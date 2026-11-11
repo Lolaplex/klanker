@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { X } from "lucide-react";
-import { KlankerInstance } from "../types/klanker";
+import { Radar, X } from "lucide-react";
+import { DiscoveredPeer, KlankerInstance } from "../types/klanker";
+import { api } from "../services/api";
 
 interface NewKlankerModalProps {
   isOpen: boolean;
@@ -11,13 +12,33 @@ interface NewKlankerModalProps {
 export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClose, onSave }) => {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [discovering, setDiscovering] = useState(false);
+  const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
 
   if (!isOpen) return null;
 
   const close = () => {
     setName("");
     setUrl("");
+    setOffers(null);
     onClose();
+  };
+
+  const runDiscovery = async () => {
+    setDiscovering(true);
+    try {
+      setOffers(await api.discoverPeers());
+    } catch {
+      setOffers([]);
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const pick = (peer: DiscoveredPeer) => {
+    setName(peer.hostname);
+    setUrl(peer.endpoint);
+    setOffers(null);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -50,7 +71,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-[#0a0a0a] border border-[#262626] w-full max-w-sm rounded-lg shadow-2xl overflow-hidden font-mono text-xs">
         <div className="px-4 py-3 border-b border-[#262626] flex items-center justify-between">
-          <span className="text-white font-semibold tracking-wider">NEW KLANKER</span>
+          <span className="text-white font-semibold tracking-wider">ADD HOST</span>
           <button type="button" onClick={close} className="text-[#737373] hover:text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
@@ -79,6 +100,37 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
               className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
             />
           </div>
+
+          <div className="border border-[#262626] rounded p-2">
+            <button
+              type="button"
+              onClick={runDiscovery}
+              disabled={discovering}
+              className="w-full flex items-center justify-center gap-1.5 px-2 py-1 text-[#a3a3a3] hover:text-white disabled:opacity-40"
+            >
+              <Radar className="w-3 h-3" />
+              <span>{discovering ? "scanning…" : "discover on network"}</span>
+            </button>
+            {offers !== null &&
+              (offers.length === 0 ? (
+                <p className="pt-2 text-[#525252] text-center">no discoveries</p>
+              ) : (
+                <div className="pt-2 space-y-1">
+                  {offers.map((peer) => (
+                    <button
+                      key={peer.endpoint}
+                      type="button"
+                      onClick={() => pick(peer)}
+                      className="w-full text-left px-2 py-1 text-[#a3a3a3] hover:bg-[#141414] hover:text-white rounded"
+                    >
+                      {peer.hostname}
+                      <span className="text-[#525252]"> {peer.endpoint.replace(/^https?:\/\//, "")}</span>
+                    </button>
+                  ))}
+                </div>
+              ))}
+          </div>
+
           <div className="flex items-center justify-end space-x-2">
             <button type="button" onClick={close} className="px-3 py-1.5 text-[#737373] hover:text-white transition-colors">
               Cancel
@@ -87,7 +139,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
               type="submit"
               className="px-4 py-1.5 bg-white hover:bg-[#e5e5e5] text-black font-semibold rounded transition-colors"
             >
-              Create
+              Add
             </button>
           </div>
         </form>

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `web/` — the Klanker dashboard, extracted from klanker-desktop as a standalone React/Vite PWA. It talks to `agents-relay` over `/v1/*` (chat SSE stream + stop, workspaces, personas, auth cookie login, approvals, traces) and stores the instance list/settings in the browser. Installable on phone (manifest + service worker + safe-area layout).
 - `klanker serve` serves the vendored dashboard automatically: `src/klanker/_web` (via `scripts/vendor-web.py` or the Docker build) becomes `AGENTS_RELAY_WEB_DIR` when no static dir is configured. `RELAY_WEB_TOKEN` still gates the web surface, so API-only operation stays the default.
+- Dashboard tree sidebar mirrors the real hierarchy: host -> workspace -> persona -> sessions. Sessions come from the relay (`GET .../sessions`), restore their trace-event history on open, and can be deleted server-side (`DELETE .../sessions/<s>`). Chat state is cached in the browser per host+workspace+persona. The add-host modal carries network discovery; the mobile sidebar is a drawer.
 - Dockerfile is now multi-stage: a throwaway node stage builds `web/dist`; the final image stays Python-only.
 
 ### Fixed

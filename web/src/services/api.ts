@@ -156,6 +156,41 @@ export const api = {
     return (r.personas || []).map((p) => ({ id: p.id || p, name: p.name || p.id || p }));
   },
 
+  /** Server-side sessions for (workspace, persona). */
+  async listSessions(
+    inst: KlankerInstance,
+    workspace: string,
+    persona: string
+  ): Promise<{ id: string; created_at?: string; last_active?: string }[]> {
+    try {
+      const r = await req<{ sessions?: any[] }>(
+        inst,
+        `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/sessions`,
+        { headers: headers(inst) }
+      );
+      return (r.sessions || []).map((s) => ({
+        id: s.id || s.session || "",
+        created_at: s.created_at,
+        last_active: s.last_active || s.updated_at,
+      }));
+    } catch {
+      return [];
+    }
+  },
+
+  async deleteSession(
+    inst: KlankerInstance,
+    workspace: string,
+    persona: string,
+    session: string
+  ): Promise<void> {
+    await req(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/sessions/${encodeURIComponent(session)}`,
+      { method: "DELETE", headers: headers(inst) }
+    );
+  },
+
   /** Session record + trace events; null when unknown. */
   async sessionEvents(
     inst: KlankerInstance,

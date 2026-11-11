@@ -7,13 +7,13 @@ import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
 import {
   DesktopSettings,
-  DiscoveredPeer,
   KlankerInstance,
   ProcessStatus,
   ChatMessage,
   PendingApproval,
 } from "./types/klanker";
 import { api, localInstance } from "./services/api";
+import type { PersonaRow, SessionRow } from "./components/KlankerList";
 import {
   choiceOf,
   DEFAULT_SETTINGS,
@@ -62,11 +62,11 @@ function seedBucket(session: string): ChatBucket {
   return { openId: id, items: [{ id, session, messages: [] }] };
 }
 
-const chatsKey = (instanceId: string) => `klanker.chats.${instanceId}`;
+const chatsKey = (sel: string) => `klanker.chats.${sel}`;
 
-function loadBucket(instanceId: string): ChatBucket | null {
+function loadBucket(sel: string): ChatBucket | null {
   try {
-    const raw = localStorage.getItem(chatsKey(instanceId));
+    const raw = localStorage.getItem(chatsKey(sel));
     if (!raw) return null;
     const b = JSON.parse(raw) as ChatBucket;
     if (!Array.isArray(b?.items) || b.items.length === 0) return null;
@@ -76,10 +76,10 @@ function loadBucket(instanceId: string): ChatBucket | null {
   }
 }
 
-function saveBucket(instanceId: string, bucket: ChatBucket): void {
+function saveBucket(sel: string, bucket: ChatBucket): void {
   try {
     const items = bucket.items.slice(-30).map((i) => ({ ...i, messages: i.messages.slice(-300) }));
-    localStorage.setItem(chatsKey(instanceId), JSON.stringify({ ...bucket, items }));
+    localStorage.setItem(chatsKey(sel), JSON.stringify({ ...bucket, items }));
   } catch {}
 }
 
@@ -117,7 +117,10 @@ export function App() {
   const [deciding, setDeciding] = useState(false);
   const [decideError, setDecideError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
-  const [personas, setPersonas] = useState<{ id: string; name?: string }[]>([]);
+  const [selWs, setSelWs] = useState("");
+  const [selPersona, setSelPersona] = useState("");
+  const [treePersonas, setTreePersonas] = useState<Record<string, PersonaRow[]>>({});
+  const [serverSessions, setServerSessions] = useState<Record<string, { id: string }[]>>({});
   const [wsNote, setWsNote] = useState<string | null>(null);
   // Same-origin relay auth gate: "checking" until /v1/auth/status answers,
   // "needed" shows the token prompt, "ok" runs the dashboard.
@@ -143,7 +146,8 @@ export function App() {
     .map((inst) => `${inst.id}|${inst.updated_at}|${inst.endpoint?.base_url ?? inst.base_url ?? ""}|${inst.secret ? 1 : 0}`)
     .join("\n");
   const status = activeInstance ? herd[activeInstance.id] ?? null : null;
-  const bucket = activeInstance ? chats[activeInstance.id] : undefined;
+  const selKey = activeInstance ? `${activeInstance.id} ${selWs} ${selPersona}` : "";
+  const bucket = selKey ? chats[selKey] : undefined;
   const openChat = bucket?.items.find((item) => item.id === bucket.openId) ?? bucket?.items[0] ?? null;
   const messages = openChat?.messages ?? [];
   const isLoadingTurn = Boolean(
@@ -158,51 +162,69 @@ export function App() {
     api.saveActiveId(inst?.id ?? null);
     setActiveInstance(inst);
     if (!inst) return;
-    setChats((prev) => {
-      if (prev[inst.id]) return prev;
-      const stored = loadBucket(inst.id);
-      return { ...prev, [inst.id]: stored ?? seedBucket(inst.session ?? "") };
-    });
+    setTreePersonas({});
+    setServerSessions({});
     setUnread((prev) => {
       if (!prev.has(inst.id)) return prev;
       const next = new Set(prev);
       next.delete(inst.id);
       return next;
     });
+    setSelWs(inst.workspace.trim());
+    setSelPersona((inst.persona || "").trim() || "default");
   }, []);
 
-  const selectChat = (chatId: string) => {
+  const selectChat = (ws: string, persona: string, chatId: string) => {
     if (!activeInstance) return;
-    const instanceId = activeInstance.id;
+    const key = `${activeInstance.id} ${ws} ${persona}`;
+    setSelWs(ws);
+    setSelPersona(persona);
     setChats((prev) => {
-      const current = prev[instanceId];
-      if (!current || current.openId === chatId || !current.items.some((item) => item.id === chatId)) return prev;
-      return { ...prev, [instanceId]: { ...current, openId: chatId } };
+      const current = prev[key] ?? loadBucket(key) ?? seedBucket("");
+      const hit = current.items.find((i) => i.id === chatId || i.session === chatId);
+      const items = hit
+        ? current.items
+        : [...current.items, { id: crypto.randomUUID(), session: chatId, messages: [] }];
+      const openId = hit ? hit.id : items[items.length - 1].id;
+      if (current.openId === openId && items === current.items) return prev;
+      return { ...prev, [key]: { openId, items } };
     });
   };
 
-  const deleteChat = (chatId: string) => {
+  const deleteChat = (ws: string, persona: string, row: SessionRow) => {
     if (!activeInstance) return;
-    const instanceId = activeInstance.id;
+    const key = `${activeInstance.id} ${ws} ${persona}`;
+    const inst = activeInstance;
+    if (!row.pending) {
+      void api
+        .deleteSession(inst, ws, persona, row.session)
+        .then(() => setServerSessions((prev) => ({
+          ...prev,
+          [`${ws} ${persona}`]: (prev[`${ws} ${persona}`] || []).filter((s) => s.id !== row.session),
+        })))
+        .catch((e) => setWsNote(`delete: ${e instanceof Error ? e.message : e}`));
+    }
     setChats((prev) => {
-      const current = prev[instanceId];
+      const current = prev[key];
       if (!current) return prev;
-      const items = current.items.filter((i) => i.id !== chatId);
-      if (items.length === 0) items.push({ id: crypto.randomUUID(), session: mintSessionId(), messages: [] });
+      const items = current.items.filter((i) => i.id !== row.chatId && i.session !== row.session);
+      if (items.length === 0) return { ...prev, [key]: { openId: "", items: [] } };
       const openId = items.some((i) => i.id === current.openId) ? current.openId : items[items.length - 1].id;
-      return { ...prev, [instanceId]: { openId, items } };
+      return { ...prev, [key]: { openId, items } };
     });
   };
 
-  const newChat = () => {
+  const newChat = (ws: string, persona: string) => {
     if (!activeInstance) return;
-    const instanceId = activeInstance.id;
+    const key = `${activeInstance.id} ${ws} ${persona}`;
     const chatId = crypto.randomUUID();
+    setSelWs(ws);
+    setSelPersona(persona);
     setChats((prev) => {
-      const current = prev[instanceId] ?? seedBucket(activeInstance.session ?? "");
+      const current = prev[key] ?? loadBucket(key) ?? { openId: "", items: [] };
       return {
         ...prev,
-        [instanceId]: { openId: chatId, items: [...current.items, { id: chatId, session: mintSessionId(), messages: [] }] },
+        [key]: { openId: chatId, items: [...current.items, { id: chatId, session: mintSessionId(), messages: [] }] },
       };
     });
   };
@@ -279,13 +301,12 @@ export function App() {
     };
   }, [herdKey]);
 
-  // Workspace + persona lists for the active instance
+  // Workspace list for the active instance
   useEffect(() => {
     setPending(null);
     setDecideError(null);
     setDeciding(false);
     setWorkspaces([]);
-    setPersonas([]);
     setWsNote(null);
     const inst = activeInstance;
     if (!inst || status?.state !== "running") return;
@@ -295,22 +316,60 @@ export function App() {
         const rows = await api.listWorkspaces(inst);
         if (stop) return;
         setWorkspaces(rows);
+        setSelWs((cur) => cur || rows[0]?.id || "");
       } catch (e) {
         if (!stop) setWsNote(`workspaces: ${e instanceof Error ? e.message : e}`);
-      }
-      try {
-        const ws = inst.workspace.trim();
-        const rows = await api.listPersonas(inst, ws);
-        if (stop) return;
-        setPersonas(rows);
-      } catch (e) {
-        if (!stop) setWsNote(`personas: ${e instanceof Error ? e.message : e}`);
       }
     })();
     return () => {
       stop = true;
     };
-  }, [activeInstance?.id, activeInstance?.workspace, status?.state]);
+  }, [activeInstance?.id, status?.state]);
+
+  // Tree lazy loaders
+  const expandWs = (ws: string) => {
+    const inst = activeInstance;
+    if (!inst || treePersonas[ws]) return;
+    void api
+      .listPersonas(inst, ws)
+      .then((rows) => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: rows })))
+      .catch(() => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: [] })));
+  };
+
+  const expandPersona = (ws: string, persona: string) => {
+    const inst = activeInstance;
+    if (!inst) return;
+    const key = `${ws} ${persona}`;
+    void api
+      .listSessions(inst, ws, persona)
+      .then((rows) =>
+        setServerSessions((prev) => ({ ...prev, [key]: rows.filter((s) => s.id) }))
+      )
+      .catch(() => setServerSessions((prev) => (prev[key] ? prev : { ...prev, [key]: [] })));
+  };
+
+  const personasOf = (ws: string): PersonaRow[] | undefined => treePersonas[ws];
+
+  const sessionRowsOf = (ws: string, persona: string): SessionRow[] | undefined => {
+    const key = `${activeInstance?.id} ${ws} ${persona}`;
+    const b = chats[key];
+    const server = serverSessions[`${ws} ${persona}`];
+    if (!b && server === undefined) return undefined;
+    const localRows: SessionRow[] = (b?.items ?? []).map((i) => {
+      const first = i.messages.find((m) => m.role === "user")?.content?.trim();
+      return {
+        chatId: i.id,
+        session: i.session,
+        label: first ? (first.length > 22 ? `${first.slice(0, 22)}…` : first) : i.session || "new chat",
+        pending: !server?.some((s) => s.id === i.session),
+      };
+    });
+    const covered = new Set(localRows.map((r) => r.session));
+    const remoteRows: SessionRow[] = (server ?? [])
+      .filter((s) => !covered.has(s.id))
+      .map((s) => ({ chatId: s.id, session: s.id, label: s.id, pending: false }));
+    return [...localRows, ...remoteRows];
+  };
 
   // Session history: restore message bubbles from trace events when a chat
   // with a pinned session is opened and has no local messages yet.
@@ -319,12 +378,12 @@ export function App() {
     const inst = activeInstance;
     const chat = openChat;
     if (!inst || !chat || !chat.session || chat.messages.length > 0) return;
-    const ws = inst.workspace.trim();
-    const persona = (inst.persona || "").trim();
-    if (!ws || !persona) return;
+    if (!selWs || !selPersona) return;
     if (historyTried.current.has(chat.id)) return;
     historyTried.current.add(chat.id);
-    const instanceId = inst.id;
+    const ws = selWs;
+    const persona = selPersona;
+    const key = selKey;
     const chatId = chat.id;
     void (async () => {
       const events = await api.sessionEvents(inst, ws, persona, chat.session);
@@ -339,12 +398,12 @@ export function App() {
         }));
       if (restored.length === 0) return;
       setChats((prev) =>
-        mapChat(prev, instanceId, chatId, (item) =>
+        mapChat(prev, key, chatId, (item) =>
           item.messages.length > 0 ? item : { ...item, messages: restored }
         )
       );
     })();
-  }, [activeInstance, openChat?.id, openChat?.session]);
+  }, [activeInstance, openChat?.id, openChat?.session, selWs, selPersona]);
 
   // Approvals poll
   useEffect(() => {
@@ -463,26 +522,6 @@ export function App() {
     void handleSaveInstance({ ...draft, provider: "inherit" });
   };
 
-  const handleAddDiscovered = (peer: DiscoveredPeer) => {
-    const now = new Date().toISOString();
-    void handleSaveInstance({
-      id: crypto.randomUUID(),
-      name: peer.hostname,
-      slug: peer.hostname.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
-      role: "remote",
-      provider: "",
-      model: "",
-      workspace: "",
-      lock_workspace: false,
-      port: 0,
-      system_prompt: "",
-      kind: "remote",
-      endpoint: { base_url: peer.endpoint },
-      tailscale: { node: peer.hostname, fqdn: peer.fqdn },
-      created_at: now,
-      updated_at: now,
-    });
-  };
 
   const handleDeleteInstance = async (id: string) => {
     try {
@@ -504,9 +543,8 @@ export function App() {
         return next;
       });
       setChats((prev) => {
-        if (!prev[id]) return prev;
         const next = { ...prev };
-        delete next[id];
+        for (const k of Object.keys(next)) if (k.startsWith(`${id} `)) delete next[k];
         return next;
       });
     } catch (e) {
@@ -526,7 +564,7 @@ export function App() {
     if (!inst) return;
     const id = inst.id;
     if (turnBusyRef.current?.instanceId === id) return;
-    const current = chatsRef.current[id];
+    const current = chatsRef.current[selKey];
     const chat = current?.items.find((item) => item.id === current.openId) ?? current?.items[0];
     if (!chat) return;
     const chatId = chat.id;
@@ -547,7 +585,7 @@ export function App() {
       timestamp: new Date().toISOString(),
     };
     setChats((prev) =>
-      mapChat(prev, id, chatId, (item) => ({ ...item, messages: [...item.messages, userMessage, assistantMessage] }))
+      mapChat(prev, selKey, chatId, (item) => ({ ...item, messages: [...item.messages, userMessage, assistantMessage] }))
     );
     const busy: TurnBusy = { instanceId: id, chatId, run: crypto.randomUUID().replace(/-/g, "") };
     turnBusyRef.current = busy;
@@ -562,15 +600,15 @@ export function App() {
         text,
         run: busy.run,
         session: session || undefined,
-        workspace: inst.workspace.trim() || undefined,
-        persona: (inst.persona || "").trim() || undefined,
+        workspace: selWs || undefined,
+        persona: selPersona || undefined,
         provider: provider || undefined,
       });
       for await (const ev of stream) {
         if (ev.type === "delta" && ev.text) {
           const piece = ev.text;
           setChats((prev) =>
-            mapChat(prev, id, chatId, (item) => ({
+            mapChat(prev, selKey, chatId, (item) => ({
               ...item,
               messages: item.messages.map((m) => (m.id === assistantId ? { ...m, content: m.content + piece } : m)),
             }))
@@ -581,7 +619,7 @@ export function App() {
           throw new Error(ev.text || "turn failed");
         } else if (ev.type === "trailer") {
           setChats((prev) =>
-            mapChat(prev, id, chatId, (item) => ({
+            mapChat(prev, selKey, chatId, (item) => ({
               ...item,
               session: ev.session || item.session,
               messages: item.messages.map((m) =>
@@ -595,7 +633,7 @@ export function App() {
         }
       }
       setChats((prev) =>
-        mapChat(prev, id, chatId, (item) => ({
+        mapChat(prev, selKey, chatId, (item) => ({
           ...item,
           messages: item.messages.map((m) =>
             m.id === assistantId && !m.content ? { ...m, content: "(no reply)", elapsed_ms: Date.now() - started } : m
@@ -605,7 +643,7 @@ export function App() {
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       setChats((prev) =>
-        mapChat(prev, id, chatId, (item) => ({
+        mapChat(prev, selKey, chatId, (item) => ({
           ...item,
           messages: item.messages.map((m) =>
             m.id === assistantId ? { ...m, content: `Error executing turn: ${message}` } : m
@@ -691,14 +729,31 @@ export function App() {
           activeId={activeInstance?.id ?? null}
           unread={unread}
           statuses={herd}
-          onSelect={(inst) => { selectInstance(inst); setNavOpen(false); }}
-          onNew={() => { setIsNewModalOpen(true); setNavOpen(false); }}
-          onAddDiscovered={handleAddDiscovered}
-          chats={bucket?.items ?? []}
+          selWs={selWs}
+          selPersona={selPersona}
           openChatId={openChat?.id ?? null}
-          onSelectChat={(id) => { selectChat(id); setNavOpen(false); }}
-          onNewChat={() => { newChat(); setNavOpen(false); }}
+          workspaces={workspaces}
+          personasOf={personasOf}
+          sessionRowsOf={sessionRowsOf}
+          onSelect={(inst) => { selectInstance(inst); setNavOpen(false); }}
+          onExpandWs={expandWs}
+          onExpandPersona={expandPersona}
+          onSelectChat={(ws, p, id) => { selectChat(ws, p, id); setNavOpen(false); }}
+          onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
+          onNewHost={() => { setIsNewModalOpen(true); setNavOpen(false); }}
+          onNewWorkspace={() => {
+            if (!activeInstance) return;
+            const id = window.prompt("new workspace id");
+            if (!id?.trim()) return;
+            void api
+              .createWorkspace(activeInstance, id.trim())
+              .then((wsId) => {
+                setSelWs(wsId);
+                return api.listWorkspaces(activeInstance).then(setWorkspaces);
+              })
+              .catch((e) => setWsNote(`workspace: ${e instanceof Error ? e.message : e}`));
+          }}
         />
       </div>
 
@@ -708,53 +763,9 @@ export function App() {
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activeInstance ? (
             <>
-              {status?.state === "running" && (
-                <div className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-[#737373] overflow-x-auto">
-                  <span className="shrink-0">ws</span>
-                  <select
-                    value={activeInstance.workspace}
-                    onChange={(e) => void handleSaveInstance({ ...activeInstance, workspace: e.target.value })}
-                    className="bg-[#0a0a0a] border border-[#262626] rounded px-1 py-0.5 text-[#a3a3a3] max-w-[10rem] truncate"
-                  >
-                    <option value="">default</option>
-                    {workspaces
-                      .filter((w) => w.id !== activeInstance.workspace)
-                      .map((w) => (
-                        <option key={w.id} value={w.id}>
-                          {w.label || w.id}
-                        </option>
-                      ))}
-                  </select>
-                  <button
-                    type="button"
-                    title="New workspace"
-                    onClick={() => {
-                      const id = window.prompt("new workspace id");
-                      if (!id?.trim() || !activeInstance) return;
-                      void api
-                        .createWorkspace(activeInstance, id.trim())
-                        .then((wsId) => handleSaveInstance({ ...activeInstance, workspace: wsId }))
-                        .then(() => api.listWorkspaces(activeInstance).then(setWorkspaces))
-                        .catch((e) => setWsNote(`workspace: ${e instanceof Error ? e.message : e}`));
-                    }}
-                    className="shrink-0 px-1.5 py-0.5 border border-[#262626] rounded text-[#a3a3a3] hover:text-white hover:border-white"
-                  >
-                    +
-                  </button>
-                  <span className="shrink-0 ml-2">persona</span>
-                  <select
-                    value={activeInstance.persona || ""}
-                    onChange={(e) => void handleSaveInstance({ ...activeInstance, persona: e.target.value })}
-                    className="bg-[#0a0a0a] border border-[#262626] rounded px-1 py-0.5 text-[#a3a3a3] max-w-[10rem] truncate"
-                  >
-                    <option value="">default</option>
-                    {personas.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name || p.id}
-                      </option>
-                    ))}
-                  </select>
-                  {wsNote && <span className="ml-2 text-red-500 truncate">{wsNote}</span>}
+              {wsNote && (
+                <div className="shrink-0 px-3 py-1 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-red-500 truncate">
+                  {wsNote}
                 </div>
               )}
               <ChatConsole
@@ -764,14 +775,13 @@ export function App() {
                 onSendMessage={handleSendMessage}
                 onClearMessages={() => {
                   if (!openChat) return;
-                  const instanceId = activeInstance.id;
                   const chatId = openChat.id;
-                  setChats((prev) => mapChat(prev, instanceId, chatId, (item) => ({ ...item, messages: [] })));
+                  setChats((prev) => mapChat(prev, selKey, chatId, (item) => ({ ...item, messages: [] })));
                 }}
                 onStop={handleStop}
                 isLoading={isLoadingTurn}
                 streamStatus={streamStatus}
-                sessionLabel={openChat?.session || "new"}
+                sessionLabel={`${selWs || "default"} · ${selPersona || "default"} · ${openChat?.session || "new"}`}
                 sendHold={sendHold}
                 pending={pending}
                 deciding={deciding}
@@ -792,7 +802,7 @@ export function App() {
                 }}
                 onDelete={handleDeleteInstance}
                 workspaces={workspaces}
-                personas={personas}
+                personas={treePersonas[selWs] ?? []}
                 wsNote={wsNote}
               />
             </>
