@@ -18,7 +18,13 @@ def _default_project() -> str:
 
 
 def _repl_prefs_path() -> Path:
-    return Path.cwd() / ".agents" / "repl" / "prefs.json"
+    from agents_workspace import Workspace
+    new = Workspace.from_env().host.clients / "shell" / "prefs.json"
+    if not new.exists():
+        legacy = Path.cwd() / ".agents" / "repl" / "prefs.json"
+        if legacy.is_file():
+            return legacy  # one-time read; next save lands on the host path
+    return new
 
 
 def _gateway_client(
