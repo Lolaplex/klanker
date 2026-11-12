@@ -31,8 +31,31 @@ services:
       # - RELAY_SECRET=<api-secret>
     volumes:
       - <host-data-dir>:/data
+      # Workspace isolation=container: turns run inside a per-workspace
+      # sibling container. Prefer the socket proxy (below) over mounting
+      # docker.sock directly — the raw socket equals host root.
+      # - docker-socket:/var/run/docker.sock
+    # environment for isolation:
+    #   - AGENTS_WS_ISOLATION=container
+    #   - DOCKER_HOST=tcp://docker-socket:2375   (when using the proxy)
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+  # Allowlisted docker API for workspace containers. Blocks bind-mount and
+  # privileged escalation; klanker points DOCKER_HOST here.
+  # docker-socket:
+  #   image: tecnativa/docker-socket-proxy:latest
+  #   restart: unless-stopped
+  #   environment:
+  #     - CONTAINERS=1
+  #     - EXEC=1
+  #     - IMAGES=1
+  #     - POST=1
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  docker-socket:

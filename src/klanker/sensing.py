@@ -10,7 +10,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from agents_workspace import Workspace
+from agents_workspace import Host, Workspace
 
 
 COMMON_RUNTIMES = ["git", "docker", "curl", "node", "npm", "uv", "sqlite3"]
@@ -108,7 +108,10 @@ def probe_host() -> HostCapabilities:
 
     runtimes = {cmd: _has_cmd(cmd) for cmd in COMMON_RUNTIMES}
     modules = {alias: _has_mod(pkg) for alias, pkg in SUITE_MODULES.items()}
-    ws_root = Workspace.from_env().root
+    try:
+        ws_root = Workspace.from_env().root
+    except (ValueError, RuntimeError):
+        ws_root = Host.from_env().dir
 
     return HostCapabilities(
         os_name=platform.system(),

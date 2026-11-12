@@ -187,6 +187,18 @@ def build_parser() -> argparse.ArgumentParser:
     persona_hand.add_argument("--note", default="", help="Handoff note")
     persona_hand.add_argument("--workspace", default="", help="Data workspace id")
 
+    # 3e. Workspaces
+    ws_p = sub.add_parser("workspace", help="Create or list workspaces")
+    ws_sub = ws_p.add_subparsers(dest="ws_cmd")
+    ws_create = ws_sub.add_parser("create", help="Create a workspace")
+    ws_create.add_argument("id", help="Workspace id")
+    ws_create.add_argument("--label", default="", help="Display label")
+    ws_create.add_argument(
+        "--isolation", choices=["local", "container"], default="",
+        help="Isolation backend (default: AGENTS_WS_ISOLATION or local)")
+    ws_create.add_argument("--image", default="", help="Container image (isolation=container)")
+    ws_sub.add_parser("list", help="List workspaces")
+
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
     cron_p.add_argument("--flow", type=str, default="", help="Run specific flow name")
@@ -256,6 +268,7 @@ KNOWN_SUBCOMMANDS = {
     "routine",
     "evidence",
     "persona",
+    "workspace",
     "-h",
     "--help",
 }
@@ -378,6 +391,33 @@ def main(argv: list[str] | None = None) -> int:
             role = row.get("role") or ""
             suffix = f" — {role}" if role else ""
             print(f"{rid}{suffix}")
+        return 0
+
+    elif args.command == "workspace":
+        from agents_workspace import Host
+
+        host = Host.from_env()
+        cmd = getattr(args, "ws_cmd", "") or ""
+        if cmd == "create":
+            from agents_relay.turn import valid_id
+            wid = args.id.strip()
+            if not valid_id(wid):
+                print(f"Error: invalid workspace id: {wid!r}", file=sys.stderr)
+                return 2
+            if host.workspace_exists(wid):
+                print(f"Error: workspace exists: {wid}", file=sys.stderr)
+                return 2
+            ws = host.create(
+                wid,
+                getattr(args, "label", "") or "",
+                isolation=getattr(args, "isolation", "") or "",
+                image=getattr(args, "image", "") or "",
+            )
+            print(f"workspace {ws.id} created")
+            return 0
+        for w in host.list_workspaces():
+            iso = getattr(w, "isolation", "") or "local"
+            print(f"{w.id}  {w.label or ''}  isolation={iso}")
         return 0
 
     elif args.command == "audit":

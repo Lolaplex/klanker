@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
-from agents_workspace import Workspace
+from agents_workspace import Host, Workspace
 
 # Same ${ENV_VAR} form as runner.mcp_client.interpolate. Unset names become empty.
 _ENV = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -35,16 +35,25 @@ def mcp_config_path() -> Path:
             )
     if raw:
         return Path(raw).expanduser()
-    return Workspace.from_env().host.mcp_json
+    return Host.from_env().mcp_json
+
+
+def _ws_or_none() -> Workspace | None:
+    try:
+        return Workspace.from_env()
+    except (ValueError, RuntimeError):
+        return None
 
 
 def mcp_overlay_path() -> Path:
     """Optional ``<ws>/mcp.json`` overlay; wins per-server over the host file."""
-    return Workspace.from_env().root / "mcp.json"
+    ws = _ws_or_none()
+    return (ws.root if ws else Host.from_env().dir) / "mcp.json"
 
 
 def skills_dir() -> Path:
-    return Workspace.from_env().skills
+    ws = _ws_or_none()
+    return ws.skills if ws else Host.from_env().dir / "skills"
 
 
 def expand_env(value: Any) -> Any:
