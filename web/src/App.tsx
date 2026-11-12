@@ -560,7 +560,7 @@ export function App() {
     if (inst) void api.stopRun(inst, busy.run).catch(() => undefined);
   };
 
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string, attachments?: { data: string; mime?: string; name?: string }[]) => {
     const inst = activeInstance;
     if (!inst) return;
     const id = inst.id;
@@ -607,6 +607,7 @@ export function App() {
         persona: selPersona || undefined,
         provider: provider || undefined,
         model: model || undefined,
+        attachments: attachments && attachments.length ? attachments : undefined,
       });
       for await (const ev of stream) {
         if (ev.type === "delta" && ev.text) {

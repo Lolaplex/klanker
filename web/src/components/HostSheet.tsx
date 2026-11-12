@@ -53,7 +53,13 @@ export const HostSheet: React.FC<HostSheetProps> = ({
   const [loginNote, setLoginNote] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
   const [authed, setAuthed] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"config" | "traces">("config");
+  const [tab, setTab] = useState<"config" | "traces" | "jobs">("config");
+  const [jobWs, setJobWs] = useState("");
+  const [jobPersona, setJobPersona] = useState("");
+  const [jobGoal, setJobGoal] = useState("");
+  const [jobList, setJobList] = useState<any[]>([]);
+  const [jobBusy, setJobBusy] = useState(false);
+  const [jobNote, setJobNote] = useState<string | null>(null);
   const [providers, setProviders] = useState<{ name: string; model?: string }[]>([]);
   const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
   const [personas, setPersonas] = useState<{ id: string; name?: string }[]>([]);
@@ -83,6 +89,48 @@ export const HostSheet: React.FC<HostSheetProps> = ({
   useEffect(() => {
     if (choice === "openrouter") onNeedModels();
   }, [choice, onNeedModels]);
+
+  const jobWsEff = jobWs || formData.workspace.trim();
+  const jobPersonaEff = jobPersona || (formData.persona || "").trim() || personas[0]?.id || "";
+
+  useEffect(() => {
+    if (tab !== "jobs" || !jobWsEff) return;
+    let alive = true;
+    const load = () =>
+      api
+        .listJobs(instance, jobWsEff, jobPersonaEff)
+        .then((rows) => alive && setJobList(rows))
+        .catch(() => undefined);
+    void load();
+    const t = setInterval(load, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [tab, instance.id, jobWsEff, jobPersonaEff]);
+
+  const submitJob = async () => {
+    const goal = jobGoal.trim();
+    if (!goal || !jobWsEff || !jobPersonaEff) return;
+    setJobBusy(true);
+    setJobNote(null);
+    try {
+      const job = await api.createJob(instance, {
+        workspace: jobWsEff,
+        persona: jobPersonaEff,
+        goal,
+        provider: choice === "inherit" ? undefined : formData.provider || undefined,
+        model: formData.model || undefined,
+      });
+      setJobNote(`job ${job.id || ""} queued`);
+      setJobGoal("");
+      setJobList(await api.listJobs(instance, jobWsEff, jobPersonaEff));
+    } catch (e) {
+      setJobNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setJobBusy(false);
+    }
+  };
 
   const writeForm = (next: KlankerInstance) => {
     draftRef.current = next;
@@ -186,7 +234,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
             {authed !== null && <span className="ml-2">{authed ? "· authed" : "· not authed"}</span>}
           </span>
           <div className="flex gap-1">
-            {(["config", "traces"] as const).map((t) => (
+            {(["config", "traces", "jobs"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -206,6 +254,73 @@ export const HostSheet: React.FC<HostSheetProps> = ({
         {tab === "traces" ? (
           <div className="flex-1 min-h-0 overflow-hidden">
             <TracesPanel instance={instance} />
+          </div>
+        ) : tab === "jobs" ? (
+          <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Workspace</label>
+                <select value={jobWsEff} onChange={(e) => setJobWs(e.target.value)} className={inputClass}>
+                  {!jobWsEff && <option value="">(pick)</option>}
+                  {workspaces.map((w) => (
+                    <option key={w.id} value={w.id}>{w.label || w.id}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Persona</label>
+                <select value={jobPersonaEff} onChange={(e) => setJobPersona(e.target.value)} className={inputClass}>
+                  {personas.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name || p.id}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Goal</label>
+              <textarea
+                rows={3}
+                value={jobGoal}
+                onChange={(e) => setJobGoal(e.target.value)}
+                placeholder="e.g. fix klanker#44: add delete buttons to the tree"
+                className={`${inputClass} resize-none`}
+              />
+              <button
+                type="button"
+                onClick={() => void submitJob()}
+                disabled={jobBusy || !jobGoal.trim() || !jobWsEff || !jobPersonaEff}
+                className="mt-2 px-3 py-1.5 bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded text-[11px] transition-colors"
+              >
+                {jobBusy ? "queueing…" : "Run job"}
+              </button>
+              {jobNote && <p className="mt-1 text-[11px] text-[#737373]">{jobNote}</p>}
+            </div>
+            <div className="border-t border-[#262626] pt-2 space-y-2">
+              {jobList.length === 0 ? (
+                <p className="text-[11px] text-[#525252]">no jobs in this workspace</p>
+              ) : (
+                jobList.map((j) => (
+                  <div key={j.id} className="border border-[#262626] rounded p-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-white truncate">{j.id}</span>
+                      <span
+                        className={`px-1.5 py-0.5 rounded border ${
+                          j.status === "done"
+                            ? "border-white text-white"
+                            : j.status === "failed" || j.status === "stopped"
+                            ? "border-[#525252] text-[#a3a3a3] line-through"
+                            : "border-[#262626] text-[#a3a3a3] animate-pulse"
+                        }`}
+                      >
+                        {j.status || "?"}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-[11px] text-[#737373] line-clamp-2">{j.goal}</div>
+                    {j.result && <div className="mt-1 text-[11px] text-[#525252] line-clamp-3">{j.result}</div>}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto p-4 space-y-4">

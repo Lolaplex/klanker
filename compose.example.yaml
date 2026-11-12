@@ -29,6 +29,9 @@ services:
       - AGENTS_RELAY_WEB_DIR=/app/web/dist
       # RELAY_SECRET is the bearer for non-cookie API clients.
       # - RELAY_SECRET=<api-secret>
+      # GitHub access for coding jobs/turns: fine-grained PAT, forwarded into
+      # ws containers via env passthrough (never written to ws files).
+      # - GH_TOKEN=<fine-grained-pat>
     volumes:
       - <host-data-dir>:/data
       # Workspace isolation=container: turns run inside a per-workspace

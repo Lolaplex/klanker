@@ -59,6 +59,13 @@ function load<T>(key: string, fallback: T): T {
 
 const RELAY_501_NOTE = "Endpoint missing on this relay (requires agents-relay#12).";
 
+/** Capability flags: desktop (Tauri) gets localFs/spawn; web/PWA does not. */
+export const caps = {
+  localFs: typeof window !== "undefined" && "__TAURI__" in window,
+  spawn: typeof window !== "undefined" && "__TAURI__" in window,
+  keyring: typeof window !== "undefined" && "__TAURI__" in window,
+} as const;
+
 export const api = {
   // --- settings (localStorage) -------------------------------------------
 
@@ -137,13 +144,6 @@ export const api = {
   async logout(inst: KlankerInstance): Promise<void> {
     await jsonReq(inst, "/v1/auth/logout", {});
   },
-
-/** Capability flags: desktop (Tauri) gets localFs/spawn; web/PWA does not. */
-export const caps = {
-  localFs: typeof window !== "undefined" && "__TAURI__" in window,
-  spawn: typeof window !== "undefined" && "__TAURI__" in window,
-  keyring: typeof window !== "undefined" && "__TAURI__" in window,
-} as const;
 
   // --- workspaces / personas ----------------------------------------------
 
@@ -271,6 +271,7 @@ export const caps = {
       provider?: string;
       model?: string;
       new_session?: boolean;
+      attachments?: { data: string; mime?: string; name?: string }[];
     }
   ): AsyncGenerator<{ type: string; text?: string; run?: string; session?: string; user_id?: string; returncode?: number }> {
     const res = await fetch(base(inst) + "/v1/chat/stream", {
@@ -339,6 +340,37 @@ export const caps = {
     } catch (e) {
       return { lines: [], note: `${RELAY_501_NOTE} (${e instanceof Error ? e.message : e})` };
     }
+  },
+
+  // --- jobs (goal-sessions) --------------------------------------------------
+
+  async listJobs(
+    inst: KlankerInstance,
+    workspace: string,
+    persona = ""
+  ): Promise<{ id: string; goal?: string; status?: string; result?: string; created_at?: string }[]> {
+    try {
+      const q = `?workspace=${encodeURIComponent(workspace)}${persona ? `&persona=${encodeURIComponent(persona)}` : ""}`;
+      const r = await req<{ jobs?: any[] }>(inst, `/v1/jobs${q}`, { headers: headers(inst) });
+      return r.jobs || [];
+    } catch {
+      return [];
+    }
+  },
+
+  async createJob(
+    inst: KlankerInstance,
+    body: {
+      workspace: string;
+      persona: string;
+      goal: string;
+      workdir?: string;
+      provider?: string;
+      model?: string;
+    }
+  ): Promise<{ id?: string; status?: string }> {
+    const r = await jsonReq<{ job?: any }>(inst, "/v1/jobs", body);
+    return r.job || {};
   },
 
   // --- not available in the browser -----------------------------------------

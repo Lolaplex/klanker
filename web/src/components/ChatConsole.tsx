@@ -1,11 +1,17 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Terminal, Trash2, CornerDownLeft, Bot, User, Square } from "lucide-react";
+import { Terminal, Trash2, CornerDownLeft, Bot, User, Square, Paperclip, X } from "lucide-react";
 import { ChatMessage, KlankerInstance, PendingApproval } from "../types/klanker";
+
+export interface OutAttachment {
+  data: string;
+  mime?: string;
+  name?: string;
+}
 
 interface ChatConsoleProps {
   instance: KlankerInstance;
   messages: ChatMessage[];
-  onSendMessage: (msg: string) => void;
+  onSendMessage: (msg: string, attachments?: OutAttachment[]) => void;
   onClearMessages: () => void;
   onStop: () => void;
   isLoading: boolean;
@@ -34,6 +40,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   onDecide,
 }) => {
   const [input, setInput] = useState("");
+  const [files, setFiles] = useState<OutAttachment[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -53,9 +61,33 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!input.trim() || isLoading || sendHold) return;
-    onSendMessage(input.trim());
+    if ((!input.trim() && files.length === 0) || isLoading || sendHold) return;
+    onSendMessage(input.trim(), files.length ? files : undefined);
     setInput("");
+    setFiles([]);
+  };
+
+  const readFile = (f: File): Promise<OutAttachment> =>
+    new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const raw = String(r.result || "");
+        resolve({
+          data: raw.includes(",") ? raw.split(",", 2)[1] : raw,
+          mime: f.type || undefined,
+          name: f.name,
+        });
+      };
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(f);
+    });
+
+  const onPickFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files || []);
+    if (!picked.length) return;
+    const next = await Promise.all(picked.map(readFile));
+    setFiles((cur) => [...cur, ...next]);
+    e.target.value = "";
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -206,7 +238,34 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
       {/* Input Area */}
       <div className="composer p-3 bg-[#0a0a0a] border-t border-[#262626]">
+        {files.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {files.map((f, i) => (
+              <span
+                key={`${f.name}-${i}`}
+                className="inline-flex items-center space-x-1 px-2 py-0.5 bg-[#141414] border border-[#262626] rounded text-[10px] text-[#a3a3a3]"
+              >
+                <Paperclip className="w-3 h-3" />
+                <span className="max-w-[140px] truncate">{f.name}</span>
+                <button
+                  type="button"
+                  onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
+                  className="hover:text-white"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         <form onSubmit={handleSubmit} className="relative flex items-end">
+          <input
+            ref={fileRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={onPickFiles}
+          />
           <textarea
             ref={textareaRef}
             rows={2}
@@ -218,8 +277,16 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
           />
           <div className="absolute right-2 bottom-2 flex items-center space-x-1.5">
             <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              title="Attach files"
+              className="p-1.5 border border-[#262626] hover:border-white text-[#737373] hover:text-white rounded transition-colors"
+            >
+              <Paperclip className="w-3.5 h-3.5" />
+            </button>
+            <button
               type="submit"
-              disabled={!input.trim() || isLoading || sendHold}
+              disabled={(!input.trim() && files.length === 0) || isLoading || sendHold}
               className="p-1.5 bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded transition-colors"
             >
               <CornerDownLeft className="w-3.5 h-3.5" />
