@@ -12,12 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `klanker serve` serves the vendored dashboard automatically: `src/klanker/_web` (via `scripts/vendor-web.py` or the Docker build) becomes `AGENTS_RELAY_WEB_DIR` when no static dir is configured. `RELAY_WEB_TOKEN` still gates the web surface, so API-only operation stays the default.
 - Dashboard tree sidebar mirrors the real hierarchy: host -> workspace -> persona -> sessions. Sessions come from the relay (`GET .../sessions`), restore their trace-event history on open, and can be deleted server-side (`DELETE .../sessions/<s>`). Chat state is cached in the browser per host+workspace+persona. The add-host modal carries network discovery; the mobile sidebar is a drawer.
 - Dockerfile is now multi-stage: a throwaway node stage builds `web/dist`; the final image stays Python-only.
+- `src-tauri/` — the Tauri 2 desktop shell moved in from `klanker-desktop`. Same `web/` frontend (`frontendDist: ../web/dist`), same Rust layer (instance sidecars, keyring secrets, tray, presence). Root `package.json` carries `desktop:dev` / `desktop:build`; `klanker-desktop` repo is superseded.
 
 ### Fixed
 - `klanker chat` no longer crashes on inline `--system` prompt text: the stale-path guard only refuses path-like values (single line, <500 chars, missing file). Long inline prompts caused `OSError: File name too long` instead of reaching `runner.loop`.
 - Dashboard: first message on a fresh host/workspace/persona bucket silently vanished — `handleSendMessage` returned early when no chat item existed. A chat is now minted on send, so a brand-new console just works.
 - Dashboard jobs tab: the persona picker listed personas of the *config* workspace instead of the selected job workspace, leaving the select empty and Run job disabled. Personas are fetched per selected workspace; an inline create appears when a workspace has none.
 - PWA service worker could serve a poisoned cached asset (0-rule stylesheet → unstyled app). `sw.js` is now `v3` with stale-while-revalidate for immutable `/assets/*`, so a bad entry self-heals on next load.
+- Desktop shell loads the shared frontend in a frameless window: the header now declares `data-tauri-drag-region`, and service-worker registration is skipped inside Tauri (`__TAURI__` guard) so the app can't self-cache a stale bundle.
 - `klanker workspace` subcommand was parsed as a prompt (`KNOWN_SUBCOMMANDS` missing `workspace`); multi-workspace hosts crashed `Host.from_env()`/sense paths — resolved with explicit host-dir resolution.
 
 ### Changed

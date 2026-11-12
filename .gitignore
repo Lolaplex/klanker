@@ -20,3 +20,8 @@ CLAUDE.md
 web/node_modules/
 web/dist/
 src/klanker/_web/
+
+# Tauri desktop shell
+src-tauri/target/
+src-tauri/gen/
+node_modules/

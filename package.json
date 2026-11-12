@@ -1,0 +1,16 @@
+{
+  "name": "klanker",
+  "private": true,
+  "author": "Lolaplex",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build",
+    "web:dev": "pnpm --dir web dev",
+    "web:build": "pnpm --dir web build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0"
+  }
+}

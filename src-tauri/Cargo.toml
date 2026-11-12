@@ -1,0 +1,31 @@
+[package]
+name = "klanker_desktop"
+version = "0.0.1"
+description = "Klanker — Adaptive Agent Workbench"
+authors = ["Lolaplex"]
+edition = "2021"
+
+[lib]
+name = "klanker_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["time", "sync", "rt", "process"] }
+dirs = "5.0"
+uuid = { version = "1.10", features = ["v4", "fast-rng"] }
+chrono = { version = "0.4", features = ["serde"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+ed25519-dalek = "2"
+bs58 = "0.5"
+base64 = "0.22"
+hex = "0.4"
