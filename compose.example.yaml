@@ -41,6 +41,10 @@ services:
     # environment for isolation:
     #   - AGENTS_WS_ISOLATION=container
     #   - DOCKER_HOST=tcp://docker-socket:2375   (when using the proxy)
+    # When the data volume is a docker named volume, the daemon needs the
+    # host-side path for ws mounts:
+    #   - AGENTS_WS_HOST_DIR=/var/lib/docker/volumes/<volume>/_data/.agents
+    # (host-side equivalent of AGENTS_HOST_DIR; skip for bind mounts)
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 30s
