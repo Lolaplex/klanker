@@ -332,11 +332,22 @@ export const api = {
   async readRecentTraces(inst: KlankerInstance, limit = 40): Promise<TracePage> {
     const ws = inst.workspace.trim();
     try {
-      const q = `?limit=${limit}${ws ? `&workspace=${encodeURIComponent(ws)}` : ""}`;
-      const r = await req<{ lines?: string[]; note?: string }>(inst, `/v1/traces${q}`, {
-        headers: headers(inst),
-      });
-      return { lines: r.lines || [], note: r.note || "traces" };
+      const wq = ws ? `&workspace=${encodeURIComponent(ws)}` : "";
+      // Relay needs a session id for lines; without one it returns the list.
+      const first = await req<{ lines?: string[]; sessions?: string[]; note?: string }>(
+        inst,
+        `/v1/traces?limit=${limit}${wq}`,
+        { headers: headers(inst) }
+      );
+      if (first.lines?.length) return { lines: first.lines, note: first.note || "traces" };
+      const last = (first.sessions || []).slice(-1)[0];
+      if (!last) return { lines: [], note: first.note || "no sessions yet" };
+      const r = await req<{ lines?: string[]; note?: string }>(
+        inst,
+        `/v1/traces?limit=${limit}&session=${encodeURIComponent(last)}${wq}`,
+        { headers: headers(inst) }
+      );
+      return { lines: r.lines || [], note: r.note || `session ${last}` };
     } catch (e) {
       return { lines: [], note: `${RELAY_501_NOTE} (${e instanceof Error ? e.message : e})` };
     }

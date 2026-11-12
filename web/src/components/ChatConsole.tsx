@@ -62,7 +62,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if ((!input.trim() && files.length === 0) || isLoading || sendHold) return;
-    onSendMessage(input.trim(), files.length ? files : undefined);
+    // Relay requires non-empty text; attach-only sends carry a marker.
+    onSendMessage(input.trim() || `attached ${files.length} file${files.length === 1 ? "" : "s"}`, files.length ? files : undefined);
     setInput("");
     setFiles([]);
   };

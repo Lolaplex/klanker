@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `klanker chat` no longer crashes on inline `--system` prompt text: the stale-path guard only refuses path-like values (single line, <500 chars, missing file). Long inline prompts caused `OSError: File name too long` instead of reaching `runner.loop`.
+- Dashboard: first message on a fresh host/workspace/persona bucket silently vanished — `handleSendMessage` returned early when no chat item existed. A chat is now minted on send, so a brand-new console just works.
+- Dashboard jobs tab: the persona picker listed personas of the *config* workspace instead of the selected job workspace, leaving the select empty and Run job disabled. Personas are fetched per selected workspace; an inline create appears when a workspace has none.
+- PWA service worker could serve a poisoned cached asset (0-rule stylesheet → unstyled app). `sw.js` is now `v3` with stale-while-revalidate for immutable `/assets/*`, so a bad entry self-heals on next load.
+- `klanker workspace` subcommand was parsed as a prompt (`KNOWN_SUBCOMMANDS` missing `workspace`); multi-workspace hosts crashed `Host.from_env()`/sense paths — resolved with explicit host-dir resolution.
 
 ### Changed
 - `.mailmap` maps legacy `Klix`/`Felix Kempf` author names to `Klix927` (no history rewrite; display only).
