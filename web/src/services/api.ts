@@ -138,6 +138,13 @@ export const api = {
     await jsonReq(inst, "/v1/auth/logout", {});
   },
 
+/** Capability flags: desktop (Tauri) gets localFs/spawn; web/PWA does not. */
+export const caps = {
+  localFs: typeof window !== "undefined" && "__TAURI__" in window,
+  spawn: typeof window !== "undefined" && "__TAURI__" in window,
+  keyring: typeof window !== "undefined" && "__TAURI__" in window,
+} as const;
+
   // --- workspaces / personas ----------------------------------------------
 
   async listWorkspaces(inst: KlankerInstance): Promise<{ id: string; label?: string }[]> {
@@ -148,6 +155,26 @@ export const api = {
   async createWorkspace(inst: KlankerInstance, id: string): Promise<string> {
     const r = await jsonReq<{ workspace?: { id?: string } }>(inst, "/v1/workspaces", { id });
     return r.workspace?.id || id;
+  },
+
+  async deleteWorkspace(inst: KlankerInstance, id: string, hard = false): Promise<void> {
+    await req(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(id)}${hard ? "?hard=1" : ""}`,
+      { method: "DELETE", headers: headers(inst) }
+    );
+  },
+
+  async createPersona(inst: KlankerInstance, workspace: string, id: string): Promise<void> {
+    await jsonReq(inst, `/v1/workspaces/${encodeURIComponent(workspace)}/personas`, { id });
+  },
+
+  async deletePersona(inst: KlankerInstance, workspace: string, persona: string, hard = false): Promise<void> {
+    await req(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}${hard ? "?hard=1" : ""}`,
+      { method: "DELETE", headers: headers(inst) }
+    );
   },
 
   async listPersonas(inst: KlankerInstance, workspace: string): Promise<{ id: string; name?: string }[]> {
@@ -189,6 +216,23 @@ export const api = {
       `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/sessions/${encodeURIComponent(session)}`,
       { method: "DELETE", headers: headers(inst) }
     );
+  },
+
+  /** Provider manifests known to the host loop (relay#14). */
+  async listProviders(
+    inst: KlankerInstance
+  ): Promise<{ name: string; kind?: string; model?: string; when?: string }[]> {
+    try {
+      const r = await req<{ providers?: any[] }>(inst, "/v1/providers", { headers: headers(inst) });
+      return (r.providers || []).map((p) => ({
+        name: String(p.name || ""),
+        kind: p.kind,
+        model: p.model,
+        when: p.when,
+      })).filter((p) => p.name);
+    } catch {
+      return [];
+    }
   },
 
   /** Session record + trace events; null when unknown. */

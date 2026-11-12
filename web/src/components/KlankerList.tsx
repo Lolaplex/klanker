@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Radar, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Radar, Settings2, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { KlankerMark } from "./KlankerMark";
 
@@ -34,6 +34,10 @@ interface KlankerListProps {
   onDeleteChat: (ws: string, persona: string, row: SessionRow) => void;
   onNewHost: () => void;
   onNewWorkspace: () => void;
+  onHostSettings: (instance: KlankerInstance) => void;
+  onDeleteWorkspace: (ws: string) => void;
+  onNewPersona: (ws: string) => void;
+  onDeletePersona: (ws: string, persona: string) => void;
 }
 
 function rowHealth(row: ProcessStatus | undefined): "up" | "down" | "busy" {
@@ -68,6 +72,10 @@ export const KlankerList: React.FC<KlankerListProps> = ({
   onDeleteChat,
   onNewHost,
   onNewWorkspace,
+  onHostSettings,
+  onDeleteWorkspace,
+  onNewPersona,
+  onDeletePersona,
 }) => {
   const [openWs, setOpenWs] = useState<ReadonlySet<string>>(new Set());
   const [openPersona, setOpenPersona] = useState<ReadonlySet<string>>(new Set());
@@ -118,18 +126,30 @@ export const KlankerList: React.FC<KlankerListProps> = ({
             const hot = unread.has(inst.id) && !selected;
             return (
               <div key={inst.id}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(inst)}
-                  title={rowHealth(row)}
-                  className={`w-full text-left px-3 py-3 md:py-2 flex items-center gap-2 font-mono text-xs transition-colors ${
-                    selected ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
-                  }`}
-                >
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass(row)}`} />
-                  <span className={`truncate ${hot ? "font-semibold text-white" : ""}`}>{inst.name}</span>
-                  {hot ? <span className="ml-auto h-1.5 w-1.5 shrink-0 bg-white" /> : null}
-                </button>
+                <div className="flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => onSelect(inst)}
+                    title={rowHealth(row)}
+                    className={`flex-1 min-w-0 text-left px-3 py-3 md:py-2 flex items-center gap-2 font-mono text-xs transition-colors ${
+                      selected ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
+                    }`}
+                  >
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass(row)}`} />
+                    <span className={`truncate ${hot ? "font-semibold text-white" : ""}`}>{inst.name}</span>
+                    {hot ? <span className="ml-auto h-1.5 w-1.5 shrink-0 bg-white" /> : null}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onHostSettings(inst)}
+                    title="Host settings"
+                    className={`shrink-0 p-2 transition-colors ${
+                      selected ? "text-[#a3a3a3] hover:text-white" : "text-[#525252] hover:text-white"
+                    }`}
+                  >
+                    <Settings2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
 
                 {selected && (
                   <div className="pb-1">
@@ -137,17 +157,27 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                       const wsOpen = openWs.has(w.id);
                       const personas = personasOf(w.id);
                       return (
-                        <div key={w.id}>
-                          <button
-                            type="button"
-                            onClick={() => toggleWs(w.id)}
-                            className={`w-full text-left pl-6 pr-2 py-2 md:py-1 flex items-center gap-1 font-mono text-[11px] transition-colors ${
-                              selWs === w.id ? "text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
-                            }`}
-                          >
-                            {chevron(wsOpen)}
-                            <span className="truncate">{w.label || w.id}</span>
-                          </button>
+                        <div key={w.id} className="group">
+                          <div className="flex items-center">
+                            <button
+                              type="button"
+                              onClick={() => toggleWs(w.id)}
+                              className={`flex-1 min-w-0 text-left pl-6 pr-2 py-2 md:py-1 flex items-center gap-1 font-mono text-[11px] transition-colors ${
+                                selWs === w.id ? "text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
+                              }`}
+                            >
+                              {chevron(wsOpen)}
+                              <span className="truncate">{w.label || w.id}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDeleteWorkspace(w.id)}
+                              title="Archive workspace"
+                              className="shrink-0 p-1 mr-1 text-[#525252] opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
                           {wsOpen && (
                             <div>
                               {(personas ?? []).map((p) => {
@@ -155,19 +185,29 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                 const pOpen = openPersona.has(pKey);
                                 const sessions = sessionRowsOf(w.id, p.id);
                                 return (
-                                  <div key={p.id}>
-                                    <button
-                                      type="button"
-                                      onClick={() => togglePersona(w.id, p.id)}
-                                      className={`w-full text-left pl-9 pr-2 py-2 md:py-1 flex items-center gap-1 font-mono text-[11px] transition-colors ${
-                                        selPersona === p.id && selWs === w.id
-                                          ? "text-white"
-                                          : "text-[#a3a3a3] hover:bg-[#181818]"
-                                      }`}
-                                    >
-                                      {chevron(pOpen)}
-                                      <span className="truncate">{p.name || p.id}</span>
-                                    </button>
+                                  <div key={p.id} className="group/persona">
+                                    <div className="flex items-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => togglePersona(w.id, p.id)}
+                                        className={`flex-1 min-w-0 text-left pl-9 pr-2 py-2 md:py-1 flex items-center gap-1 font-mono text-[11px] transition-colors ${
+                                          selPersona === p.id && selWs === w.id
+                                            ? "text-white"
+                                            : "text-[#a3a3a3] hover:bg-[#181818]"
+                                        }`}
+                                      >
+                                        {chevron(pOpen)}
+                                        <span className="truncate">{p.name || p.id}</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => onDeletePersona(w.id, p.id)}
+                                        title="Archive persona"
+                                        className="shrink-0 p-1 mr-1 text-[#525252] opacity-100 md:opacity-0 md:group-hover/persona:opacity-100 hover:text-white transition-opacity"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
                                     {pOpen && (
                                       <div>
                                         {(sessions ?? []).map((s) => (
@@ -209,6 +249,13 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                               {personas === undefined && (
                                 <div className="pl-9 py-0.5 font-mono text-[11px] text-[#525252]">…</div>
                               )}
+                              <button
+                                type="button"
+                                onClick={() => onNewPersona(w.id)}
+                                className="w-full text-left pl-9 pr-2 py-2 md:py-1 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors flex items-center gap-1"
+                              >
+                                <Plus className="w-3 h-3" /> persona
+                              </button>
                             </div>
                           )}
                         </div>

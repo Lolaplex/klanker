@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole } from "./components/ChatConsole";
-import { ConfigPanel } from "./components/ConfigPanel";
+import { HostSheet } from "./components/HostSheet";
 import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
 import {
@@ -110,6 +110,7 @@ export function App() {
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [settings, setSettings] = useState<DesktopSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [hostSheetInst, setHostSheetInst] = useState<KlankerInstance | null>(null);
   const [rankedIds, setRankedIds] = useState<string[]>([]);
   const [modelNote, setModelNote] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -745,6 +746,43 @@ export function App() {
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
           onNewHost={() => { setIsNewModalOpen(true); setNavOpen(false); }}
+          onHostSettings={(inst) => { setHostSheetInst(inst); setNavOpen(false); }}
+          onDeleteWorkspace={(ws) => {
+            const inst = activeInstance;
+            if (!inst || !window.confirm(`Archive workspace "${ws}"? (restorable from trash)`)) return;
+            void api
+              .deleteWorkspace(inst, ws)
+              .then(() => api.listWorkspaces(inst))
+              .then((rows) => {
+                setWorkspaces(rows);
+                setTreePersonas((prev) => {
+                  const next = { ...prev };
+                  delete next[ws];
+                  return next;
+                });
+                if (selWs === ws) setSelWs(rows[0]?.id ?? "");
+              })
+              .catch((e) => setWsNote(`workspace: ${e instanceof Error ? e.message : e}`));
+          }}
+          onNewPersona={(ws) => {
+            const inst = activeInstance;
+            const id = window.prompt(`new persona id in ${ws}`);
+            if (!inst || !id?.trim()) return;
+            void api
+              .createPersona(inst, ws, id.trim())
+              .then(() => api.listPersonas(inst, ws))
+              .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
+              .catch((e) => setWsNote(`persona: ${e instanceof Error ? e.message : e}`));
+          }}
+          onDeletePersona={(ws, persona) => {
+            const inst = activeInstance;
+            if (!inst || !window.confirm(`Archive persona "${persona}"?`)) return;
+            void api
+              .deletePersona(inst, ws, persona)
+              .then(() => api.listPersonas(inst, ws))
+              .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
+              .catch((e) => setWsNote(`persona: ${e instanceof Error ? e.message : e}`));
+          }}
           onNewWorkspace={() => {
             if (!activeInstance) return;
             const id = window.prompt("new workspace id");
@@ -791,23 +829,6 @@ export function App() {
                 decideError={decideError}
                 onDecide={(allow) => void handleDecide(allow)}
               />
-              <ConfigPanel
-                instance={activeInstance}
-                status={status}
-                settings={settings}
-                rankedIds={rankedIds}
-                modelNote={modelNote}
-                loadingModels={loadingModels}
-                onNeedModels={ensureModels}
-                onSave={handleSaveInstance}
-                onStar={(provider, id) => {
-                  void updateSettings((current) => toggleFavorite(current, provider, id));
-                }}
-                onDelete={handleDeleteInstance}
-                workspaces={workspaces}
-                personas={treePersonas[selWs] ?? []}
-                wsNote={wsNote}
-              />
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-[#525252] font-mono text-xs">
@@ -818,6 +839,26 @@ export function App() {
       </div>
 
       <NewKlankerModal isOpen={isNewModalOpen} onClose={() => setIsNewModalOpen(false)} onSave={handleCreate} />
+      {hostSheetInst && (
+        <HostSheet
+          instance={instances.find((i) => i.id === hostSheetInst.id) ?? hostSheetInst}
+          status={herd[hostSheetInst.id] ?? null}
+          settings={settings}
+          rankedIds={rankedIds}
+          modelNote={modelNote}
+          loadingModels={loadingModels}
+          onNeedModels={ensureModels}
+          onSave={handleSaveInstance}
+          onStar={(provider, id) => {
+            void updateSettings((current) => toggleFavorite(current, provider, id));
+          }}
+          onDelete={(id) => {
+            handleDeleteInstance(id);
+            setHostSheetInst(null);
+          }}
+          onClose={() => setHostSheetInst(null)}
+        />
+      )}
       {settingsOpen && (
         <SettingsPanel
           settings={settings}
