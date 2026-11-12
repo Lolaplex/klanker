@@ -566,8 +566,18 @@ export function App() {
     const id = inst.id;
     if (turnBusyRef.current?.instanceId === id) return;
     const current = chatsRef.current[selKey];
-    const chat = current?.items.find((item) => item.id === current.openId) ?? current?.items[0];
-    if (!chat) return;
+    let chat = current?.items.find((item) => item.id === current.openId) ?? current?.items[0];
+    if (!chat) {
+      // No chat exists yet (fresh bucket or all deleted): mint one so the
+      // first send never dies silently.
+      const chatId = crypto.randomUUID();
+      chat = { id: chatId, session: mintSessionId(), messages: [] };
+      setChats((prev) => {
+        const b = prev[selKey] ?? loadBucket(selKey) ?? { openId: chatId, items: [] };
+        if (b.items.some((i) => i.id === chatId)) return prev;
+        return { ...prev, [selKey]: { openId: chatId, items: [...b.items, chat!] } };
+      });
+    }
     const chatId = chat.id;
     const session = chat.session;
     rememberTurnModel(inst);
