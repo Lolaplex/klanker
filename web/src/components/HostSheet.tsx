@@ -60,6 +60,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
   const [jobList, setJobList] = useState<any[]>([]);
   const [jobBusy, setJobBusy] = useState(false);
   const [jobNote, setJobNote] = useState<string | null>(null);
+  const [newPersona, setNewPersona] = useState("");
   const [providers, setProviders] = useState<{ name: string; model?: string }[]>([]);
   const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
   const [personas, setPersonas] = useState<{ id: string; name?: string }[]>([]);
@@ -77,21 +78,21 @@ export const HostSheet: React.FC<HostSheetProps> = ({
     void api.listWorkspaces(instance).then(setWorkspaces).catch(() => undefined);
   }, [instance.id, instance.updated_at]);
 
+  const jobWsEff = jobWs || formData.workspace.trim();
+  const jobPersonaEff = jobPersona || (formData.persona || "").trim() || personas[0]?.id || "";
+
   useEffect(() => {
-    const ws = formData.workspace.trim();
+    const ws = tab === "jobs" ? jobWsEff : formData.workspace.trim();
     if (!ws) {
       setPersonas([]);
       return;
     }
     void api.listPersonas(instance, ws).then(setPersonas).catch(() => setPersonas([]));
-  }, [instance.id, formData.workspace]);
+  }, [instance.id, formData.workspace, tab, jobWsEff]);
 
   useEffect(() => {
     if (choice === "openrouter") onNeedModels();
   }, [choice, onNeedModels]);
-
-  const jobWsEff = jobWs || formData.workspace.trim();
-  const jobPersonaEff = jobPersona || (formData.persona || "").trim() || personas[0]?.id || "";
 
   useEffect(() => {
     if (tab !== "jobs" || !jobWsEff) return;
@@ -276,6 +277,31 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                 </select>
               </div>
             </div>
+            {personas.length === 0 && jobWsEff && (
+              <div className="flex gap-2">
+                <input
+                  value={newPersona}
+                  onChange={(e) => setNewPersona(e.target.value)}
+                  placeholder="new persona id"
+                  className={inputClass}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const id = newPersona.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+                    if (!id) return;
+                    void api.createPersona(instance, jobWsEff, id).then(() => {
+                      setNewPersona("");
+                      setJobPersona(id);
+                      return api.listPersonas(instance, jobWsEff).then(setPersonas);
+                    }).catch((e) => setJobNote(e instanceof Error ? e.message : String(e)));
+                  }}
+                  className="px-3 py-1.5 bg-white text-black rounded text-[11px] shrink-0"
+                >
+                  create
+                </button>
+              </div>
+            )}
             <div>
               <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Goal</label>
               <textarea

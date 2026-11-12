@@ -1,6 +1,6 @@
 // Klanker PWA shell. Precaches the app shell only; /v1/* and /health are
 // auth/live data and must never touch the cache.
-const CACHE = "klanker-shell-v2";
+const CACHE = "klanker-shell-v3";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/klanker.svg"];
 
 self.addEventListener("install", (event) => {
@@ -34,13 +34,18 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
+  // Hashed /assets/* are immutable: serve cache instantly, revalidate in
+  // background so a poisoned or stale entry self-heals on next load.
   event.respondWith(
-    caches.match(event.request).then((hit) => hit || fetch(event.request).then((res) => {
-      if (res.ok && url.origin === self.location.origin) {
-        const copy = res.clone();
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-      }
-      return res;
-    }))
+    caches.match(event.request).then((hit) => {
+      const refresh = fetch(event.request).then((res) => {
+        if (res.ok && url.origin === self.location.origin) {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
+        }
+        return res;
+      });
+      return hit || refresh;
+    })
   );
 });
