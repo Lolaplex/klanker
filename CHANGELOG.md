@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.
+
 ### Changed
 - Dashboard chat text can be selected. Assistant replies render as Markdown (raw HTML stays text; links are limited to http, https, mailto, and relative URLs). Each message and each code block has a copy control. Buttons are at least 44px. On a coarse pointer, Enter inserts a newline and only the send button submits.
 
