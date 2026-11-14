@@ -727,7 +727,7 @@ export function App() {
   }
 
   return (
-    <div className="h-dvh w-screen flex bg-[#000000] text-white overflow-hidden select-none font-sans">
+    <div className="h-dvh w-screen flex bg-[#000000] text-white overflow-hidden font-sans">
       {navOpen && (
         <div
           className="md:hidden fixed inset-0 z-40 bg-black/60"

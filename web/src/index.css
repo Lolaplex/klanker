@@ -36,6 +36,13 @@
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
   }
 
+  button {
+    -webkit-user-select: none;
+    user-select: none;
+    min-height: 44px;
+    min-width: 44px;
+  }
+
   textarea, input, select {
     font-size: 16px;
   }
@@ -64,4 +71,75 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: #404040;
+}
+
+.klanker-md {
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.klanker-md > :first-child {
+  margin-top: 0;
+}
+
+.klanker-md > :last-child {
+  margin-bottom: 0;
+}
+
+.klanker-md p,
+.klanker-md ul,
+.klanker-md ol,
+.klanker-md blockquote,
+.klanker-md table,
+.klanker-md h1,
+.klanker-md h2,
+.klanker-md h3 {
+  margin: 0.5rem 0;
+}
+
+.klanker-md ul {
+  list-style: disc;
+  padding-left: 1.1rem;
+}
+
+.klanker-md ol {
+  list-style: decimal;
+  padding-left: 1.1rem;
+}
+
+.klanker-md a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.klanker-md blockquote {
+  border-left: 2px solid #333333;
+  padding-left: 0.75rem;
+  color: #a3a3a3;
+}
+
+.klanker-md h1,
+.klanker-md h2,
+.klanker-md h3 {
+  font-weight: 600;
+}
+
+.klanker-md :not(pre) > code {
+  background: #141414;
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.klanker-md th,
+.klanker-md td {
+  border: 1px solid #262626;
+  padding: 0.25rem 0.5rem;
+  text-align: left;
+}
+
+.klanker-md table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
