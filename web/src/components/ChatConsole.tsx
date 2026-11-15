@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Terminal, Trash2, CornerDownLeft, Bot, User, Square, Paperclip, X } from "lucide-react";
+import { Terminal, Trash2, ArrowUp, Bot, User, Square, Paperclip, X } from "lucide-react";
 import { shouldSubmitOnEnter } from "../chatUi";
 import { ChatMessage, KlankerInstance, PendingApproval } from "../types/klanker";
 import { CopyButton } from "./CopyButton";
@@ -61,6 +61,15 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     window.addEventListener("klanker:focus-composer", focus);
     return () => window.removeEventListener("klanker:focus-composer", focus);
   }, []);
+
+  const resizeComposer = () => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+  };
+
+  useEffect(resizeComposer, [input]);
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -220,69 +229,71 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="composer p-3 bg-[#0a0a0a] border-t border-[#262626]">
-        {files.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 mb-2">
-            {files.map((f, i) => (
-              <span
-                key={`${f.name}-${i}`}
-                className="inline-flex items-center gap-1 pl-2 bg-[#141414] border border-[#262626] rounded text-[10px] text-[#a3a3a3]"
-              >
-                <Paperclip className="w-3.5 h-3.5" />
-                <span className="max-w-[140px] truncate">{f.name || "file"}</span>
-                <button
-                  type="button"
-                  onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
-                  className="inline-flex h-11 w-11 items-center justify-center hover:text-white"
-                  aria-label={`Remove ${f.name || "attachment"}`}
+      <div className="composer px-3 pt-2 bg-[#0a0a0a] border-t border-[#262626]">
+        <form
+          onSubmit={handleSubmit}
+          className={`flex flex-col bg-[#141414] border border-[#262626] focus-within:border-[#525252] transition-colors ${
+            files.length ? "rounded-[20px]" : "rounded-[26px]"
+          }`}
+        >
+          {files.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+              {files.map((f, i) => (
+                <span
+                  key={`${f.name}-${i}`}
+                  className="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 bg-[#1f1f1f] border border-[#2e2e2e] rounded-full text-[11px] text-[#a3a3a3]"
                 >
-                  <X className="w-4 h-4" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <form onSubmit={handleSubmit} className="flex items-end gap-2">
-          <input
-            ref={fileRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={onPickFiles}
-          />
-          <textarea
-            ref={textareaRef}
-            rows={2}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={`Message ${instance.name}...`}
-            className="min-h-11 w-full min-w-0 flex-1 bg-[#121212] border border-[#262626] focus:border-white rounded p-2.5 text-white outline-none resize-none font-mono text-base leading-relaxed placeholder-[#525252] md:text-xs"
-          />
-          <div className="flex shrink-0 items-center gap-2">
+                  <Paperclip className="w-3.5 h-3.5 shrink-0" />
+                  <span className="max-w-[160px] truncate">{f.name || "file"}</span>
+                  <button
+                    type="button"
+                    onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
+                    className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-white/10 hover:text-white"
+                    aria-label={`Remove ${f.name || "attachment"}`}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex items-end gap-0.5 px-1.5 py-1.5">
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={onPickFiles}
+            />
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
               title="Attach files"
               aria-label="Attach files"
-              className="inline-flex h-11 w-11 items-center justify-center border border-[#262626] hover:border-white text-[#737373] hover:text-white rounded transition-colors"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#737373] hover:bg-white/10 hover:text-white transition-colors"
             >
-              <Paperclip className="w-4 h-4" />
+              <Paperclip className="w-5 h-5" />
             </button>
+            <textarea
+              ref={textareaRef}
+              rows={1}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={`Message ${instance.name}...`}
+              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 px-1 py-2.5 text-white outline-none resize-none font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
+            />
             <button
               type="submit"
               disabled={(!input.trim() && files.length === 0) || isLoading || sendHold}
               title="Send"
               aria-label="Send message"
-              className="inline-flex h-11 w-11 items-center justify-center bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded transition-colors"
+              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white hover:bg-[#e5e5e5] disabled:bg-transparent disabled:border disabled:border-[#2e2e2e] disabled:text-[#525252] text-black transition-colors"
             >
-              <CornerDownLeft className="w-4 h-4" />
+              <ArrowUp className="w-5 h-5" />
             </button>
           </div>
         </form>
-        {coarsePointer && (
-          <p className="mt-1.5 text-[10px] text-[#525252]">Enter adds a line. Send with the button.</p>
-        )}
       </div>
     </div>
   );
