@@ -20,6 +20,10 @@ dependencies = [
     "agents-traces>=0.1.0",
     "agents-terminal>=0.0.6",
     "agents-calendar>=0.1.0",
+    "agents-keys>=0.0.4",
+    "agents-docs>=0.45.0",
+    "agents-voice>=0.1.0",
+    "agents-store>=0.0.1",
 ]
 
 [project.optional-dependencies]
@@ -31,14 +35,11 @@ repl = [
 browser = [
     "agents-browser>=0.45.0",
 ]
-keys = [
-    "agents-keys>=0.0.4",
-]
 calendar = [
     "agents-calendar>=0.1.0",
 ]
 all = [
-    "klanker[browser,keys,calendar]",
+    "klanker[browser,calendar]",
 ]
 
 [project.urls]

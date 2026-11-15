@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Suite packages `agents-keys`, `agents-docs`, `agents-voice` and `agents-store` are core dependencies and are installed in the Docker image (overridable via `KEYS_REF`, `DOCS_REF`, `VOICE_REF`, `STORE_REF`). The `keys` extra was dropped (now a core dep). Klanker instances can mint did:key identities and prove them to board.lolaplex.org out of the box.
+
 ### Fixed
 - Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.
 

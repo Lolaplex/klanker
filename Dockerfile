@@ -49,6 +49,10 @@ ARG TERMINAL_REF=${SUITE_REF}
 ARG CALENDAR_REF=${SUITE_REF}
 ARG BROWSER_REF=${SUITE_REF}
 ARG SYNC_REF=${SUITE_REF}
+ARG KEYS_REF=${SUITE_REF}
+ARG DOCS_REF=${SUITE_REF}
+ARG VOICE_REF=${SUITE_REF}
+ARG STORE_REF=${SUITE_REF}
 # Install the workspace contract first: every suite package depends on it and
 # it is not on PyPI yet.
 RUN pip install --no-cache-dir \
@@ -63,7 +67,11 @@ RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
         "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@${TRACES_REF}" \
         "agents-terminal @ git+https://github.com/Lolaplex/agents-terminal.git@${TERMINAL_REF}" \
         "agents-calendar @ git+https://github.com/Lolaplex/agents-calendar.git@${CALENDAR_REF}" \
-        "agents-browser @ git+https://github.com/Lolaplex/agents-browser.git@${BROWSER_REF}" && \
+        "agents-browser @ git+https://github.com/Lolaplex/agents-browser.git@${BROWSER_REF}" \
+        "agents-keys @ git+https://github.com/Lolaplex/agents-keys.git@${KEYS_REF}" \
+        "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@${DOCS_REF}" \
+        "agents-voice @ git+https://github.com/Lolaplex/agents-voice.git@${VOICE_REF}" \
+        "agents-store @ git+https://github.com/Lolaplex/agents-store.git@${STORE_REF}" && \
     pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
