@@ -13,6 +13,7 @@ export interface OutAttachment {
 
 interface ChatConsoleProps {
   instance: KlankerInstance;
+  speakerName?: string;
   messages: ChatMessage[];
   onSendMessage: (msg: string, attachments?: OutAttachment[]) => void;
   onClearMessages: () => void;
@@ -29,6 +30,7 @@ interface ChatConsoleProps {
 
 export const ChatConsole: React.FC<ChatConsoleProps> = ({
   instance,
+  speakerName,
   messages,
   onSendMessage,
   onClearMessages,
@@ -122,6 +124,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
   const last = messages[messages.length - 1];
   const streamingBubble = isLoading && last?.role === "klanker";
+  const displaySpeaker = speakerName || instance.name;
 
   return (
     <div className="flex-1 flex flex-col bg-[#000000] overflow-hidden font-mono text-xs">
@@ -204,7 +207,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             <MessageBubble
               key={m.id}
               message={m}
-              name={instance.name}
+              name={displaySpeaker}
               thinking={streamingBubble && m.id === last?.id && !m.content}
             />
           ))
@@ -214,7 +217,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
           <div className="flex flex-col items-start">
             <div className="flex items-center space-x-1.5 mb-1 text-[10px] text-[#525252] px-1">
               <Bot className="w-3 h-3 text-white" />
-              <span className="text-white font-semibold">{instance.name}</span>
+              <span className="text-white font-semibold">{displaySpeaker}</span>
               <span>•</span>
               <span className="animate-pulse text-white">thinking...</span>
             </div>
@@ -308,7 +311,7 @@ function MessageBubble({
 }) {
   const mine = message.role === "user";
   return (
-    <div className={`flex w-full ${mine ? "justify-end" : "justify-start"}`}>
+    <div className={`group flex w-full ${mine ? "justify-end" : "justify-start"}`}>
       <div className={`flex min-w-0 max-w-[85%] flex-col ${mine ? "items-end" : "items-start"}`}>
         <div className="mb-1 flex select-none items-center space-x-1.5 px-1 text-[10px] text-[#525252]">
           {mine ? (
@@ -331,24 +334,30 @@ function MessageBubble({
             </>
           ) : null}
         </div>
-        <div className="flex min-w-0 max-w-full items-start gap-1">
+        <div
+          className={`min-w-0 max-w-full rounded border p-3 leading-relaxed select-text ${
+            mine
+              ? "border-[#333333] bg-[#141414] text-white"
+              : "border-[#262626] bg-[#0a0a0a] text-[#e5e5e5]"
+          }`}
+        >
+          {message.role === "klanker" && message.content ? (
+            <MarkdownMessage text={message.content} />
+          ) : (
+            <div className="whitespace-pre-wrap break-words">
+              {message.content || (thinking ? "thinking..." : "")}
+            </div>
+          )}
+        </div>
+        {message.content ? (
           <div
-            className={`min-w-0 rounded border p-3 leading-relaxed select-text ${
-              mine
-                ? "border-[#333333] bg-[#141414] text-white"
-                : "border-[#262626] bg-[#0a0a0a] text-[#e5e5e5]"
+            className={`mt-1 flex items-center [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100 transition-opacity ${
+              mine ? "justify-end" : "justify-start"
             }`}
           >
-            {message.role === "klanker" && message.content ? (
-              <MarkdownMessage text={message.content} />
-            ) : (
-              <div className="whitespace-pre-wrap break-words">
-                {message.content || (thinking ? "thinking..." : "")}
-              </div>
-            )}
+            <CopyButton text={message.content} label="Copy message" borderless />
           </div>
-          {message.content ? <CopyButton text={message.content} label="Copy message" /> : null}
-        </div>
+        ) : null}
       </div>
     </div>
   );

@@ -847,6 +847,7 @@ export function App() {
               <ChatConsole
                 key={`${activeInstance.id}:${openChat?.id ?? ""}`}
                 instance={activeInstance}
+                speakerName={personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || activeInstance.name}
                 messages={messages}
                 onSendMessage={handleSendMessage}
                 onClearMessages={() => {

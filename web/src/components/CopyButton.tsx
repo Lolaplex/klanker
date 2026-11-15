@@ -29,7 +29,17 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
-export function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({
+  text,
+  label,
+  className = "",
+  borderless = false,
+}: {
+  text: string;
+  label: string;
+  className?: string;
+  borderless?: boolean;
+}) {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
 
   useEffect(() => {
@@ -48,9 +58,13 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
       onClick={() => {
         void writeClipboard(text).then((ok) => setState(ok ? "copied" : "failed"));
       }}
-      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded border border-[#262626] text-[#a3a3a3] hover:border-white hover:text-white transition-colors"
+      className={`inline-flex shrink-0 items-center justify-center rounded transition-all ${
+        borderless
+          ? "h-7 w-7 min-h-0 min-w-0 text-[#737373] hover:bg-white/10 hover:text-white"
+          : "h-11 w-11 border border-[#262626] text-[#a3a3a3] hover:border-white hover:text-white"
+      } ${state !== "idle" ? "!opacity-100 text-white" : ""} ${className}`}
     >
-      {state === "copied" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+      {state === "copied" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
     </button>
   );
 }

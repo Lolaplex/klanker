@@ -126,13 +126,17 @@ export const KlankerList: React.FC<KlankerListProps> = ({
             const hot = unread.has(inst.id) && !selected;
             return (
               <div key={inst.id}>
-                <div className="flex items-center">
+                <div
+                  className={`flex items-center transition-colors ${
+                    selected ? "bg-[#141414]" : "hover:bg-[#181818]"
+                  }`}
+                >
                   <button
                     type="button"
                     onClick={() => onSelect(inst)}
                     title={rowHealth(row)}
                     className={`flex-1 min-w-0 min-h-11 text-left px-3 py-2 flex items-center gap-2 font-mono text-xs transition-colors ${
-                      selected ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
+                      selected ? "text-white" : "text-[#a3a3a3]"
                     }`}
                   >
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass(row)}`} />
@@ -159,12 +163,12 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                       const personas = personasOf(w.id);
                       return (
                         <div key={w.id} className="group">
-                          <div className="flex items-center">
+                          <div className="flex items-center hover:bg-[#181818] transition-colors">
                             <button
                               type="button"
                               onClick={() => toggleWs(w.id)}
                               className={`flex-1 min-w-0 min-h-11 text-left pl-6 pr-2 py-2 flex items-center gap-1 font-mono text-[11px] transition-colors ${
-                                selWs === w.id ? "text-white" : "text-[#a3a3a3] hover:bg-[#181818]"
+                                selWs === w.id ? "text-white" : "text-[#a3a3a3]"
                               }`}
                             >
                               {chevron(wsOpen)}
@@ -188,14 +192,14 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                 const sessions = sessionRowsOf(w.id, p.id);
                                 return (
                                   <div key={p.id} className="group/persona">
-                                    <div className="flex items-center">
+                                    <div className="flex items-center hover:bg-[#181818] transition-colors">
                                       <button
                                         type="button"
                                         onClick={() => togglePersona(w.id, p.id)}
                                         className={`flex-1 min-w-0 min-h-11 text-left pl-9 pr-2 py-2 flex items-center gap-1 font-mono text-[11px] transition-colors ${
                                           selPersona === p.id && selWs === w.id
                                             ? "text-white"
-                                            : "text-[#a3a3a3] hover:bg-[#181818]"
+                                            : "text-[#a3a3a3]"
                                         }`}
                                       >
                                         {chevron(pOpen)}
@@ -213,31 +217,39 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                     </div>
                                     {pOpen && (
                                       <div>
-                                        {(sessions ?? []).map((s) => (
-                                          <div key={s.chatId} className="group flex items-center">
-                                            <button
-                                              type="button"
-                                              onClick={() => onSelectChat(w.id, p.id, s.chatId)}
-                                              title={s.session}
-                                              className={`flex-1 min-w-0 min-h-11 text-left pl-12 pr-1 py-2 font-mono text-[11px] truncate transition-colors ${
-                                                openChatId === s.chatId
-                                                  ? "bg-[#141414] text-white"
-                                                  : "text-[#a3a3a3] hover:bg-[#181818]"
+                                        {(sessions ?? []).map((s) => {
+                                          const chatSelected = openChatId === s.chatId;
+                                          return (
+                                            <div
+                                              key={s.chatId}
+                                              className={`group flex items-center transition-colors ${
+                                                chatSelected ? "bg-[#141414]" : "hover:bg-[#181818]"
                                               }`}
                                             >
-                                              {s.label}
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => onDeleteChat(w.id, p.id, s)}
-                                              title="Delete session"
-                                              aria-label="Delete session"
-                                              className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-[#525252] opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity"
-                                            >
-                                              <X className="w-3 h-3" />
-                                            </button>
-                                          </div>
-                                        ))}
+                                              <button
+                                                type="button"
+                                                onClick={() => onSelectChat(w.id, p.id, s.chatId)}
+                                                title={s.session}
+                                                className={`flex-1 min-w-0 min-h-11 text-left pl-12 pr-1 py-2 font-mono text-[11px] truncate transition-colors ${
+                                                  chatSelected ? "text-white" : "text-[#a3a3a3]"
+                                                }`}
+                                              >
+                                                {s.label}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                onClick={() => onDeleteChat(w.id, p.id, s)}
+                                                title="Delete session"
+                                                aria-label="Delete session"
+                                                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity ${
+                                                  chatSelected ? "text-[#a3a3a3]" : "text-[#525252]"
+                                                }`}
+                                              >
+                                                <X className="w-3 h-3" />
+                                              </button>
+                                            </div>
+                                          );
+                                        })}
                                         <button
                                           type="button"
                                           onClick={() => onNewChat(w.id, p.id)}

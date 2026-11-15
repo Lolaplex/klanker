@@ -35,7 +35,7 @@ function CodeFence({ children }: { children?: React.ReactNode }) {
     <div className="my-2 overflow-hidden rounded border border-[#262626] bg-black">
       <div className="flex items-center justify-between gap-2 border-b border-[#262626] pl-3">
         <span className="truncate text-[10px] uppercase tracking-wider text-[#737373]">{lang || "code"}</span>
-        <CopyButton text={text} label="Copy code" />
+        <CopyButton text={text} label="Copy code" borderless className="mr-1" />
       </div>
       <pre className="select-text overflow-x-auto p-3 text-[12px] leading-relaxed">{children}</pre>
     </div>
