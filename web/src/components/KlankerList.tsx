@@ -280,11 +280,11 @@ export const KlankerList: React.FC<KlankerListProps> = ({
         )}
       </div>
 
-      <div className="shrink-0 p-2 border-t border-[#262626]">
+      <div className="shrink-0 h-[73px] p-3 border-t border-[#262626] flex items-center">
         <button
           type="button"
           onClick={onNewHost}
-          className="flex min-h-11 w-full items-center justify-center gap-1.5 px-2.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] text-[#a3a3a3] hover:text-white rounded text-xs font-mono transition-colors"
+          className="flex min-h-12 w-full items-center justify-center gap-1.5 px-2.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] text-[#a3a3a3] hover:text-white rounded text-xs font-mono transition-colors"
         >
           <Radar className="w-3.5 h-3.5" />
           <span>Discover</span>

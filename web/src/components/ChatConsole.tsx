@@ -229,10 +229,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="composer px-3 pt-2 bg-[#0a0a0a] border-t border-[#262626]">
+      <div className="composer px-3 pt-2 bg-transparent md:bg-[#0a0a0a] md:border-t md:border-[#262626] md:h-[73px] md:pt-0 md:flex md:items-center">
         <form
           onSubmit={handleSubmit}
-          className={`flex flex-col bg-[#141414] border border-[#262626] focus-within:border-[#525252] transition-colors ${
+          className={`w-full flex flex-col bg-[#141414] border border-[#262626] focus-within:border-[#525252] transition-colors ${
             files.length ? "rounded-[20px]" : "rounded-[26px]"
           }`}
         >
@@ -257,7 +257,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               ))}
             </div>
           )}
-          <div className="flex items-end gap-0.5 px-1.5 py-1.5">
+          <div className="flex items-end gap-0.5 px-1.5 py-1">
             <input
               ref={fileRef}
               type="file"
