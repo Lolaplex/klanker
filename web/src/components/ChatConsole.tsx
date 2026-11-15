@@ -232,23 +232,21 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       <div className="composer px-3 pt-2 bg-transparent md:bg-[#0a0a0a] md:border-t md:border-[#262626] md:h-[73px] md:pt-0 md:flex md:items-center">
         <form
           onSubmit={handleSubmit}
-          className={`w-full flex flex-col bg-[#141414] border border-[#262626] focus-within:border-[#525252] transition-colors ${
-            files.length ? "rounded-[20px]" : "rounded-[26px]"
-          }`}
+          className="w-full flex flex-col min-h-12 bg-[#121212] border border-[#262626] focus-within:border-[#525252] rounded transition-colors"
         >
           {files.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+            <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
               {files.map((f, i) => (
                 <span
                   key={`${f.name}-${i}`}
-                  className="inline-flex items-center gap-1.5 pl-2.5 pr-1 py-1 bg-[#1f1f1f] border border-[#2e2e2e] rounded-full text-[11px] text-[#a3a3a3]"
+                  className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 bg-[#1f1f1f] border border-[#2e2e2e] rounded text-[11px] text-[#a3a3a3]"
                 >
                   <Paperclip className="w-3.5 h-3.5 shrink-0" />
                   <span className="max-w-[160px] truncate">{f.name || "file"}</span>
                   <button
                     type="button"
                     onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-full hover:bg-white/10 hover:text-white"
+                    className="inline-flex h-5 w-5 items-center justify-center rounded hover:bg-white/10 hover:text-white"
                     aria-label={`Remove ${f.name || "attachment"}`}
                   >
                     <X className="w-3.5 h-3.5" />
@@ -257,7 +255,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               ))}
             </div>
           )}
-          <div className="flex items-end gap-0.5 px-1.5 py-1">
+          <div className="flex items-stretch gap-0.5 px-1 min-h-12">
             <input
               ref={fileRef}
               type="file"
@@ -270,9 +268,9 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               onClick={() => fileRef.current?.click()}
               title="Attach files"
               aria-label="Attach files"
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-[#737373] hover:bg-white/10 hover:text-white transition-colors"
+              className="inline-flex w-11 shrink-0 items-center justify-center text-[#737373] hover:text-white transition-colors"
             >
-              <Paperclip className="w-5 h-5" />
+              <Paperclip className="w-4 h-4" />
             </button>
             <textarea
               ref={textareaRef}
@@ -281,16 +279,16 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={`Message ${instance.name}...`}
-              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 px-1 py-2.5 text-white outline-none resize-none font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
+              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2.5 text-white outline-none resize-none font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
             />
             <button
               type="submit"
               disabled={(!input.trim() && files.length === 0) || isLoading || sendHold}
               title="Send"
               aria-label="Send message"
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white hover:bg-[#e5e5e5] disabled:bg-transparent disabled:border disabled:border-[#2e2e2e] disabled:text-[#525252] text-black transition-colors"
+              className="self-center inline-flex h-9 w-9 shrink-0 mr-1 items-center justify-center rounded bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black transition-colors"
             >
-              <ArrowUp className="w-5 h-5" />
+              <ArrowUp className="w-4 h-4" />
             </button>
           </div>
         </form>
