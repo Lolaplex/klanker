@@ -188,7 +188,7 @@ export const api = {
     inst: KlankerInstance,
     workspace: string,
     persona: string
-  ): Promise<{ id: string; created_at?: string; last_active?: string }[]> {
+  ): Promise<{ id: string; goal?: string; created_at?: string; last_active?: string }[]> {
     try {
       const r = await req<{ sessions?: any[] }>(
         inst,
@@ -197,6 +197,7 @@ export const api = {
       );
       return (r.sessions || []).map((s) => ({
         id: s.id || s.session || "",
+        goal: s.goal || undefined,
         created_at: s.created_at,
         last_active: s.last_active || s.updated_at,
       }));

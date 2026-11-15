@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.
+- Dashboard chat sessions: the last open chat (workspace, persona, thread, and even the half-typed composer text) is restored on reload. Sidebar rows no longer show raw `ses_…` ids — names are prefetched from session history when a persona expands and cached across reloads. "new chat" is now a single per-persona draft that only becomes a real session on first send, so clicking it no longer stacks empty chats, and reopening a session can no longer spawn a duplicate.
 
 ### Changed
 - Dashboard chat text can be selected. Assistant replies render as Markdown (raw HTML stays text; links are limited to http, https, mailto, and relative URLs). Each message and each code block has a copy control. Buttons are at least 44px. On a coarse pointer, Enter inserts a newline and only the send button submits.

@@ -15,6 +15,8 @@ interface ChatConsoleProps {
   instance: KlankerInstance;
   speakerName?: string;
   messages: ChatMessage[];
+  input: string;
+  onInput: (v: string) => void;
   onSendMessage: (msg: string, attachments?: OutAttachment[]) => void;
   onClearMessages: () => void;
   onStop: () => void;
@@ -32,6 +34,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   instance,
   speakerName,
   messages,
+  input,
+  onInput,
   onSendMessage,
   onClearMessages,
   onStop,
@@ -44,7 +48,6 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   decideError,
   onDecide,
 }) => {
-  const [input, setInput] = useState("");
   const [files, setFiles] = useState<OutAttachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -78,7 +81,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     if ((!input.trim() && files.length === 0) || isLoading || sendHold) return;
     // Relay requires non-empty text; attach-only sends carry a marker.
     onSendMessage(input.trim() || `attached ${files.length} file${files.length === 1 ? "" : "s"}`, files.length ? files : undefined);
-    setInput("");
+    onInput("");
     setFiles([]);
   };
 
@@ -279,7 +282,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               ref={textareaRef}
               rows={1}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => onInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={`Message ${instance.name}...`}
               className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-white outline-none resize-none font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
