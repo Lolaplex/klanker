@@ -131,6 +131,26 @@ export function App() {
   const [loginBusy, setLoginBusy] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const [kbBox, setKbBox] = useState<{ height: number; top: number } | null>(null);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const sync = () => {
+      // On iOS, visualViewport shrinks for the software keyboard while window.innerHeight stays fixed.
+      const keyboardOpen = window.innerHeight - vv.height > 100;
+      setKbBox(keyboardOpen ? { height: vv.height, top: vv.offsetTop } : null);
+      if (keyboardOpen && window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    return () => {
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+    };
+  }, []);
   const instancesRef = useRef(instances);
   instancesRef.current = instances;
   const activeIdRef = useRef<string | null>(null);
@@ -698,7 +718,7 @@ export function App() {
 
   if (auth !== "ok") {
     return (
-      <div className="h-dvh w-screen flex items-center justify-center bg-[#000000] text-white font-sans">
+      <div className="fixed inset-0 flex items-center justify-center bg-[#000000] text-white font-sans">
         {auth === "needed" ? (
           <form onSubmit={submitLogin} className="w-72 flex flex-col gap-3 font-mono text-xs">
             <div className="text-[#a3a3a3] tracking-widest uppercase">KLANKER</div>
@@ -727,7 +747,11 @@ export function App() {
   }
 
   return (
-    <div className="h-dvh w-screen flex bg-[#000000] text-white overflow-hidden font-sans">
+    <div
+      data-kb={kbBox ? "open" : undefined}
+      style={kbBox ? { height: `${kbBox.height}px`, top: `${kbBox.top}px`, bottom: "auto" } : undefined}
+      className="fixed inset-0 flex bg-[#000000] text-white overflow-hidden font-sans"
+    >
       {navOpen && (
         <div
           className="md:hidden fixed inset-0 z-40 bg-black/60"

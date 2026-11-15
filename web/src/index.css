@@ -14,6 +14,11 @@
     --ink-low: #525252;
   }
 
+  html, body, #root {
+    height: 100%;
+    background-color: var(--bg-main);
+  }
+
   body {
     background-color: var(--bg-main);
     color: var(--ink-high);
@@ -32,15 +37,26 @@
     padding-top: env(safe-area-inset-top);
   }
 
-  .composer {
-    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  @media (max-width: 767px) {
+    .composer {
+      padding-bottom: max(0.75rem, calc(env(safe-area-inset-bottom) - 0.5rem));
+    }
+
+    [data-kb="open"] .composer {
+      padding-bottom: 0.5rem;
+    }
   }
 
   button {
     -webkit-user-select: none;
     user-select: none;
-    min-height: 44px;
-    min-width: 44px;
+  }
+
+  @media (max-width: 767px), (pointer: coarse) {
+    button {
+      min-height: 44px;
+      min-width: 44px;
+    }
   }
 
   textarea, input, select {

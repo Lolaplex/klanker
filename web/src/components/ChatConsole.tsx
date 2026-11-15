@@ -229,7 +229,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="composer px-3 pt-2 bg-transparent md:bg-[#0a0a0a] md:border-t md:border-[#262626] md:h-[73px] md:pt-0 md:flex md:items-center">
+      <div className="composer px-3 pt-2 bg-transparent md:bg-[#000000] md:border-t md:border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
         <form
           onSubmit={handleSubmit}
           className="w-full flex flex-col min-h-12 bg-[#121212] border border-[#262626] focus-within:border-[#525252] rounded transition-colors"
@@ -246,7 +246,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
                   <button
                     type="button"
                     onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
-                    className="inline-flex h-5 w-5 items-center justify-center rounded hover:bg-white/10 hover:text-white"
+                    className="inline-flex h-5 w-5 min-h-0 min-w-0 items-center justify-center rounded hover:bg-white/10 hover:text-white"
                     aria-label={`Remove ${f.name || "attachment"}`}
                   >
                     <X className="w-3.5 h-3.5" />
@@ -255,7 +255,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               ))}
             </div>
           )}
-          <div className="flex items-stretch gap-0.5 px-1 min-h-12">
+          <div className="flex items-stretch gap-0.5 pl-1 pr-[5px] min-h-[46px]">
             <input
               ref={fileRef}
               type="file"
@@ -268,7 +268,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               onClick={() => fileRef.current?.click()}
               title="Attach files"
               aria-label="Attach files"
-              className="inline-flex w-11 shrink-0 items-center justify-center text-[#737373] hover:text-white transition-colors"
+              className="inline-flex w-11 min-h-0 min-w-0 shrink-0 items-center justify-center text-[#737373] hover:text-white transition-colors"
             >
               <Paperclip className="w-4 h-4" />
             </button>
@@ -279,14 +279,14 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={`Message ${instance.name}...`}
-              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2.5 text-white outline-none resize-none font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
+              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-white outline-none resize-none font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
             />
             <button
               type="submit"
               disabled={(!input.trim() && files.length === 0) || isLoading || sendHold}
               title="Send"
               aria-label="Send message"
-              className="self-center inline-flex h-9 w-9 shrink-0 mr-1 items-center justify-center rounded bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black transition-colors"
+              className="self-center inline-flex h-9 w-9 min-h-9 min-w-9 shrink-0 items-center justify-center rounded bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black transition-colors"
             >
               <ArrowUp className="w-4 h-4" />
             </button>

@@ -37,7 +37,7 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, onOpenSettings, 
       <div className="flex items-center space-x-2 shrink-0">
         <button
           onClick={onOpenSettings}
-          className="inline-flex h-11 min-w-11 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
+          className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
         >
           <Settings className="w-3.5 h-3.5" />
           <span className="hidden md:inline">Settings</span>
