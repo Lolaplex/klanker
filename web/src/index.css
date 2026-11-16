@@ -61,12 +61,6 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  @media (max-width: 767px), (pointer: coarse) {
-    button {
-      min-height: 44px;
-      min-width: 44px;
-    }
-  }
 
   textarea, input, select {
     font-size: 16px;

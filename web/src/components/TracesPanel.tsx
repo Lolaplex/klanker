@@ -47,7 +47,7 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance }) => {
         <button
           onClick={() => instance && void loadTraces(instance)}
           disabled={loading || !instance}
-          className="flex items-center space-x-1 px-2.5 py-1 bg-[#141414] hover:bg-[#1f1f1f] border border-[#262626] rounded text-[#a3a3a3] hover:text-white transition-colors disabled:opacity-40"
+          className="flex min-h-9 items-center space-x-1 px-2.5 py-1 bg-[#141414] hover:bg-[#1f1f1f] border border-[#262626] rounded text-[#a3a3a3] hover:text-white transition-colors disabled:opacity-40"
         >
           <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
           <span>Refresh</span>

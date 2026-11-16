@@ -307,7 +307,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               disabled={(!input.trim() && files.length === 0) || isLoading || sendHold}
               title="Send"
               aria-label="Send message"
-              className="self-center inline-flex h-9 w-9 min-h-9 min-w-9 shrink-0 items-center justify-center rounded bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black transition-colors"
+              className="self-center inline-flex h-11 w-11 md:h-9 md:w-9 shrink-0 items-center justify-center rounded bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black transition-colors"
             >
               <ArrowUp className="w-4 h-4" />
             </button>

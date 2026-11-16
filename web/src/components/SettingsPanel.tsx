@@ -58,7 +58,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       <div className="bg-[#0a0a0a] border border-[#262626] w-full max-w-md rounded-lg shadow-2xl font-mono text-xs select-text">
         <div className="px-4 py-3 border-b border-[#262626] flex items-center justify-between">
           <span className="text-white font-semibold tracking-wider">SETTINGS</span>
-          <button type="button" onClick={onClose} className="text-[#737373] hover:text-white transition-colors">
+          <button type="button" onClick={onClose} className="inline-flex h-11 w-11 items-center justify-center text-[#737373] hover:text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -71,7 +71,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   key={item}
                   type="button"
                   onClick={() => setDraft({ ...draft, provider: item })}
-                  className={`px-2 py-1.5 rounded border text-[11px] transition-colors ${
+                  className={`px-2 py-1.5 min-h-9 rounded border text-[11px] transition-colors ${
                     kind === item
                       ? "bg-white text-black border-white"
                       : "bg-[#0a0a0a] text-[#a3a3a3] border-[#262626] hover:text-white"
@@ -124,10 +124,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           )}
 
           <div className="flex items-center justify-end space-x-2">
-            <button type="button" onClick={onClose} className="px-3 py-1.5 text-[#737373] hover:text-white">
+            <button type="button" onClick={onClose} className="inline-flex min-h-9 items-center px-3 py-1.5 text-[#737373] hover:text-white">
               Cancel
             </button>
-            <button type="submit" className="px-4 py-1.5 bg-white hover:bg-[#e5e5e5] text-black font-semibold rounded">
+            <button type="submit" className="inline-flex min-h-9 items-center px-4 py-1.5 bg-white hover:bg-[#e5e5e5] text-black font-semibold rounded">
               Save
             </button>
           </div>

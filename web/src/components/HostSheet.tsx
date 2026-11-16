@@ -220,13 +220,13 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                 onClick={() => {
                   if (window.confirm(`Remove ${instance.name || instance.id}?`)) onDelete(instance.id);
                 }}
-                className="p-2.5 md:p-1.5 text-[#737373] hover:text-white transition-colors"
+                className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors"
                 title="Remove this host"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
-            <button type="button" onClick={onClose} className="p-2.5 md:p-1.5 text-[#737373] hover:text-white transition-colors">
+            <button type="button" onClick={onClose} className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -243,7 +243,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                 key={t}
                 type="button"
                 onClick={() => setTab(t)}
-                className={`px-3.5 py-1.5 md:py-1 rounded-full transition-colors ${
+                className={`px-3.5 py-1.5 md:py-1 min-h-9 md:min-h-0 rounded-full transition-colors ${
                   tab === t
                     ? "bg-white text-black"
                     : "text-[#a3a3a3] hover:text-white"
@@ -496,7 +496,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                       key={item}
                       type="button"
                       onClick={() => pickProvider(item)}
-                      className={`px-2 py-1.5 rounded border text-[11px] transition-colors ${
+                      className={`px-2 py-1.5 min-h-9 rounded border text-[11px] transition-colors ${
                         choice === item
                           ? "bg-white text-black border-white"
                           : "bg-[#0a0a0a] text-[#a3a3a3] border-[#262626] hover:text-white"
