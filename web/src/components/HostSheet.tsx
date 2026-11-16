@@ -13,7 +13,7 @@ import {
 import { ModelControl } from "./ModelControl";
 import { SecretField } from "./SecretField";
 import { TracesPanel } from "./TracesPanel";
-import { api } from "../services/api";
+import { api, caps } from "../services/api";
 
 interface HostSheetProps {
   instance: KlankerInstance;
@@ -390,6 +390,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
               />
             </div>
 
+            {!caps.spawn && (
             <div>
               <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
                 Web token login (cookie, same-origin)
@@ -422,6 +423,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
               </div>
               {loginNote && <p className="mt-1 text-[11px] text-[#737373]">{loginNote}</p>}
             </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>

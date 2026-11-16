@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   lmstudio_base_url: LM_URL,
   recent_models: { openrouter: [], lmstudio: [] },
   favorites: { openrouter: [], lmstudio: [] },
+  auto_start_local_serve: true,
 };
 
 export interface OpenRouterModel {
@@ -80,7 +81,7 @@ export function withChoice(
   model: string
 ): KlankerInstance {
   if (choice === "inherit" || choice === "echo") {
-    return { ...inst, provider: choice, model: "", base_url: undefined, api_key: undefined };
+    return { ...inst, provider: choice, model: "", base_url: undefined };
   }
   if (choice === "openrouter") {
     return {
@@ -88,7 +89,6 @@ export function withChoice(
       provider: "openrouter",
       model: model.trim(),
       base_url: OR_URL,
-      api_key: undefined,
     };
   }
   const base = (inst.base_url || "").trim();
@@ -97,7 +97,6 @@ export function withChoice(
     provider: "lmstudio",
     model: model.trim(),
     base_url: base && !isOpenRouterUrl(base) ? base : settings.lmstudio_base_url.trim() || LM_URL,
-    api_key: undefined,
   };
 }
 

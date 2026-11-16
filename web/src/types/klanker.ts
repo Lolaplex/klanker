@@ -5,12 +5,6 @@ export interface InstanceEndpoint {
   secret?: string;
 }
 
-export interface InstanceStartSpec {
-  argv: string[];
-  cwd?: string;
-  env?: Record<string, string>;
-}
-
 export interface InstanceTailscale {
   node: string;
   fqdn?: string;
@@ -30,6 +24,7 @@ export interface DesktopSettings {
   lmstudio_base_url: string;
   recent_models: ProviderModelLists;
   favorites: ProviderModelLists;
+  auto_start_local_serve: boolean;
 }
 
 export interface KlankerInstance {
@@ -40,7 +35,6 @@ export interface KlankerInstance {
   provider: string;
   model: string;
   base_url?: string;
-  api_key?: string;
   workspace: string;
   lock_workspace: boolean;
   port: number;
@@ -48,7 +42,6 @@ export interface KlankerInstance {
   sensors?: Record<string, boolean>;
   kind: InstanceKind;
   endpoint?: InstanceEndpoint;
-  start_cmd?: InstanceStartSpec;
   tailscale?: InstanceTailscale;
   created_at: string;
   updated_at: string;
@@ -57,14 +50,13 @@ export interface KlankerInstance {
   persona?: string;
   secret?: string;
   has_secret?: boolean;
-  pid?: number;
 }
 
 export interface ProcessStatus {
   is_running: boolean;
   pid?: number;
   port: number;
-  state: "running" | "stopped" | "port_busy" | "not_owned";
+  state: "running" | "stopped" | "port_busy" | "not_owned" | "starting" | "lost" | "not_found";
   detail?: string;
 }
 

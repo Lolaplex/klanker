@@ -12,7 +12,7 @@ import {
   ChatMessage,
   PendingApproval,
 } from "./types/klanker";
-import { api, localInstance } from "./services/api";
+import { api, caps, localInstance, notify, serveToProcess } from "./services/api";
 import type { PersonaRow, SessionRow } from "./components/KlankerList";
 import {
   choiceOf,
@@ -190,6 +190,7 @@ export function App() {
   const instancesRef = useRef(instances);
   instancesRef.current = instances;
   const activeIdRef = useRef<string | null>(null);
+  const notifiedApprovalRef = useRef<string>("");
   const chatsRef = useRef(chats);
   chatsRef.current = chats;
   const turnBusyRef = useRef(turnBusy);
@@ -319,10 +320,13 @@ export function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const st = await api.authStatus(localInstance());
-        if (st.enabled && !st.authenticated) {
-          setAuth("needed");
-          return;
+        // Desktop shells talk Bearer-only; the same-origin cookie gate is web-only.
+        if (!caps.spawn) {
+          const st = await api.authStatus(localInstance());
+          if (st.enabled && !st.authenticated) {
+            setAuth("needed");
+            return;
+          }
         }
       } catch {
         // Relay unreachable or older relay without /v1/auth/*: proceed anyway.
@@ -349,6 +353,19 @@ export function App() {
       settingsWrite.current = run.then(() => undefined, () => undefined);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Desktop global hotkey: shell raises the window and emits this event;
+  // bridge it to the window-level event the composer listens for.
+  useEffect(() => {
+    if (!caps.spawn) return;
+    const events = (window as any).__TAURI__?.event;
+    const un = events?.listen?.("klanker:focus-composer", () =>
+      window.dispatchEvent(new Event("klanker:focus-composer"))
+    );
+    return () => {
+      void un?.then?.((f: any) => f?.());
+    };
   }, []);
 
   // Persist chats per instance (localStorage)
@@ -384,10 +401,30 @@ export function App() {
   useEffect(() => {
     let stop = false;
     const tick = async () => {
+      const onlyLocal = instancesRef.current.every((i) => i.kind === "local");
       for (const inst of instancesRef.current) {
-        const st = await api.getGatewayStatus(inst);
-        if (stop) return;
-        setHerd((prev) => ({ ...prev, [inst.id]: st }));
+        try {
+          let st: ProcessStatus;
+          if (caps.spawn && inst.kind === "local") {
+            // Spawn only while local is the active target; remote-first users
+            // get a passive status probe so no Python is started for them.
+            const want =
+              settingsRef.current.auto_start_local_serve !== false &&
+              (activeIdRef.current === inst.id || onlyLocal);
+            const ss = want ? await api.serveEnsureLocal() : await api.serveStatus();
+            st = serveToProcess(ss);
+          } else {
+            st = await api.getGatewayStatus(inst);
+          }
+          if (stop) return;
+          setHerd((prev) => ({ ...prev, [inst.id]: st }));
+        } catch {
+          if (stop) return;
+          setHerd((prev) => ({
+            ...prev,
+            [inst.id]: { is_running: false, port: inst.port, state: "lost" },
+          }));
+        }
       }
     };
     void tick();
@@ -551,7 +588,17 @@ export function App() {
       const mine = ++pollSeq.current;
       try {
         const next = await api.pendingApproval(inst);
-        if (!stop && mine === pollSeq.current) setPending(next);
+        if (!stop && mine === pollSeq.current) {
+          setPending(next);
+          if (
+            next &&
+            next.id !== notifiedApprovalRef.current &&
+            (document.hidden || !document.hasFocus())
+          ) {
+            notifiedApprovalRef.current = next.id;
+            void notify("Klanker needs approval", `${next.tool} @ ${inst.name}`);
+          }
+        }
       } catch {
         if (!stop && mine === pollSeq.current) setPending(null);
       }
@@ -784,6 +831,9 @@ export function App() {
               ),
             }))
           );
+          if (document.hidden || !document.hasFocus()) {
+            void notify("Klanker finished a turn", inst.name);
+          }
           if (ev.returncode && ev.returncode !== 0) {
             setStreamStatus(`turn exited ${ev.returncode}`);
           }
@@ -966,6 +1016,43 @@ export function App() {
                   {wsNote}
                 </div>
               )}
+              {caps.spawn &&
+                activeInstance.kind === "local" &&
+                status &&
+                status.state !== "running" && (
+                  <div className="shrink-0 px-3 py-1.5 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] flex items-center gap-3">
+                    <span className="text-[#ffb454]">
+                      {status.state === "starting"
+                        ? "local klanker starting…"
+                        : status.state === "not_found"
+                          ? "klanker not installed"
+                          : status.state === "lost"
+                            ? "local klanker lost"
+                            : "local klanker stopped"}
+                      {status.detail ? ` — ${status.detail}` : ""}
+                    </span>
+                    {status.state !== "starting" && (
+                      <button
+                        className="text-white border border-[#333] px-2 py-0.5 hover:bg-[#1a1a1a]"
+                        onClick={() =>
+                          void api
+                            .serveRestart()
+                            .then((ss) =>
+                              setHerd((prev) => ({
+                                ...prev,
+                                [activeInstance.id]: serveToProcess(ss),
+                              }))
+                            )
+                            .catch((e) =>
+                              setWsNote(`serve: ${e instanceof Error ? e.message : e}`)
+                            )
+                        }
+                      >
+                        restart
+                      </button>
+                    )}
+                  </div>
+                )}
               <ChatConsole
                 key={`${activeInstance.id}:${openChat?.id ?? ""}`}
                 instance={activeInstance}

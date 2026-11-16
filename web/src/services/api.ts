@@ -59,21 +59,66 @@ function load<T>(key: string, fallback: T): T {
 
 const RELAY_501_NOTE = "Endpoint missing on this relay (requires agents-relay#12).";
 
-/** Capability flags: desktop (Tauri) gets localFs/spawn; web/PWA does not. */
+const isTauri = (): boolean =>
+  typeof window !== "undefined" &&
+  ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
+
+/** Invoke a Tauri command; throws on non-desktop. */
+const invoke = <T = any>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+  const core = (window as any).__TAURI__?.core;
+  if (!core?.invoke) return Promise.reject(new Error("not a tauri host"));
+  return core.invoke(cmd, args);
+};
+
+/** Capability flags: desktop (Tauri) gets spawn/keyring/updates; web/PWA does not. */
 export const caps = {
-  localFs: typeof window !== "undefined" && "__TAURI__" in window,
-  spawn: typeof window !== "undefined" && "__TAURI__" in window,
-  keyring: typeof window !== "undefined" && "__TAURI__" in window,
+  localFs: isTauri(),
+  spawn: isTauri(),
+  keyring: isTauri(),
+  updates: isTauri(),
 } as const;
+
+/** OS notification — works on desktop webview and (with permission) in browsers. */
+export async function notify(title: string, body = ""): Promise<void> {
+  try {
+    if (typeof Notification === "undefined") return;
+    if (Notification.permission === "granted") {
+      new Notification(title, { body });
+    } else if (Notification.permission !== "denied") {
+      if ((await Notification.requestPermission()) === "granted") {
+        new Notification(title, { body });
+      }
+    }
+  } catch {}
+}
 
 export const api = {
   // --- settings (localStorage) -------------------------------------------
 
   async loadSettings(): Promise<DesktopSettings> {
-    return load(LS_SETTINGS, { ...DEFAULT_SETTINGS });
+    const s = load(LS_SETTINGS, { ...DEFAULT_SETTINGS });
+    if (caps.keyring) {
+      try {
+        const key = await this.secretGet("openrouter");
+        s.openrouter_api_key = key || "";
+        s.openrouter_key_set = !!key;
+      } catch {}
+    }
+    return s;
   },
 
   async saveSettings(settings: DesktopSettings): Promise<DesktopSettings> {
+    if (caps.keyring) {
+      const key = settings.openrouter_api_key.trim();
+      try {
+        if (key) await this.secretSet("openrouter", key);
+      } catch {}
+      localStorage.setItem(
+        LS_SETTINGS,
+        JSON.stringify({ ...settings, openrouter_api_key: "", openrouter_key_set: !!key || settings.openrouter_key_set })
+      );
+      return settings;
+    }
     localStorage.setItem(LS_SETTINGS, JSON.stringify(settings));
     return settings;
   },
@@ -84,9 +129,19 @@ export const api = {
     let list: KlankerInstance[] = load(LS_INSTANCES, [] as KlankerInstance[]);
     if (!Array.isArray(list)) list = [];
     if (list.length === 0) {
-      // Same-origin relay is the default instance: empty base_url + cookie auth.
-      list = [localInstance()];
+      // Web/PWA: the same-origin relay is the default instance.
+      // Desktop: the managed local serve at 127.0.0.1:8787 (spawned by the shell).
+      list = [caps.spawn ? desktopLocalInstance() : localInstance()];
       localStorage.setItem(LS_INSTANCES, JSON.stringify(list));
+    }
+    if (caps.keyring) {
+      for (const inst of list) {
+        try {
+          const s = await this.secretGet(`relay.${inst.id}`);
+          inst.secret = s || undefined;
+          inst.has_secret = !!s;
+        } catch {}
+      }
     }
     return list;
   },
@@ -94,17 +149,30 @@ export const api = {
   async saveKlanker(inst: KlankerInstance): Promise<KlankerInstance> {
     const list = await this.listKlankers();
     const next = { ...inst, updated_at: new Date().toISOString() };
+    if (caps.keyring) {
+      const secret = (next.secret || "").trim();
+      try {
+        if (secret) await this.secretSet(`relay.${next.id}`, secret);
+        next.has_secret = !!secret || !!next.has_secret;
+        next.secret = undefined;
+      } catch {}
+    }
     const idx = list.findIndex((i) => i.id === inst.id);
     if (idx >= 0) list[idx] = next;
     else list.push(next);
-    localStorage.setItem(LS_INSTANCES, JSON.stringify(list));
-    return next;
+    localStorage.setItem(LS_INSTANCES, JSON.stringify(caps.keyring ? list.map(stripSecrets) : list));
+    return { ...next, secret: inst.secret };
   },
 
   async deleteKlanker(id: string): Promise<void> {
     const list = (await this.listKlankers()).filter((i) => i.id !== id);
-    localStorage.setItem(LS_INSTANCES, JSON.stringify(list));
+    localStorage.setItem(LS_INSTANCES, JSON.stringify(caps.keyring ? list.map(stripSecrets) : list));
     if (localStorage.getItem(LS_ACTIVE) === id) localStorage.removeItem(LS_ACTIVE);
+    if (caps.keyring) {
+      try {
+        await this.secretDelete(`relay.${id}`);
+      } catch {}
+    }
   },
 
   loadActiveId(): string | null {
@@ -390,7 +458,118 @@ export const api = {
   async discoverPeers(): Promise<DiscoveredPeer[]> {
     return [];
   },
+
+  // --- desktop (Tauri) only ---------------------------------------------------
+
+  async secretGet(account: string): Promise<string | null> {
+    return invoke<string | null>("secret_get", { account });
+  },
+  async secretSet(account: string, secret: string): Promise<void> {
+    await invoke("secret_set", { account, secret });
+  },
+  async secretDelete(account: string): Promise<void> {
+    await invoke("secret_delete", { account });
+  },
+
+  async serveStatus(): Promise<ServeStatus> {
+    return invoke<ServeStatus>("serve_status");
+  },
+  async serveEnsureLocal(): Promise<ServeStatus> {
+    return invoke<ServeStatus>("serve_ensure_local");
+  },
+  async serveRestart(): Promise<ServeStatus> {
+    return invoke<ServeStatus>("serve_restart");
+  },
+
+  async klankerVersion(): Promise<ProvisionStatus> {
+    return invoke<ProvisionStatus>("klanker_version");
+  },
+  async klankerInstall(): Promise<ProvisionStatus> {
+    return invoke<ProvisionStatus>("klanker_install");
+  },
+  async klankerUpgrade(): Promise<ProvisionStatus> {
+    return invoke<ProvisionStatus>("klanker_upgrade");
+  },
+
+  async checkAppUpdates(): Promise<UpdateInfo> {
+    return invoke<UpdateInfo>("check_for_updates");
+  },
+  async installAppUpdate(): Promise<void> {
+    await invoke("install_update");
+  },
 };
+
+export interface ServeStatus {
+  state: "running" | "starting" | "stopped" | "lost" | "not_found" | string;
+  pid?: number;
+  owned: boolean;
+  port: number;
+  klanker_version?: string | null;
+  detail?: string | null;
+}
+
+export interface ProvisionStatus {
+  uv_path?: string | null;
+  klanker_version?: string | null;
+  detail?: string | null;
+}
+
+export interface UpdateInfo {
+  available: boolean;
+  current_version: string;
+  version?: string | null;
+  date?: string | null;
+  body?: string | null;
+}
+
+/** Map a desktop serve_status onto the shared ProcessStatus shape. */
+export function serveToProcess(ss: ServeStatus): ProcessStatus {
+  const state: ProcessStatus["state"] =
+    ss.state === "running"
+      ? "running"
+      : ss.state === "starting"
+        ? "starting"
+        : ss.state === "not_found"
+          ? "not_found"
+          : ss.state === "lost"
+            ? "lost"
+            : "stopped";
+  return {
+    is_running: ss.state === "running",
+    pid: ss.pid,
+    port: ss.port,
+    state,
+    detail: ss.detail ?? undefined,
+  };
+}
+
+/** Keyring path only: never persist plaintext secrets to localStorage. */
+function stripSecrets(inst: KlankerInstance): KlankerInstance {
+  const copy = { ...inst, secret: undefined };
+  if (copy.endpoint) copy.endpoint = { ...copy.endpoint, secret: undefined };
+  return copy;
+}
+
+/** The managed local serve entry for desktop builds. */
+export function desktopLocalInstance(): KlankerInstance {
+  const now = new Date().toISOString();
+  return {
+    id: "local",
+    name: "klanker (local)",
+    slug: "local",
+    role: "",
+    provider: "",
+    model: "",
+    workspace: "",
+    lock_workspace: false,
+    port: 8787,
+    system_prompt: "",
+    kind: "local",
+    endpoint: { base_url: "http://127.0.0.1:8787" },
+    created_at: now,
+    updated_at: now,
+  };
+}
 
 export function localInstance(): KlankerInstance {
   const now = new Date().toISOString();

@@ -3,7 +3,12 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./index.css";
 
-if (import.meta.env.PROD && "serviceWorker" in navigator && !("__TAURI__" in window)) {
+if (
+  import.meta.env.PROD &&
+  "serviceWorker" in navigator &&
+  !("__TAURI_INTERNALS__" in window) &&
+  !("__TAURI__" in window)
+) {
   window.addEventListener("load", () => {
     void navigator.serviceWorker.register("/sw.js");
   });
