@@ -351,6 +351,14 @@ function MessageBubble({
               <span className="text-[#737373]">{message.elapsed_ms}ms</span>
             </>
           ) : null}
+          {message.content ? (
+            <CopyButton
+              text={message.content}
+              label="Copy message"
+              borderless
+              className="!h-5 !w-5 text-[#525252] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
+            />
+          ) : null}
         </div>
         <div
           className={`min-w-0 max-w-full rounded border p-3 leading-relaxed select-text ${
@@ -367,15 +375,6 @@ function MessageBubble({
             </div>
           )}
         </div>
-        {message.content ? (
-          <div
-            className={`mt-1 flex items-center [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100 transition-opacity ${
-              mine ? "justify-end" : "justify-start"
-            }`}
-          >
-            <CopyButton text={message.content} label="Copy message" borderless />
-          </div>
-        ) : null}
       </div>
     </div>
   );
