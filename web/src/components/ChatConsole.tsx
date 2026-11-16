@@ -50,15 +50,17 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 }) => {
   const [files, setFiles] = useState<OutAttachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = listRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   };
 
   useEffect(() => {
-    scrollToBottom();
+    if (stickRef.current) scrollToBottom();
   }, [messages, isLoading]);
 
   useEffect(() => {
@@ -71,7 +73,12 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
+    const overflow = el.scrollHeight > 140;
     el.style.height = `${Math.min(el.scrollHeight, 140)}px`;
+    // 1-line input: pans die on the touch-none composer. Overflowing draft:
+    // the textarea implements its own pan-y scroll, ancestor none doesn't block it.
+    el.style.overflowY = overflow ? "auto" : "hidden";
+    el.style.touchAction = overflow ? "pan-y" : "manipulation";
   };
 
   useEffect(resizeComposer, [input]);
@@ -79,6 +86,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if ((!input.trim() && files.length === 0) || isLoading || sendHold) return;
+    stickRef.current = true;
+    scrollToBottom();
     // Relay requires non-empty text; attach-only sends carry a marker.
     onSendMessage(input.trim() || `attached ${files.length} file${files.length === 1 ? "" : "s"}`, files.length ? files : undefined);
     onInput("");
@@ -132,7 +141,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   return (
     <div className="flex-1 flex flex-col bg-[#000000] overflow-hidden font-mono text-xs">
       {/* Console Top Toolbar */}
-      <div className="min-h-11 bg-[#0a0a0a] border-b border-[#262626] flex items-center justify-between px-3 text-[#737373] select-none">
+      <div className="min-h-11 bg-[#0a0a0a] border-b border-[#262626] flex items-center justify-between px-3 text-[#737373] select-none touch-none">
         <div className="flex min-w-0 items-center space-x-2">
           <Terminal className="w-3.5 h-3.5 shrink-0 text-white" />
           <span className="font-semibold text-white tracking-wider uppercase truncate">
@@ -194,7 +203,14 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       )}
 
       {/* Message List */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 select-text">
+      <div
+        ref={listRef}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}
+        className="flex-1 overflow-y-auto overscroll-y-contain p-4 space-y-4 select-text"
+      >
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[#525252]">
             <div className="w-12 h-12 border border-[#262626] rounded-full flex items-center justify-center mb-3">
@@ -231,11 +247,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
           </div>
         )}
 
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="composer px-3 pt-2 bg-[#000000] border-t border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
+      <div className="composer touch-none px-3 pt-2 bg-[#000000] border-t border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
         <form
           onSubmit={handleSubmit}
           className="w-full flex flex-col min-h-12 bg-[#121212] border border-[#262626] focus-within:border-[#525252] rounded transition-colors"
@@ -285,7 +300,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               onChange={(e) => onInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={`Message ${instance.name}...`}
-              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-white outline-none resize-none font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
+              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-white outline-none resize-none overscroll-y-contain font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
             />
             <button
               type="submit"
