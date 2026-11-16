@@ -235,7 +235,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="composer px-3 pt-2 bg-transparent md:bg-[#000000] md:border-t md:border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
+      <div className="composer px-3 pt-2 bg-[#000000] border-t border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
         <form
           onSubmit={handleSubmit}
           className="w-full flex flex-col min-h-12 bg-[#121212] border border-[#262626] focus-within:border-[#525252] rounded transition-colors"

@@ -170,13 +170,16 @@ export function App() {
     const vv = window.visualViewport;
     if (!vv) return;
     const sync = () => {
+      // --vvh feeds modal/sheet max-height (dvh does not shrink for the iOS keyboard).
+      document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
       // On iOS, visualViewport shrinks for the software keyboard while window.innerHeight stays fixed.
       const keyboardOpen = window.innerHeight - vv.height > 100;
       setKbBox(keyboardOpen ? { height: vv.height, top: vv.offsetTop } : null);
-      if (keyboardOpen && window.scrollY !== 0) {
+      if (window.scrollX !== 0 || window.scrollY !== 0) {
         window.scrollTo(0, 0);
       }
     };
+    sync();
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
     return () => {

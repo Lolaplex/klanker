@@ -292,7 +292,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
         )}
       </div>
 
-      <div className="shrink-0 min-h-[73px] p-3 pb-[max(0.75rem,calc(env(safe-area-inset-bottom)-0.5rem))] md:pb-3 border-t border-[#262626] bg-[#000000] flex items-center">
+      <div className="shrink-0 min-h-[73px] p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] md:pb-3 border-t border-[#262626] bg-[#000000] flex items-center">
         <button
           type="button"
           onClick={onNewHost}
