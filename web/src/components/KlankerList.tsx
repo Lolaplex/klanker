@@ -116,7 +116,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
         <span>KLANKER</span>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain">
         {instances.length === 0 ? (
           <p className="px-3 py-3 text-[#525252] font-mono text-xs">No Klankers.</p>
         ) : (

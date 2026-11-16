@@ -55,14 +55,14 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-      <div className="bg-[#0a0a0a] border border-[#262626] w-full max-w-md rounded-lg shadow-2xl font-mono text-xs select-text">
-        <div className="px-4 py-3 border-b border-[#262626] flex items-center justify-between">
+      <div className="modal-card flex flex-col overflow-hidden bg-[#0a0a0a] border border-[#262626] w-full max-w-md rounded-lg shadow-2xl font-mono text-xs select-text">
+        <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
           <span className="text-white font-semibold tracking-wider">SETTINGS</span>
           <button type="button" onClick={onClose} className="inline-flex h-11 w-11 items-center justify-center text-[#737373] hover:text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
-        <form onSubmit={save} className="p-4 space-y-4">
+        <form onSubmit={save} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 space-y-4">
           <div>
             <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Provider</div>
             <div className="grid grid-cols-3 gap-1">

@@ -73,6 +73,18 @@
   }
 }
 
+/* --vvh is published by the visualViewport sync in App.tsx; dvh does not
+   shrink for the iOS software keyboard, so modals must consume --vvh. */
+.modal-card {
+  max-height: calc(var(--vvh, 100dvh) - 2rem);
+}
+
+@media (max-width: 767px) {
+  .sheet-card {
+    max-height: calc(var(--vvh, 100dvh) * 0.85);
+  }
+}
+
 /* Custom crisp dark scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
