@@ -169,22 +169,66 @@ export function App() {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+
+    // Installed iOS PWAs lie about heights: window.innerHeight shrinks on the
+    // first keyboard open and never restores, and vv.height under-reports by
+    // the safe-area insets. Probe the real full height via a hidden 100vh el.
+    const probeFullHeight = () => {
+      const probe = document.createElement("div");
+      probe.style.cssText =
+        "position:fixed;top:0;left:0;height:100vh;visibility:hidden;pointer-events:none";
+      document.documentElement.appendChild(probe);
+      const h = probe.offsetHeight;
+      probe.remove();
+      return h || window.innerHeight;
+    };
+    let fullHeight = probeFullHeight();
+    let lastWidth = window.innerWidth;
+    let settle = 0;
+
+    const editableFocused = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return (
+        !!el &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+      );
+    };
+
     const sync = () => {
       // --vvh feeds modal/sheet max-height (dvh does not shrink for the iOS keyboard).
       document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
-      // On iOS, visualViewport shrinks for the software keyboard while window.innerHeight stays fixed.
-      const keyboardOpen = window.innerHeight - vv.height > 100;
-      setKbBox(keyboardOpen ? { height: vv.height, top: vv.offsetTop } : null);
-      if (window.scrollX !== 0 || window.scrollY !== 0) {
-        window.scrollTo(0, 0);
+      if (window.innerWidth !== lastWidth) {
+        lastWidth = window.innerWidth;
+        fullHeight = probeFullHeight(); // rotation changes the real full height
       }
+      // iOS covers the layout bottom two ways: visualViewport shrinks (resize
+      // mode) or pans (offsetTop>0). Gate on focus so a stale visualViewport
+      // report can never wedge the shell: no editable focus, no keyboard box.
+      const covered = fullHeight - (vv.height + vv.offsetTop);
+      const keyboardOpen = editableFocused() && (covered > 100 || vv.offsetTop > 100);
+      setKbBox(keyboardOpen ? { height: vv.height, top: vv.offsetTop } : null);
     };
+
+    // iOS animates the keyboard over ~300ms; final vv values arrive late.
+    const syncSettled = () => {
+      sync();
+      window.clearTimeout(settle);
+      settle = window.setTimeout(sync, 400);
+    };
+
     sync();
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
+    window.addEventListener("resize", sync);
+    document.addEventListener("focusin", syncSettled);
+    document.addEventListener("focusout", syncSettled);
     return () => {
+      window.clearTimeout(settle);
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+      document.removeEventListener("focusin", syncSettled);
+      document.removeEventListener("focusout", syncSettled);
     };
   }, []);
   const instancesRef = useRef(instances);
