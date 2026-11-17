@@ -275,6 +275,13 @@ fn spawn_klanker(argv: &[String], port: u16, token: &str, log: &PathBuf) -> Resu
         .env("RELAY_PORT", port.to_string())
         .env("RELAY_WEB_TOKEN", token)
         .env("AGENTS_NO_UPDATE_CHECK", "1")
+        // The bundled webview fetches cross-origin; relay CORS is opt-in
+        // via RELAY_CORS_ORIGINS. tauri.localhost covers the packaged app,
+        // localhost:1420 covers `tauri dev`.
+        .env(
+            "RELAY_CORS_ORIGINS",
+            "http://tauri.localhost,https://tauri.localhost,tauri://localhost,http://localhost:1420",
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::from(file))
         .stderr(Stdio::from(err));
