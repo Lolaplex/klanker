@@ -27,8 +27,6 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(target_os = "windows")]
-const DETACHED_PROCESS: u32 = 0x0000_0008;
-#[cfg(target_os = "windows")]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
 pub const DEFAULT_PORT: u16 = 8787;
@@ -211,41 +209,45 @@ fn remove_pid_file(app: &AppHandle) {
 
 // --- interpreter ---------------------------------------------------------
 
-fn try_version(argv: &[&str]) -> Option<String> {
-    let mut cmd = Command::new(argv[0]);
-    cmd.args(&argv[1..]).arg("--version");
-    #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    let out = cmd
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
+/// Probe whether an argv prefix launches klanker at all. `--version`
+/// yields the version string when supported; `--help` only proves the
+/// interpreter exists (klanker has no --version flag today).
+fn try_probe(argv: &[&str]) -> Option<Option<String>> {
+    for flag in ["--version", "--help"] {
+        let mut cmd = Command::new(argv[0]);
+        cmd.args(&argv[1..]).arg(flag);
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let Ok(out) = cmd.stdout(Stdio::piped()).stderr(Stdio::null()).output() else {
+            continue;
+        };
+        if !out.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        return Some(if flag == "--version" && !text.is_empty() {
+            Some(text)
+        } else {
+            None
+        });
     }
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    None
 }
 
 /// Resolve how to run `klanker`. Probe order: `klanker` on PATH,
 /// `py -m klanker`, `python -m klanker`, `uv tool run klanker`.
 /// Returns (argv_prefix, version).
 fn find_klanker(app: &AppHandle) -> Option<(Vec<String>, Option<String>)> {
-    if let Some(v) = try_version(&["klanker"]) {
-        return Some((vec!["klanker".into()], Some(v)));
+    if let Some(v) = try_probe(&["klanker"]) {
+        return Some((vec!["klanker".into()], v));
     }
     for prog in ["py", "python"] {
-        if let Some(v) = try_version(&[prog, "-m", "klanker"]) {
-            return Some((vec![prog.into(), "-m".into(), "klanker".into()], Some(v)));
+        if let Some(v) = try_probe(&[prog, "-m", "klanker"]) {
+            return Some((vec![prog.into(), "-m".into(), "klanker".into()], v));
         }
     }
     if let Some(uv) = crate::provision::uv_bin(app) {
-        if let Some(v) = try_version(&[&uv.to_string_lossy(), "tool", "run", "klanker"]) {
+        if let Some(v) = try_probe(&[&uv.to_string_lossy(), "tool", "run", "klanker"]) {
             return Some((
                 vec![
                     uv.to_string_lossy().into_owned(),
@@ -253,7 +255,7 @@ fn find_klanker(app: &AppHandle) -> Option<(Vec<String>, Option<String>)> {
                     "run".into(),
                     "klanker".into(),
                 ],
-                Some(v),
+                v,
             ));
         }
     }
@@ -268,11 +270,21 @@ fn spawn_klanker(argv: &[String], port: u16, token: &str, log: &PathBuf) -> Resu
         .map_err(|e| format!("open serve.log: {e}"))?;
     let err = file.try_clone().map_err(|e| e.to_string())?;
 
+    {
+        let mut f = OpenOptions::new()
+            .append(true)
+            .open(log)
+            .map_err(|e| e.to_string())?;
+        let _ = writeln!(f, "[shell] spawn: {}", argv.join(" "));
+    }
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .arg("serve")
         .env("RELAY_HOST", "127.0.0.1")
         .env("RELAY_PORT", port.to_string())
+        // Bearer/API gate (checked by every /v1/* route) plus the cookie
+        // login token for the web surface — same minted secret.
+        .env("RELAY_SECRET", token)
         .env("RELAY_WEB_TOKEN", token)
         .env("AGENTS_NO_UPDATE_CHECK", "1")
         // The bundled webview fetches cross-origin; relay CORS is opt-in
@@ -285,11 +297,24 @@ fn spawn_klanker(argv: &[String], port: u16, token: &str, log: &PathBuf) -> Resu
         .stdin(Stdio::null())
         .stdout(Stdio::from(file))
         .stderr(Stdio::from(err));
+    // No DETACHED_PROCESS: the python entry-point shim dies instantly
+    // without a console. CREATE_NO_WINDOW hides it for our GUI parent.
     #[cfg(target_os = "windows")]
-    cmd.creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+    cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
 
-    let child = cmd.spawn().map_err(|e| format!("spawn klanker serve: {e}"))?;
-    Ok(child.id())
+    let child = cmd
+        .spawn()
+        .map_err(|e| format!("spawn klanker serve: {e}"))?;
+    let pid = child.id();
+    let mut child = child;
+    // Surface early exit: a child that dies within the first seconds is a
+    // spawn failure, not a running serve.
+    std::thread::sleep(Duration::from_secs(3));
+    match child.try_wait() {
+        Ok(Some(status)) => Err(format!("klanker serve exited early ({status})")),
+        Ok(None) => Ok(pid),
+        Err(e) => Err(format!("wait klanker serve: {e}")),
+    }
 }
 
 // --- lifecycle -----------------------------------------------------------
@@ -333,6 +358,20 @@ fn do_ensure(app: &AppHandle) -> Result<ServeStatus, String> {
     if health_ok(s.port) || health_ok(DEFAULT_PORT) {
         adopt_or_mark(&mut s, app);
         return Ok(ServeStatus::of(&s));
+    }
+
+    // A booting child needs grace — python imports take seconds. Only
+    // reap it once the boot window passed without health, or it died.
+    if s.state == "starting" {
+        let booted_long = s
+            .last_spawn
+            .map(|t| t.elapsed() > Duration::from_secs(60))
+            .unwrap_or(false);
+        if let Some(pid) = s.pid {
+            if pid_alive(pid) && !booted_long {
+                return Ok(ServeStatus::of(&s));
+            }
+        }
     }
 
     // Dead. An owned zombie gets reaped before respawn.

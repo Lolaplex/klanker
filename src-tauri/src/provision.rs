@@ -202,13 +202,19 @@ fn klanker_version_probe() -> Option<String> {
         vec!["py", "-m", "klanker"],
         vec!["python", "-m", "klanker"],
     ] {
-        let mut cmd = Command::new(argv[0]);
-        cmd.args(&argv[1..]).arg("--version");
-        if let Ok(out) = silent(&mut cmd).stdout(Stdio::piped()).stderr(Stdio::null()).output() {
-            if out.status.success() {
-                let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !v.is_empty() {
-                    return Some(v);
+        // `--version` prints a version when the CLI supports it; `--help`
+        // only proves presence (klanker has no --version flag today).
+        for flag in ["--version", "--help"] {
+            let mut cmd = Command::new(argv[0]);
+            cmd.args(&argv[1..]).arg(flag);
+            if let Ok(out) = silent(&mut cmd).stdout(Stdio::piped()).stderr(Stdio::null()).output() {
+                if out.status.success() {
+                    let v = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    return Some(if flag == "--version" && !v.is_empty() {
+                        v
+                    } else {
+                        "installed".to_string()
+                    });
                 }
             }
         }

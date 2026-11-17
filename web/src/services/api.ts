@@ -24,12 +24,45 @@ function headers(inst: KlankerInstance, json = false): Record<string, string> {
   return h;
 }
 
+/** Pull a keyring secret into inst.secret. Called lazily — the local
+ *  serve's token is only minted at spawn, after instances were loaded. */
+async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void> {
+  if (!caps.keyring) return;
+  if (!force && inst.secret) return;
+  try {
+    const s = await invoke<string | null>("secret_get", { account: `relay.${inst.id}` });
+    inst.secret = s || undefined;
+    inst.has_secret = !!s;
+  } catch {}
+}
+
+/** fetch with Bearer hydration: resolve the keyring secret when missing,
+ *  and retry once after a forced refresh on 401 (spawn token rotation). */
+async function authedFetch(
+  inst: KlankerInstance,
+  url: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  await hydrateSecret(inst);
+  if (inst.secret && init.headers) (init.headers as Record<string, string>)["Authorization"] = `Bearer ${inst.secret}`;
+  let res = await fetch(url, init);
+  if (res.status === 401 && caps.keyring) {
+    await hydrateSecret(inst, true);
+    if (inst.secret) {
+      const h = (init.headers as Record<string, string>) || {};
+      init = { ...init, headers: { ...h, Authorization: `Bearer ${inst.secret}` } };
+      res = await fetch(url, init);
+    }
+  }
+  return res;
+}
+
 async function req<T = any>(
   inst: KlankerInstance,
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
-  const res = await fetch(base(inst) + path, { ...init });
+  const res = await authedFetch(inst, base(inst) + path, { ...init });
   const body = await res.text().catch(() => "");
   if (!res.ok) {
     let msg = body;
@@ -187,7 +220,7 @@ export const api = {
 
   async getGatewayStatus(inst: KlankerInstance): Promise<ProcessStatus> {
     try {
-      const res = await fetch(base(inst) + "/health", { headers: headers(inst) });
+      const res = await authedFetch(inst, base(inst) + "/health", { headers: headers(inst) });
       if (!res.ok) throw new Error(String(res.status));
       return { is_running: true, port: 0, state: "running" };
     } catch {
@@ -343,7 +376,7 @@ export const api = {
       attachments?: { data: string; mime?: string; name?: string }[];
     }
   ): AsyncGenerator<{ type: string; text?: string; run?: string; session?: string; user_id?: string; returncode?: number }> {
-    const res = await fetch(base(inst) + "/v1/chat/stream", {
+    const res = await authedFetch(inst, base(inst) + "/v1/chat/stream", {
       method: "POST",
       headers: { ...headers(inst, true), Accept: "text/event-stream" },
       body: JSON.stringify(body),
