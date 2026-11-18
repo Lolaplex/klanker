@@ -41,10 +41,20 @@ def env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _secret(key: str) -> str:
+    """ws/host secrets.json > env; env-only when the resolver cannot run."""
+    try:
+        from agents_workspace import resolve_secret
+
+        return resolve_secret(key)
+    except Exception:
+        return os.environ.get(key, "")
+
+
 def telegram_would_poll(*, no_telegram: bool) -> bool:
     if no_telegram:
         return False
-    return bool(os.environ.get("TELEGRAM_BOT_TOKEN", "").strip())
+    return bool(_secret("TELEGRAM_BOT_TOKEN").strip())
 
 
 def allowlist_configured() -> bool:
