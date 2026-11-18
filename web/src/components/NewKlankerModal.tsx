@@ -62,10 +62,12 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     const trimmed = name.trim();
     if (!trimmed) return;
 
+    const slug = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
     const newInst: KlankerInstance = {
-      id: crypto.randomUUID(),
+      // saveKlanker resolves the final unique slug-id; seed it here.
+      id: slug || crypto.randomUUID(),
       name: trimmed,
-      slug: trimmed.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+      slug,
       role: "remote",
       provider: "",
       model: "",
