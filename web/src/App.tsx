@@ -559,7 +559,6 @@ export function App() {
   // does the same-origin auth check, then instances + settings.
   useEffect(() => {
     void (async () => {
-      let booted: KlankerInstance | null = null;
       if (caps.spawn) {
         // Desktop: never gate the UI on the local serve. The dashboard
         // renders immediately (registry/remotes still usable); the managed
@@ -571,7 +570,6 @@ export function App() {
             boot.instance.secret = boot.secret;
             rememberSecret(boot.instance.id, boot.secret);
             setManagedId(boot.instance.id);
-            booted = boot.instance;
           } catch (e) {
             setWsNote(
               `local relay unavailable: ${e instanceof Error ? e.message : String(e)}`
@@ -596,7 +594,6 @@ export function App() {
         const remembered = api.loadActiveId();
         const initial =
           list.find((i) => i.id === remembered) ??
-          (booted ? list.find((i) => i.id === booted.id) : null) ??
           list[0] ??
           null;
         if (initial) selectInstance(initial);
