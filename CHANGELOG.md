@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Racing instance starts (React StrictMode double-effects in dev) could both spawn `klanker serve` on the same port; probe/spawn is serialized so the loser adopts the winner.
 - Saving a local instance whose picked workdir does not exist yet creates the directory instead of leaving a dead path.
 
+### Fixed
+- Managed local serve died silently once the host held more than one workspace: `klanker serve` requires an entry workspace and refused to guess. The spawn now passes `AGENTS_WORKSPACE` (`default` first, else the first workspace).
+- The stale-secret probe checked `/v1/auth/status`, which is a public route and answers 200 for everyone — unauthorized remotes looked healthy. The probe now hits the protected `/v1/workspaces`, so a bad secret marks the row `auth` for real.
+
 ### Added
 - Desktop shell rewritten as a thin lifecycle adapter: the bundled `web/dist` dashboard talks to `klanker serve` over explicit HTTP+Bearer, and Rust owns only native concerns (one managed local serve on `127.0.0.1`, OS keyring, tray, Alt+Space hotkey, notifications, updater, uv provisioning).
 - Desktop boots straight into the dashboard: on startup the app spawns or attaches the managed local serve and hands the webview `{instance, base_url, secret}` via `desktop_bootstrap` — the token prompt only exists for remote/web relays.
