@@ -294,8 +294,7 @@ fn spawn_klanker(
         .env("RELAY_SECRET", token)
         .env("RELAY_WEB_TOKEN", token)
         .env("AGENTS_NO_UPDATE_CHECK", "1")
-        // Data lives under the instance folder, matching the
-        // `instances/<id>/.agents` convention.
+        // Data lives under the instance folder, which is the host root.
         .env("AGENTS_HOST_DIR", host_dir)
         .env("PYTHONUTF8", "1")
         // The bundled webview fetches cross-origin; relay CORS is opt-in
@@ -310,6 +309,13 @@ fn spawn_klanker(
         .stderr(Stdio::from(err));
     if !workdir.is_empty() {
         cmd.env("AGENTS_WORKDIR", workdir);
+    }
+    // `klanker serve` needs an entry workspace and refuses to guess once the
+    // host holds several. Pick `default` when present, else the first ws.
+    if std::env::var_os("AGENTS_WORKSPACE").is_none() {
+        if let Some(ws) = entry_workspace(host_dir) {
+            cmd.env("AGENTS_WORKSPACE", ws);
+        }
     }
     // No DETACHED_PROCESS: the python entry-point shim dies instantly
     // without a console. CREATE_NO_WINDOW hides it for our GUI parent.
@@ -376,6 +382,19 @@ fn instance_host_dir(_app: &AppHandle) -> Result<PathBuf, String> {
         .join("default");
     fs::create_dir_all(&dir).map_err(|e| format!("create host dir: {e}"))?;
     Ok(dir)
+}
+
+/// Entry workspace for `klanker serve`: `default` wins, else the first
+/// directory under `<host>/workspaces`. None when the host has no ws yet —
+/// serve still boots (per-request turns pick their own).
+fn entry_workspace(host_dir: &PathBuf) -> Option<String> {
+    let ws_root = host_dir.join("workspaces");
+    if ws_root.join("default").is_dir() {
+        return Some("default".into());
+    }
+    fs::read_dir(&ws_root).ok()?.flatten().find_map(|e| {
+        e.path().is_dir().then(|| e.file_name().to_string_lossy().to_string())
+    })
 }
 
 fn do_ensure(app: &AppHandle, workdir: &str) -> Result<ServeStatus, String> {

@@ -261,9 +261,10 @@ export const api = {
       const res = await fetch(base(inst) + "/health", { headers: headers(inst) });
       if (!res.ok) throw new Error(String(res.status));
       // Auth probe: a stale/missing secret must surface as "unauthorized",
-      // not look like an empty instance.
+      // not look like an empty instance. Probe a protected route —
+      // /v1/auth/status is public and answers 200 for everyone.
       try {
-        const a = await authedFetch(inst, base(inst) + "/v1/auth/status", { headers: headers(inst) });
+        const a = await authedFetch(inst, base(inst) + "/v1/workspaces", { headers: headers(inst) });
         if (a.status === 401 || a.status === 403) {
           return { is_running: true, port: 0, state: "running", detail: "unauthorized" };
         }
