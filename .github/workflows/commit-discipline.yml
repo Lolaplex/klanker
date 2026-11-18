@@ -1,0 +1,56 @@
+# Commit discipline — the server-side wall. Local hooks/ install the same gate
+# via `hooks/install.sh`, but hooks are bypassable (--no-verify, or simply
+# never installed). This workflow re-runs the exact same grammar (the donor's
+# commit-msg.cjs, not a re-implementation) over every commit a PR adds, so the
+# discipline is enforced where it cannot be skipped.
+name: commit-discipline
+on:
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  messages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Validate every commit message in the PR range
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_REF="origin/${GITHUB_BASE_REF}"
+          if ! git rev-parse --verify -q "$BASE_REF" >/dev/null 2>&1; then
+            git fetch origin "$GITHUB_BASE_REF"
+          fi
+          RANGE_ARG="${BASE_REF}..HEAD"
+          # Grandfather: history that predates the gate can never satisfy it.
+          # Exempt anything reachable from the parent of the commit that first
+          # added hooks/commit-msg.cjs — the wall only judges commits authored
+          # into a tree that already carried it (e.g. a dev→main release PR
+          # carries pre-discipline commits nobody can or should rewrite).
+          GATE_FIRST="$(git rev-list --first-parent HEAD -- hooks/commit-msg.cjs | tail -n 1)"
+          EXCLUDE=()
+          [ -n "$GATE_FIRST" ] && EXCLUDE=(--not "${GATE_FIRST}^")
+          FAILED=0
+          for sha in $(git rev-list "$RANGE_ARG" "${EXCLUDE[@]}"); do
+            MSG="$(mktemp)"
+            git log --format=%B -1 "$sha" > "$MSG"
+            FIRST="$(head -1 "$MSG")"
+            # merge commits author no belief — same exemption as the hook
+            case "$FIRST" in Merge*) continue ;; esac
+            # concept coverage is per-commit: this commit's own diff, never the
+            # cumulative PR range (a second commit must not re-declare the
+            # concepts its ancestors already gardened). Root commits diff
+            # against the empty tree.
+            PARENT="$(git rev-parse --verify -q "${sha}^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+            if ! HOOK_DIFF_RANGE="${PARENT}..${sha}" node hooks/commit-msg.cjs "$MSG"; then
+              echo "::error::commit $sha fails the discipline — $(echo "$FIRST" | cut -c1-72)"
+              FAILED=1
+            fi
+          done
+          [ "$FAILED" -eq 0 ] || { echo "Commit discipline gate FAILED"; exit 1; }
+          echo "All commits in $RANGE_ARG pass the discipline"
