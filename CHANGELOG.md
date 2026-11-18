@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `serve_restart` actually restarts: an owned serve is killed and the respawn waits for the pid to die — previously the health probe re-adopted the still-running process, so a new agents-relay build or changed env was never picked up. Foreign serves are still never killed.
+
 ### Changed
 - The desktop file registry reconciles with the managed local relay's `remotes.json`: remotes added via PWA merge into the desktop instance list (deduped by endpoint host), saves mirror into the relay, and deletes remove relay rows for the same endpoint so instances added on either surface appear on both.
 - The sidebar `auth` chip is clickable and opens the instance sheet for re-authentication; the sheet flags a rejected secret inline, and saving re-probes the relay immediately instead of waiting for the health poll.
