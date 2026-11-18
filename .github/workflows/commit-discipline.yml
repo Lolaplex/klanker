@@ -27,8 +27,16 @@ jobs:
             git fetch origin "$GITHUB_BASE_REF"
           fi
           RANGE_ARG="${BASE_REF}..HEAD"
+          # Grandfather: history that predates the gate can never satisfy it.
+          # Exempt anything reachable from the parent of the commit that first
+          # added hooks/commit-msg.cjs — the wall only judges commits authored
+          # into a tree that already carried it (e.g. a dev→main release PR
+          # carries pre-discipline commits nobody can or should rewrite).
+          GATE_FIRST="$(git rev-list --first-parent HEAD -- hooks/commit-msg.cjs | tail -n 1)"
+          EXCLUDE=()
+          [ -n "$GATE_FIRST" ] && EXCLUDE=(--not "${GATE_FIRST}^")
           FAILED=0
-          for sha in $(git rev-list "$RANGE_ARG"); do
+          for sha in $(git rev-list "$RANGE_ARG" "${EXCLUDE[@]}"); do
             MSG="$(mktemp)"
             git log --format=%B -1 "$sha" > "$MSG"
             FIRST="$(head -1 "$MSG")"
