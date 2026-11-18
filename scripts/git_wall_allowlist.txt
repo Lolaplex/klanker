@@ -1,0 +1,4 @@
+# git_wall allowlist — tracked paths that .gitignore would refuse.
+# Grandfather list only: it must never widen (koru-os doctrine — the wall does
+# not widen). Currently empty: the tree has no tracked-but-ignored files.
+# Row shape: exact path, or a directory prefix ending in '/'.

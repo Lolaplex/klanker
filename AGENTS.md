@@ -36,3 +36,21 @@ klanker cron                        # scheduled care flows
 - `src/klanker/evidence.py` — evidence policy lines and workspace paths.
 - `src/klanker/nucleus.py` — spawns `klanker.turn` (argv shims, then `runner.loop`).
 - `src/klanker/__main__.py` — CLI parser and dispatch.
+
+## Commit discipline (installed via `bash hooks/install.sh`)
+
+Every authored commit answers three sectioned questions — silence is a
+refusal, honest opt-outs are explicit:
+
+- `## World Model` — `Signal: <type> — <note>` per belief that changed,
+  or `Signals: acknowledged-none`. Types live in `signals/*.signal`.
+- `## Gates` — measured rows (`name: pass/total`) or
+  `deferred — <reason>`. "Gates green" is a measured claim, not prose.
+- `## Membrane` — durable beliefs live in `concepts/frag-<id>.md`
+  (frontmatter `type/id/provenance/ts`, id == stem). Stage one →
+  `Action: create|evolve|merge|split|correct|move` + `Concept:`; stage
+  none → `Evolution: acknowledged-none`.
+
+Merge commits are exempt. Never `--no-verify`. Server-side leg:
+`.github/workflows/commit-discipline.yml` re-runs the same grammar over
+every PR commit — local hooks are bypassable, CI is not.
