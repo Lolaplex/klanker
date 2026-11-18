@@ -1,5 +1,6 @@
 pub mod migrate;
 pub mod provision;
+pub mod registry;
 pub mod secrets;
 pub mod serve;
 pub mod tray;
@@ -25,14 +26,19 @@ fn secret_delete(account: String) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             tray::show_main(app);
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build());
+    // Dev builds only: MCP bridge for agent automation of the webview.
+    // Never linked into release artifacts.
+    #[cfg(debug_assertions)]
+    let builder = builder.plugin(tauri_plugin_mcp_bridge::init());
+    builder
         .setup(|app| {
             serve::init(app.handle());
             if let Err(err) = tray::setup_tray(app.handle()) {
@@ -57,7 +63,10 @@ pub fn run() {
             secret_get,
             secret_set,
             secret_delete,
-            migrate::legacy_state
+            migrate::legacy_state,
+            registry::instances_list,
+            registry::instance_save,
+            registry::instance_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running klanker desktop application");

@@ -10,6 +10,7 @@ import {
 import { DEFAULT_SETTINGS } from "../openrouterModels";
 
 const LS_INSTANCES = "klanker.instances";
+const LS_INSTANCES_MIGRATED = "klanker.instances_migrated";
 const LS_SETTINGS = "klanker.settings";
 const LS_IMPORTED = "klanker.legacy_imported";
 const LS_ACTIVE = "klanker.active";
@@ -173,16 +174,19 @@ export const api = {
     return settings;
   },
 
-  // --- instances (localStorage) -------------------------------------------
+  // --- instances ------------------------------------------------------------
+  // Desktop: durable file registry via `~/.klanker/instances/<id>/instance.json`
+  // (survives reloads, userdata wipes, port/origin changes). Web/PWA:
+  // localStorage until the relay hosts the registry (#60 web half).
 
   async listKlankers(): Promise<KlankerInstance[]> {
-    let list: KlankerInstance[] = load(LS_INSTANCES, [] as KlankerInstance[]);
-    if (!Array.isArray(list)) list = [];
-    if (list.length === 0) {
-      // Web/PWA: the same-origin relay is the default instance.
-      // Desktop: the managed local serve at 127.0.0.1:8787 (spawned by the shell).
-      list = [caps.spawn ? desktopLocalInstance() : localInstance()];
-      localStorage.setItem(LS_INSTANCES, JSON.stringify(list));
+    let list = await registryList();
+    if (caps.spawn) {
+      // Managed local entry is synthetic — never persisted to the registry.
+      list = [desktopLocalInstance(), ...list.filter((i) => i.id !== "local")];
+    } else if (list.length === 0) {
+      list = [localInstance()];
+      await registrySave(list[0]);
     }
     if (caps.keyring) {
       for (const inst of list) {
@@ -199,24 +203,35 @@ export const api = {
   async saveKlanker(inst: KlankerInstance): Promise<KlankerInstance> {
     const list = await this.listKlankers();
     const next = { ...inst, updated_at: new Date().toISOString() };
+    const idx = list.findIndex((i) => i.id === inst.id);
+    if (idx < 0 && inst.kind === "remote") {
+      // New remote: slug-stable id — the keyring account `relay.<id>` and the
+      // registry dir `instances/<id>` both key off it, so renames/reloads
+      // never orphan the secret.
+      next.id = uniqueSlug(inst.slug || inst.name, list.map((i) => i.id));
+      next.slug = next.slug || next.id;
+    }
     if (caps.keyring) {
-      const secret = (next.secret || "").trim();
+      const secret = (next.secret || next.endpoint?.secret || "").trim();
       try {
         if (secret) await this.secretSet(`relay.${next.id}`, secret);
         next.has_secret = !!secret || !!next.has_secret;
-        next.secret = undefined;
       } catch {}
     }
-    const idx = list.findIndex((i) => i.id === inst.id);
-    if (idx >= 0) list[idx] = next;
-    else list.push(next);
-    localStorage.setItem(LS_INSTANCES, JSON.stringify(caps.keyring ? list.map(stripSecrets) : list));
-    return { ...next, secret: inst.secret };
+    const stored = stripSecrets(next);
+    await registrySave(stored);
+    return { ...stored, secret: inst.secret || inst.endpoint?.secret };
   },
 
   async deleteKlanker(id: string): Promise<void> {
-    const list = (await this.listKlankers()).filter((i) => i.id !== id);
-    localStorage.setItem(LS_INSTANCES, JSON.stringify(caps.keyring ? list.map(stripSecrets) : list));
+    if (isTauri()) {
+      try {
+        await invoke("instance_delete", { id });
+      } catch {}
+    } else {
+      const list = load(LS_INSTANCES, [] as KlankerInstance[]).filter((i) => i.id !== id);
+      localStorage.setItem(LS_INSTANCES, JSON.stringify(list));
+    }
     if (localStorage.getItem(LS_ACTIVE) === id) localStorage.removeItem(LS_ACTIVE);
     if (caps.keyring) {
       try {
@@ -237,8 +252,16 @@ export const api = {
 
   async getGatewayStatus(inst: KlankerInstance): Promise<ProcessStatus> {
     try {
-      const res = await authedFetch(inst, base(inst) + "/health", { headers: headers(inst) });
+      const res = await fetch(base(inst) + "/health", { headers: headers(inst) });
       if (!res.ok) throw new Error(String(res.status));
+      // Auth probe: a stale/missing secret must surface as "unauthorized",
+      // not look like an empty instance.
+      try {
+        const a = await authedFetch(inst, base(inst) + "/v1/auth/status", { headers: headers(inst) });
+        if (a.status === 401 || a.status === 403) {
+          return { is_running: true, port: 0, state: "running", detail: "unauthorized" };
+        }
+      } catch {}
       return { is_running: true, port: 0, state: "running" };
     } catch {
       return { is_running: false, port: 0, state: "stopped", detail: "unreachable" };
@@ -533,28 +556,15 @@ export const api = {
 
   /** Spawn/attach the managed local serve and return the instance plus its
    *  bearer secret in one shot (desktop only). */
-  /** One-time import of the legacy `~/.klanker` file store (pre-thin-shell
-   *  builds): instance configs + app settings → localStorage. Secrets stay
-   *  in the OS keyring under the same `relay.<id>` accounts. */
+  /** One-time import of legacy app settings from `~/.klanker` (pre-thin-shell
+   *  builds). Instance configs need no import — the file registry reads the
+   *  same `instances/<id>/instance.json` files the monolith wrote. */
   async importLegacy(): Promise<void> {
     if (!caps.keyring || localStorage.getItem(LS_IMPORTED)) return;
     try {
-      const st = await invoke<{ instances?: Record<string, unknown>[]; settings?: unknown }>("legacy_state");
+      const st = await invoke<{ settings?: unknown }>("legacy_state");
       if (st?.settings && !localStorage.getItem(LS_SETTINGS)) {
         localStorage.setItem(LS_SETTINGS, JSON.stringify(st.settings));
-      }
-      // Legacy `kind: "local"` rows were per-instance serves — on the thin
-      // shell the managed local entry is synthetic (desktopLocalInstance).
-      const insts = (st?.instances || [])
-        .filter((raw) => raw.kind !== "local")
-        .map(mapLegacyInstance);
-      if (insts.length) {
-        const existing: KlankerInstance[] = load(LS_INSTANCES, [] as KlankerInstance[]);
-        const merged = [...existing];
-        for (const inst of insts) {
-          if (!merged.some((i) => i.id === inst.id)) merged.push(inst);
-        }
-        localStorage.setItem(LS_INSTANCES, JSON.stringify(merged.map(stripSecrets)));
       }
     } catch {}
     localStorage.setItem(LS_IMPORTED, "1");
@@ -663,6 +673,64 @@ function stripSecrets(inst: KlankerInstance): KlankerInstance {
   const copy = { ...inst, secret: undefined };
   if (copy.endpoint) copy.endpoint = { ...copy.endpoint, secret: undefined };
   return copy;
+}
+
+// --- instance registry backend ---------------------------------------------
+// Desktop: `~/.klanker/instances/<id>/instance.json` via tauri commands.
+// Web/PWA: localStorage (relay-hosted registry is the web half of #60).
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+function uniqueSlug(base: string, taken: string[]): string {
+  const root = slugify(base) || "instance";
+  let id = root;
+  for (let n = 2; taken.includes(id); n++) id = `${root}-${n}`;
+  return id;
+}
+
+async function registryList(): Promise<KlankerInstance[]> {
+  if (isTauri()) {
+    let rows: KlankerInstance[] = [];
+    try {
+      rows = (await invoke<Record<string, unknown>[]>("instances_list")).map(mapLegacyInstance);
+    } catch {}
+    // One-time move: localStorage-era bookmarks → file registry.
+    if (!localStorage.getItem(LS_INSTANCES_MIGRATED)) {
+      const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
+      for (const inst of Array.isArray(ls) ? ls : []) {
+        if (inst.id === "local" || rows.some((r) => r.id === inst.id)) continue;
+        const stored = stripSecrets(inst);
+        try {
+          await invoke("instance_save", { inst: stored });
+          rows.push(stored);
+        } catch {}
+      }
+      localStorage.setItem(LS_INSTANCES_MIGRATED, "1");
+      localStorage.removeItem(LS_INSTANCES);
+    }
+    return rows;
+  }
+  const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
+  return Array.isArray(ls) ? ls : [];
+}
+
+async function registrySave(inst: KlankerInstance): Promise<void> {
+  if (isTauri()) {
+    await invoke("instance_save", { inst });
+    return;
+  }
+  const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
+  const arr = Array.isArray(ls) ? ls : [];
+  const idx = arr.findIndex((i) => i.id === inst.id);
+  if (idx >= 0) arr[idx] = inst;
+  else arr.push(inst);
+  localStorage.setItem(LS_INSTANCES, JSON.stringify(arr));
 }
 
 /** The managed local serve entry for desktop builds. */

@@ -30,6 +30,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Host secrets and the OpenRouter key are stored in the OS keyring on desktop (`secret_get`/`secret_set`/`secret_delete`); localStorage keeps only `has_secret` markers there. Browser/PWA storage is unchanged.
 - In-window dialogs replace native `prompt()`/`confirm()` everywhere (workspace/persona creation, delete/archive confirmations): the same styled modal renders on desktop webview, browser and PWA, with Enter/Escape/backdrop handling and a danger style for destructive actions.
 - One-time import of the legacy `~/.klanker` store on desktop: pre-thin-shell instance configs and app settings merge into the new localStorage registry (`legacy_state` command); remote bookmarks keep working because secrets already live in the OS keyring under the same `relay.<id>` accounts.
+- Durable instance registry on desktop: connected remotes persist to `~/.klanker/instances/<id>/instance.json` — the same files the legacy build wrote — so bookmarks survive reloads, origin/port changes, and webview-data resets. New remotes get slug-stable ids (`vps`, not a uuid) so the keyring account `relay.<id>` stays attached across renames. Browser/PWA keeps localStorage until the relay hosts the registry.
+- Health poll probes `/v1/auth/status` after `/health`: a stale or missing remote secret marks the sidebar row `auth` instead of looking like an empty instance.
+- Dev builds load `tauri-plugin-mcp-bridge` (`debug_assertions` only) for webview automation; release artifacts do not link it.
 
 ### Changed
 - `TELEGRAM_BOT_TOKEN`, `GITHUB_TOKEN`/`GH_TOKEN` resolve through `agents_workspace.resolve_secret`: `<ws>/secrets.json`, then `<host>/secrets.json`, then the environment. Shell env behaviour is unchanged when no secrets file defines the key.
