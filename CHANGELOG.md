@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Remote keyring secrets are stored under the endpoint host (`relay.<host:port>`) instead of the volatile instance id — renaming, slug changes and re-adding the same server no longer orphan the stored token. Legacy `relay.<id>` entries are adopted on first read; deletion cleans both accounts.
+
 ### Fixed
 - Dashboard iOS PWA bottom gap and keyboard jump: standalone mode now keeps the document at `100vh` with a constant `translateZ(0)` shell (avoiding the 47px WebKit clip and compositor teardown), intercepts first-tap input focus via `touchend` + `focus({ preventScroll: true })` to prevent native viewport panning, starts opening/closing spring transitions immediately at `t = 0`, anchors the message scroll container across keyboard animations, unlocks PWA landscape orientation, and balances `.composer` padding (`sw` cache `v11`).
 - Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.

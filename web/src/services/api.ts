@@ -32,11 +32,26 @@ function headers(inst: KlankerInstance, json = false): Record<string, string> {
 }
 
 /** In-memory secret cache: a token minted at spawn is usable before it hits
- *  the keyring read path, and survives listKlankers() rebuilds. */
+ *  the keyring read path, and survives listKlankers() rebuilds. Keyed by
+ *  keyring account, not instance id. */
 const secretCache = new Map<string, string>();
 
-export function rememberSecret(id: string, secret: string): void {
-  if (secret) secretCache.set(id, secret);
+export function rememberSecret(account: string, secret: string): void {
+  if (secret) secretCache.set(account, secret);
+}
+
+/** Keyring account for an instance's relay secret. Remote instances key off
+ *  the endpoint host — renames, slug changes and re-adding the same server
+ *  under a new name can never orphan the stored token. Local/managed serves
+ *  key off the instance id (`relay.local`), matching serve.rs. */
+export function secretAccount(inst: KlankerInstance): string {
+  const base = inst.endpoint?.base_url || inst.base_url || "";
+  if (inst.kind === "local" || !base) return `relay.${inst.id}`;
+  try {
+    return `relay.${new URL(base).host}`;
+  } catch {
+    return `relay.${inst.id}`;
+  }
 }
 
 /** Pull a keyring secret into inst.secret. Called lazily — the local
@@ -44,17 +59,29 @@ export function rememberSecret(id: string, secret: string): void {
 async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void> {
   if (!caps.keyring || inst.via === "relay") return;
   if (!force && inst.secret) return;
-  const cached = secretCache.get(inst.id);
+  const account = secretAccount(inst);
+  const cached = secretCache.get(account);
   if (cached && !force) {
     inst.secret = cached;
     inst.has_secret = true;
     return;
   }
   try {
-    const s = await invoke<string | null>("secret_get", { account: `relay.${inst.id}` });
+    let s = await invoke<string | null>("secret_get", { account });
+    if (!s && account !== `relay.${inst.id}`) {
+      // Legacy id-keyed entry — adopt it under the endpoint account so
+      // pre-#56 installs keep working without re-entering the secret.
+      s = await invoke<string | null>("secret_get", { account: `relay.${inst.id}` });
+      if (s) {
+        try {
+          await invoke("secret_set", { account, secret: s });
+          await invoke("secret_delete", { account: `relay.${inst.id}` });
+        } catch {}
+      }
+    }
     inst.secret = s || undefined;
     inst.has_secret = !!s;
-    if (s) secretCache.set(inst.id, s);
+    if (s) secretCache.set(account, s);
   } catch {}
 }
 
@@ -194,13 +221,7 @@ export const api = {
       await registrySave(list[0]);
     }
     if (caps.keyring) {
-      for (const inst of list) {
-        try {
-          const s = await this.secretGet(`relay.${inst.id}`);
-          inst.secret = s || undefined;
-          inst.has_secret = !!s;
-        } catch {}
-      }
+      for (const inst of list) await hydrateSecret(inst);
     }
     return list;
   },
@@ -210,16 +231,18 @@ export const api = {
     const next = { ...inst, updated_at: new Date().toISOString() };
     const idx = list.findIndex((i) => i.id === inst.id);
     if (idx < 0 && inst.kind === "remote") {
-      // New remote: slug-stable id — the keyring account `relay.<id>` and the
-      // registry dir `instances/<id>` both key off it, so renames/reloads
-      // never orphan the secret.
+      // New remote: slug-stable id for the registry dir `instances/<id>`.
       next.id = uniqueSlug(inst.slug || inst.name, list.map((i) => i.id));
       next.slug = next.slug || next.id;
     }
     if (caps.keyring) {
       const secret = (next.secret || next.endpoint?.secret || "").trim();
       try {
-        if (secret) await this.secretSet(`relay.${next.id}`, secret);
+        if (secret) {
+          const account = secretAccount(next);
+          await this.secretSet(account, secret);
+          secretCache.set(account, secret);
+        }
         next.has_secret = !!secret || !!next.has_secret;
       } catch {}
     }
@@ -228,6 +251,10 @@ export const api = {
   },
 
   async deleteKlanker(id: string): Promise<void> {
+    let inst: KlankerInstance | undefined;
+    try {
+      inst = (await registryList()).find((i) => i.id === id);
+    } catch {}
     if (isTauri()) {
       try {
         await invoke("instance_delete", { id });
@@ -242,7 +269,8 @@ export const api = {
     if (localStorage.getItem(LS_ACTIVE) === id) localStorage.removeItem(LS_ACTIVE);
     if (caps.keyring) {
       try {
-        await this.secretDelete(`relay.${id}`);
+        const accounts = new Set([`relay.${id}`, ...(inst ? [secretAccount(inst)] : [])]);
+        for (const account of accounts) await this.secretDelete(account);
       } catch {}
     }
   },
@@ -589,8 +617,8 @@ export const api = {
     const settings = await this.loadSettings();
     const st = await this.serveEnsureLocal(settings.workspace || undefined);
     const inst = desktopLocalInstance();
-    const secret = (await this.secretGet(`relay.${inst.id}`)) || "";
-    if (secret) rememberSecret(inst.id, secret);
+    const secret = (await this.secretGet(secretAccount(inst))) || "";
+    if (secret) rememberSecret(secretAccount(inst), secret);
     const base_url = inst.endpoint?.base_url || "";
     return { instance: inst, base_url, secret, status: serveToProcess(st) };
   },
