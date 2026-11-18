@@ -561,18 +561,23 @@ export function App() {
     void (async () => {
       let booted: KlankerInstance | null = null;
       if (caps.spawn) {
-        try {
-          const boot = await api.desktopBootstrap();
-          boot.instance.secret = boot.secret;
-          rememberSecret(boot.instance.id, boot.secret);
-          setManagedId(boot.instance.id);
-          booted = boot.instance;
-        } catch (e) {
-          setWsNote(
-            `local relay unavailable: ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
+        // Desktop: never gate the UI on the local serve. The dashboard
+        // renders immediately (registry/remotes still usable); the managed
+        // serve spawns in the background and the health poll picks it up.
         setAuth("ok");
+        void (async () => {
+          try {
+            const boot = await api.desktopBootstrap();
+            boot.instance.secret = boot.secret;
+            rememberSecret(boot.instance.id, boot.secret);
+            setManagedId(boot.instance.id);
+            booted = boot.instance;
+          } catch (e) {
+            setWsNote(
+              `local relay unavailable: ${e instanceof Error ? e.message : String(e)}`
+            );
+          }
+        })();
       } else {
         try {
           const st = await api.authStatus(localInstance());

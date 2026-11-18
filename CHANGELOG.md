@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Saving a local instance whose picked workdir does not exist yet creates the directory instead of leaving a dead path.
 
 ### Fixed
+- Desktop no longer gates the whole dashboard on the managed local serve: the window renders immediately from the registry while the serve spawns in the background — usable even when the local relay is down.
+- Remote instances showed as "down" and never loaded their workspace tree on reload: the status poll hits `/health`, which the relay never CORS-echoed, so every cross-origin fetch died before the load effect ran (agents-relay#50).
 - Managed local serve died silently once the host held more than one workspace: `klanker serve` requires an entry workspace and refused to guess. The spawn now passes `AGENTS_WORKSPACE` (`default` first, else the first workspace).
 - The stale-secret probe checked `/v1/auth/status`, which is a public route and answers 200 for everyone — unauthorized remotes looked healthy. The probe now hits the protected `/v1/workspaces`, so a bad secret marks the row `auth` for real.
 
