@@ -216,6 +216,35 @@ export const api = {
       // Managed local entry is synthetic — never persisted. Legacy
       // `kind: "local"` rows were per-instance serves (monolith) — dead.
       list = [desktopLocalInstance(), ...list.filter((i) => i.id !== "local" && i.kind !== "local")];
+      // Remotes registered on the local relay (added via PWA) merge in by
+      // endpoint host — the file registry wins on conflict.
+      const relay = await localRelayRemotes();
+      if (relay?.remotes) {
+        const known = new Set(list.map((i) => hostKey(i)));
+        const now = new Date().toISOString();
+        for (const m of relay.remotes) {
+          const host = hostKey(m);
+          if (!host || known.has(host)) continue;
+          known.add(host);
+          list.push({
+            id: m.id,
+            name: m.label || m.id,
+            slug: m.id,
+            role: "",
+            provider: "",
+            model: "",
+            workspace: "",
+            lock_workspace: false,
+            port: 0,
+            system_prompt: "",
+            kind: "remote",
+            endpoint: { base_url: m.base_url },
+            has_secret: m.has_secret,
+            created_at: now,
+            updated_at: now,
+          });
+        }
+      }
     } else if (list.length === 0) {
       list = [localInstance()];
       await registrySave(list[0]);
@@ -247,6 +276,16 @@ export const api = {
       } catch {}
     }
     const stored = await registrySave(next);
+    if (next.kind === "remote") {
+      // Mirror into the local relay registry so PWA clients of this host
+      // see the same graph; the secret travels over loopback only.
+      void localRelayRemotes("POST", {
+        id: next.id,
+        base_url: next.endpoint?.base_url || next.base_url || "",
+        label: next.name,
+        secret: (next.secret || next.endpoint?.secret || "").trim(),
+      });
+    }
     return { ...stored, secret: inst.secret || inst.endpoint?.secret };
   },
 
@@ -272,6 +311,17 @@ export const api = {
         const accounts = new Set([`relay.${id}`, ...(inst ? [secretAccount(inst)] : [])]);
         for (const account of accounts) await this.secretDelete(account);
       } catch {}
+      // Remove relay-side mirror rows for the same endpoint — otherwise a
+      // deleted instance resurfaces as a relay-only ghost on next list.
+      if (inst && inst.kind !== "local") {
+        const host = hostKey(inst);
+        if (host) {
+          const relay = await localRelayRemotes();
+          const ids = new Set([id]);
+          for (const m of relay?.remotes || []) if (hostKey(m) === host) ids.add(m.id);
+          for (const rid of ids) void localRelayRemotes("DELETE", undefined, rid);
+        }
+      }
     }
   },
 
@@ -806,6 +856,45 @@ async function relayRemotes(): Promise<KlankerInstance[] | null> {
         updated_at: now,
       })
     );
+  } catch {
+    return null;
+  }
+}
+
+/** Endpoint host — the dedupe key between the desktop file registry and
+ *  the relay-side remotes.json (same key as keyring accounts). */
+function hostKey(inst: { endpoint?: { base_url?: string }; base_url?: string }): string {
+  try {
+    return new URL(inst.endpoint?.base_url || inst.base_url || "").host;
+  } catch {
+    return "";
+  }
+}
+
+/** Managed local relay `/v1/remotes` — the canonical remote graph shared
+ *  with PWA clients of this host. The desktop file registry mirrors into
+ *  it so an instance added on either surface appears on both (#60). */
+async function localRelayRemotes(
+  method: "GET" | "POST" | "DELETE" = "GET",
+  body?: Record<string, unknown>,
+  id?: string
+): Promise<{ remotes?: { id: string; base_url: string; label: string; has_secret: boolean }[] } | null> {
+  if (!caps.keyring) return null;
+  try {
+    const secret =
+      secretCache.get("relay.local") ||
+      (await invoke<string | null>("secret_get", { account: "relay.local" }).catch(() => null)) ||
+      "";
+    const res = await fetch(`http://127.0.0.1:8787/v1/remotes${id ? `/${encodeURIComponent(id)}` : ""}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (!res.ok) return null;
+    return method === "GET" ? await res.json() : {};
   } catch {
     return null;
   }
