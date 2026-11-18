@@ -863,6 +863,11 @@ export function App() {
         return [...prevList, saved];
       });
       if (activeIdRef.current === inst.id || activeIdRef.current === saved.id) setActiveInstance(saved);
+      // Re-probe immediately — a fresh secret should clear `unauthorized`
+      // without waiting for the 8s health poll.
+      void api.getGatewayStatus(saved).then((st) =>
+        setHerd((prev) => ({ ...prev, [saved.id]: st }))
+      );
       const provider = saved.provider.trim().toLowerCase() as ModelProvider;
       const model = provider === "lmstudio" || provider === "openrouter" ? saved.model.trim() : "";
       if (model) {
