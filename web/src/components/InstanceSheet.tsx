@@ -433,6 +433,11 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                 onChange={(value) => writeForm({ ...draftRef.current, secret: value || undefined })}
                 help="RELAY_SECRET — sent as Authorization: Bearer on every call. Needed unless cookie login or open relay."
               />
+              {status?.detail === "unauthorized" && (
+                <p className="mt-1.5 text-[10px] text-red-400">
+                  relay rejected the stored secret — re-enter and it saves on blur
+                </p>
+              )}
             </div>
 
             {!local && !desktop && (

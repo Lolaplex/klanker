@@ -180,14 +180,20 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                   >
                     <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass(row)}`} />
                     <span className={`truncate ${hot ? "font-semibold text-white" : ""}`}>{inst.name}</span>
-                    {row?.detail === "unauthorized" ? (
-                      <span className="ml-auto shrink-0 border border-red-500/60 px-1 text-[9px] uppercase tracking-wider text-red-400">
-                        auth
-                      </span>
-                    ) : hot ? (
+                    {row?.detail !== "unauthorized" && hot ? (
                       <span className="ml-auto h-1.5 w-1.5 shrink-0 bg-white" />
                     ) : null}
                   </button>
+                  {row?.detail === "unauthorized" && (
+                    <button
+                      type="button"
+                      onClick={() => onInstanceSettings(inst)}
+                      title="Relay rejected the stored secret — click to re-enter"
+                      className="shrink-0 border border-red-500/60 px-1 text-[9px] uppercase tracking-wider text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      auth
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => onInstanceSettings(inst)}
