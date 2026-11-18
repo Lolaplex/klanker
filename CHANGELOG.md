@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The desktop file registry reconciles with the managed local relay's `remotes.json`: remotes added via PWA merge into the desktop instance list (deduped by endpoint host), saves mirror into the relay, and deletes remove relay rows for the same endpoint so instances added on either surface appear on both.
+- The sidebar `auth` chip is clickable and opens the instance sheet for re-authentication; the sheet flags a rejected secret inline, and saving re-probes the relay immediately instead of waiting for the health poll.
 - Remote keyring secrets are stored under the endpoint host (`relay.<host:port>`) instead of the volatile instance id — renaming, slug changes and re-adding the same server no longer orphan the stored token. Legacy `relay.<id>` entries are adopted on first read; deletion cleans both accounts.
 
 ### Fixed
