@@ -50,7 +50,6 @@ ARG CALENDAR_REF=${SUITE_REF}
 ARG BROWSER_REF=${SUITE_REF}
 ARG SYNC_REF=${SUITE_REF}
 ARG KEYS_REF=${SUITE_REF}
-ARG DOCS_REF=${SUITE_REF}
 ARG VOICE_REF=${SUITE_REF}
 ARG STORE_REF=${SUITE_REF}
 # Install the workspace contract first: every suite package depends on it and
@@ -69,7 +68,6 @@ RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
         "agents-calendar @ git+https://github.com/Lolaplex/agents-calendar.git@${CALENDAR_REF}" \
         "agents-browser @ git+https://github.com/Lolaplex/agents-browser.git@${BROWSER_REF}" \
         "agents-keys @ git+https://github.com/Lolaplex/agents-keys.git@${KEYS_REF}" \
-        "agents-docs @ git+https://github.com/Lolaplex/agents-docs.git@${DOCS_REF}" \
         "agents-voice @ git+https://github.com/Lolaplex/agents-voice.git@${VOICE_REF}" \
         "agents-store @ git+https://github.com/Lolaplex/agents-store.git@${STORE_REF}" && \
     pip install --no-cache-dir . && \

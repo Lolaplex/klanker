@@ -489,10 +489,7 @@ def main(argv: list[str] | None = None) -> int:
             if web_dir is not None:
                 os.environ["AGENTS_RELAY_WEB_DIR"] = str(web_dir)
 
-        try:
-            from agents_relay.__main__ import main as relay_main
-        except ImportError:
-            from agents_gateway.__main__ import main as relay_main
+        from agents_relay.__main__ import main as relay_main
         sub_argv = ["serve"]
         if getattr(args, "no_telegram", False):
             sub_argv.append("--no-telegram")

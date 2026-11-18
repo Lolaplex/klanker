@@ -118,11 +118,6 @@ VAND_SPEC = {
     ]
 }
 
-DOCS_SPEC = {
-    "command": "agents-docs",
-    "commands": [{"name": "list", "help": "List docsets"}, {"name": "search", "help": "BM25"}],
-}
-
 
 class TestHelpJson(unittest.TestCase):
     def test_read_verbs_and_usage_flags(self):
@@ -160,9 +155,6 @@ class TestHelpJson(unittest.TestCase):
         self.assertEqual(vand["mcp.vand.replicate"]["parameters"]["properties"]["force"]["type"], "boolean")
         self.assertTrue(vand["mcp.vand.replicate"]["mutates"])
 
-        docs = {row["name"]: row for row in build_manifests(DOCS_SPEC, alias="docs", module="agents_docs")}
-        self.assertIn("mcp.docs.list", docs)
-        self.assertFalse(docs["mcp.docs.list"]["mutates"])
 
     def test_keys_read_only_by_default(self):
         env = {k: v for k, v in os.environ.items() if k != "KLANKER_KEYS_WRITE"}

@@ -16,6 +16,11 @@
         "type": "string",
         "description": "Search query",
         "x-cli": "positional"
+      },
+      "engine": {
+        "type": "string",
+        "description": "Engine: auto (default, ddg->bing->searxng), duckduckgo, bing, searxng",
+        "x-cli": "--engine"
       }
     },
     "required": ["query"]
