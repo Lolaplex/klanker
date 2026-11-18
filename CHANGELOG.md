@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.
 
 ### Added
+- Desktop shell rewritten as a thin lifecycle adapter: the bundled `web/dist` dashboard talks to `klanker serve` over explicit HTTP+Bearer, and Rust owns only native concerns (one managed local serve on `127.0.0.1`, OS keyring, tray, Alt+Space hotkey, notifications, updater, uv provisioning).
+- Local serve lifecycle: the app adopts an already-running serve (never kills it) or spawns a single tracked `klanker serve` with a generated `RELAY_WEB_TOKEN` stored in the keyring; close-to-tray keeps it alive, tray Quit kills only app-owned children, and one bounded respawn follows an unexpected death.
+- Settings gains an Updates section on desktop: app update check/install via `tauri-plugin-updater`, plus guided `uv`-based `klanker` install/upgrade when the CLI is missing.
+- Host secrets and the OpenRouter key are stored in the OS keyring on desktop (`secret_get`/`secret_set`/`secret_delete`); localStorage keeps only `has_secret` markers there. Browser/PWA storage is unchanged.
+
+### Changed
+- `src-tauri` shed ~2,800 lines of the legacy multi-instance manager (`commands.rs`, `models.rs`, `presence.rs`); native window decorations are restored and the dead same-origin auth gate is skipped on desktop.
+
+### Added
+- Suite packages `agents-keys`, `agents-docs`, `agents-voice` and `agents-store` are core dependencies and are installed in the Docker image (overridable via `KEYS_REF`, `DOCS_REF`, `VOICE_REF`, `STORE_REF`). The `keys` extra was dropped (now a core dep). Klanker instances can mint did:key identities and prove them to board.lolaplex.org out of the box.
+
+### Fixed
+- Dashboard iOS PWA bottom gap (root cause): the app shell used `fixed inset-0`, and in installed standalone PWAs `bottom: 0` pins to a fixed-position viewport that excludes phantom bottom chrome — the shell ended ~50px above the real screen edge. The shell (and `body`) now size to `100dvh` from `top: 0`, which is the real visible height; sibling PWAs using `100dvh` flow layouts never had the gap. The `kbBox` keyboard override still sets explicit top/height.
+- Dashboard iOS PWA bottom gap: `env(safe-area-inset-bottom)` is inflated in installed standalone PWAs (WebKit counts phantom browser chrome that is never rendered, ~80px instead of the ~34px home indicator), which padded the composer/sidebar/sheets ~46px too far off the screen edge. All bottom-inset consumers now use a `--sab` variable that is clamped to the real inset size in `display-mode: standalone`; browser mode keeps env as-is.
+- Dashboard iOS PWA keyboard handling rebuilt on the real full-height probe: `window.innerHeight` permanently shrinks after the first keyboard open in installed PWAs and `visualViewport` under-reports by the safe-area insets, so the keyboard box could go stale and leave a fixed gap under the composer. The shell now tracks `visualViewport` only while an editable element is focused (`focusin`/`focusout` + settle timer + rotation re-probe), covers both iOS shrink and pan modes, and no longer calls `scrollTo`, which caused stale viewport pans in standalone mode.
+- Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.
+- Dashboard chat sessions: the last open chat (workspace, persona, thread, and even the half-typed composer text) is restored on reload. Sidebar rows no longer show raw `ses_…` ids — names are prefetched from session history when a persona expands and cached across reloads. "new chat" is now a single per-persona draft that only becomes a real session on first send, so clicking it no longer stacks empty chats, and reopening a session can no longer spawn a duplicate.
+
+### Changed
+- Dashboard chat text can be selected. Assistant replies render as Markdown (raw HTML stays text; links are limited to http, https, mailto, and relative URLs). Each message and each code block has a copy control. Buttons are at least 44px. On a coarse pointer, Enter inserts a newline and only the send button submits.
+
+### Added
 - `web/` — the Klanker dashboard, extracted from klanker-desktop as a standalone React/Vite PWA. It talks to `agents-relay` over `/v1/*` (chat SSE stream + stop, workspaces, personas, auth cookie login, approvals, traces) and stores the instance list/settings in the browser. Installable on phone (manifest + service worker + safe-area layout).
 - `klanker serve` serves the vendored dashboard automatically: `src/klanker/_web` (via `scripts/vendor-web.py` or the Docker build) becomes `AGENTS_RELAY_WEB_DIR` when no static dir is configured. `RELAY_WEB_TOKEN` still gates the web surface, so API-only operation stays the default.
 - Dashboard tree sidebar mirrors the real hierarchy: host -> workspace -> persona -> sessions. Sessions come from the relay (`GET .../sessions`), restore their trace-event history on open, and can be deleted server-side (`DELETE .../sessions/<s>`). Chat state is cached in the browser per host+workspace+persona. The add-host modal carries network discovery; the mobile sidebar is a drawer.

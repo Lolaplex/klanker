@@ -68,10 +68,6 @@ class HostCapabilities:
         return self.suite_modules.get("memory", False)
 
     @property
-    def has_docs(self) -> bool:
-        return self.suite_modules.get("docs", False)
-
-    @property
     def has_traces(self) -> bool:
         return self.suite_modules.get("traces", False)
 

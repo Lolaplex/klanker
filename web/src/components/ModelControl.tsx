@@ -89,7 +89,7 @@ export const ModelControl: React.FC<ModelControlProps> = ({
           disabled={!typed}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onToggleStar(typed)}
-          className="p-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white disabled:opacity-40"
+          className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center p-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white disabled:opacity-40"
         >
           <Star className={`w-3.5 h-3.5 ${starred(typed) ? "fill-white text-white" : ""}`} />
         </button>
@@ -135,7 +135,7 @@ function ModelRows({
               type="button"
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onCommit(id)}
-              className={`min-w-0 flex-1 truncate px-2 py-1 text-left ${selected ? "text-white" : "text-[#a3a3a3] hover:text-white"}`}
+              className={`min-w-0 flex-1 min-h-9 truncate px-2 py-1.5 text-left ${selected ? "text-white" : "text-[#a3a3a3] hover:text-white"}`}
             >
               {id}
             </button>
@@ -144,7 +144,7 @@ function ModelRows({
               title={on ? "Unfavorite" : "Favorite"}
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => onToggleStar(id)}
-              className="p-1 text-[#a3a3a3] hover:text-white"
+              className="inline-flex min-h-9 min-w-9 items-center justify-center p-1 text-[#a3a3a3] hover:text-white"
             >
               <Star className={`w-3 h-3 ${on ? "fill-white text-white" : ""}`} />
             </button>

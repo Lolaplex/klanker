@@ -84,15 +84,15 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-[#0a0a0a] border border-[#262626] w-full max-w-sm rounded-lg shadow-2xl overflow-hidden font-mono text-xs">
-        <div className="px-4 py-3 border-b border-[#262626] flex items-center justify-between">
+      <div className="modal-card flex flex-col bg-[#0a0a0a] border border-[#262626] w-full max-w-sm rounded-lg shadow-2xl overflow-hidden font-mono text-xs">
+        <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
           <span className="text-white font-semibold tracking-wider">ADD HOST</span>
-          <button type="button" onClick={close} className="text-[#737373] hover:text-white transition-colors">
+          <button type="button" onClick={close} className="inline-flex h-11 w-11 items-center justify-center text-[#737373] hover:text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+        <form onSubmit={handleSubmit} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 space-y-4">
           <div>
             <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Name</label>
             <input
@@ -121,7 +121,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
               type="button"
               onClick={runDiscovery}
               disabled={discovering}
-              className="w-full flex items-center justify-center gap-1.5 px-2 py-1 text-[#a3a3a3] hover:text-white disabled:opacity-40"
+              className="w-full flex items-center justify-center gap-1.5 min-h-9 px-2 py-1 text-[#a3a3a3] hover:text-white disabled:opacity-40"
             >
               <Radar className={`w-3 h-3 ${discovering ? "animate-pulse" : ""}`} />
               <span>{discovering ? "scanning…" : "rescan"}</span>
@@ -136,7 +136,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
                       key={peer.endpoint}
                       type="button"
                       onClick={() => pick(peer)}
-                      className="w-full text-left px-2 py-1 text-[#a3a3a3] hover:bg-[#141414] hover:text-white rounded"
+                      className="w-full text-left min-h-9 px-2 py-1.5 text-[#a3a3a3] hover:bg-[#141414] hover:text-white rounded"
                     >
                       {peer.hostname}
                       <span className="text-[#525252]"> {peer.endpoint.replace(/^https?:\/\//, "")}</span>
@@ -147,12 +147,12 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
           </div>
 
           <div className="flex items-center justify-end space-x-2">
-            <button type="button" onClick={close} className="px-3 py-1.5 text-[#737373] hover:text-white transition-colors">
+            <button type="button" onClick={close} className="inline-flex min-h-9 items-center px-3 py-1.5 text-[#737373] hover:text-white transition-colors">
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 bg-white hover:bg-[#e5e5e5] text-black font-semibold rounded transition-colors"
+              className="inline-flex min-h-9 items-center px-4 py-1.5 bg-white hover:bg-[#e5e5e5] text-black font-semibold rounded transition-colors"
             >
               Add
             </button>

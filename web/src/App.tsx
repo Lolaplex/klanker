@@ -12,7 +12,7 @@ import {
   ChatMessage,
   PendingApproval,
 } from "./types/klanker";
-import { api, localInstance } from "./services/api";
+import { api, caps, localInstance, notify, serveToProcess } from "./services/api";
 import type { PersonaRow, SessionRow } from "./components/KlankerList";
 import {
   choiceOf,
@@ -40,6 +40,10 @@ interface DeskChat {
   id: string;
   session: string;
   messages: ChatMessage[];
+  /** Unsent "new chat": no session, no sidebar row, at most one per bucket. */
+  draft?: boolean;
+  /** Persisted composer text (survives chat switches and reloads). */
+  input?: string;
 }
 
 interface ChatBucket {
@@ -57,12 +61,33 @@ function mintSessionId(): string {
   return `ses_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
 }
 
-function seedBucket(session: string): ChatBucket {
-  const id = crypto.randomUUID();
-  return { openId: id, items: [{ id, session, messages: [] }] };
+function clipTitle(text: string): string {
+  const t = text.trim();
+  return t.length > 22 ? `${t.slice(0, 22)}…` : t;
+}
+
+const EMPTY_BUCKET: ChatBucket = { openId: "", items: [] };
+
+/** Merge legacy/dup drafts into one, drop draft flags off real chats. */
+function normBucket(b: ChatBucket): ChatBucket {
+  const items: DeskChat[] = [];
+  let draft: DeskChat | null = null;
+  for (const i of b.items) {
+    if (!i.draft && i.session) {
+      items.push({ ...i, draft: false });
+      continue;
+    }
+    const d: DeskChat = { ...i, session: "", draft: true };
+    draft = draft === null ? d : { ...(draft as DeskChat), input: draft.input || d.input };
+  }
+  const all = draft ? [...items, draft] : items;
+  const openId = all.some((i) => i.id === b.openId) ? b.openId : (all[all.length - 1]?.id ?? "");
+  return { openId, items: all };
 }
 
 const chatsKey = (sel: string) => `klanker.chats.${sel}`;
+const selStoreKey = (instId: string) => `klanker.sel.${instId}`;
+const LS_TITLES = "klanker.titles";
 
 function loadBucket(sel: string): ChatBucket | null {
   try {
@@ -70,7 +95,7 @@ function loadBucket(sel: string): ChatBucket | null {
     if (!raw) return null;
     const b = JSON.parse(raw) as ChatBucket;
     if (!Array.isArray(b?.items) || b.items.length === 0) return null;
-    return { openId: b.items.some((i) => i.id === b.openId) ? b.openId : b.items[0].id, items: b.items };
+    return normBucket(b);
   } catch {
     return null;
   }
@@ -121,8 +146,16 @@ export function App() {
   const [selWs, setSelWs] = useState("");
   const [selPersona, setSelPersona] = useState("");
   const [treePersonas, setTreePersonas] = useState<Record<string, PersonaRow[]>>({});
-  const [serverSessions, setServerSessions] = useState<Record<string, { id: string }[]>>({});
+  const [serverSessions, setServerSessions] = useState<Record<string, { id: string; goal?: string }[]>>({});
   const [wsNote, setWsNote] = useState<string | null>(null);
+  // Session titles keyed "inst ws persona session": prefetched eagerly, cached in localStorage.
+  const [sessionTitles, setSessionTitles] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(LS_TITLES) || "{}") as Record<string, string>;
+    } catch {
+      return {};
+    }
+  });
   // Same-origin relay auth gate: "checking" until /v1/auth/status answers,
   // "needed" shows the token prompt, "ok" runs the dashboard.
   const [auth, setAuth] = useState<"checking" | "needed" | "ok">("checking");
@@ -131,9 +164,77 @@ export function App() {
   const [loginBusy, setLoginBusy] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const [kbBox, setKbBox] = useState<{ height: number; top: number } | null>(null);
+
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+
+    // Installed iOS PWAs lie about heights: window.innerHeight shrinks on the
+    // first keyboard open and never restores, and vv.height under-reports by
+    // the safe-area insets. Probe the real full height via a hidden 100vh el.
+    const probeFullHeight = () => {
+      const probe = document.createElement("div");
+      probe.style.cssText =
+        "position:fixed;top:0;left:0;height:100vh;visibility:hidden;pointer-events:none";
+      document.documentElement.appendChild(probe);
+      const h = probe.offsetHeight;
+      probe.remove();
+      return h || window.innerHeight;
+    };
+    let fullHeight = probeFullHeight();
+    let lastWidth = window.innerWidth;
+    let settle = 0;
+
+    const editableFocused = () => {
+      const el = document.activeElement as HTMLElement | null;
+      return (
+        !!el &&
+        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
+      );
+    };
+
+    const sync = () => {
+      // --vvh feeds modal/sheet max-height (dvh does not shrink for the iOS keyboard).
+      document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
+      if (window.innerWidth !== lastWidth) {
+        lastWidth = window.innerWidth;
+        fullHeight = probeFullHeight(); // rotation changes the real full height
+      }
+      // iOS covers the layout bottom two ways: visualViewport shrinks (resize
+      // mode) or pans (offsetTop>0). Gate on focus so a stale visualViewport
+      // report can never wedge the shell: no editable focus, no keyboard box.
+      const covered = fullHeight - (vv.height + vv.offsetTop);
+      const keyboardOpen = editableFocused() && (covered > 100 || vv.offsetTop > 100);
+      setKbBox(keyboardOpen ? { height: vv.height, top: vv.offsetTop } : null);
+    };
+
+    // iOS animates the keyboard over ~300ms; final vv values arrive late.
+    const syncSettled = () => {
+      sync();
+      window.clearTimeout(settle);
+      settle = window.setTimeout(sync, 400);
+    };
+
+    sync();
+    vv.addEventListener("resize", sync);
+    vv.addEventListener("scroll", sync);
+    window.addEventListener("resize", sync);
+    document.addEventListener("focusin", syncSettled);
+    document.addEventListener("focusout", syncSettled);
+    return () => {
+      window.clearTimeout(settle);
+      vv.removeEventListener("resize", sync);
+      vv.removeEventListener("scroll", sync);
+      window.removeEventListener("resize", sync);
+      document.removeEventListener("focusin", syncSettled);
+      document.removeEventListener("focusout", syncSettled);
+    };
+  }, []);
   const instancesRef = useRef(instances);
   instancesRef.current = instances;
   const activeIdRef = useRef<string | null>(null);
+  const notifiedApprovalRef = useRef<string>("");
   const chatsRef = useRef(chats);
   chatsRef.current = chats;
   const turnBusyRef = useRef(turnBusy);
@@ -143,6 +244,9 @@ export function App() {
   const modelsFetched = useRef(false);
   const saveGen = useRef(0);
   const pollSeq = useRef(0);
+  // Restored messages per session + in-flight title fetches (no refetch spam).
+  const evCache = useRef(new Map<string, ChatMessage[]>());
+  const titleFetches = useRef(new Set<string>());
   const herdKey = instances
     .map((inst) => `${inst.id}|${inst.updated_at}|${inst.endpoint?.base_url ?? inst.base_url ?? ""}|${inst.secret ? 1 : 0}`)
     .join("\n");
@@ -171,8 +275,15 @@ export function App() {
       next.delete(inst.id);
       return next;
     });
-    setSelWs(inst.workspace.trim());
-    setSelPersona((inst.persona || "").trim() || "default");
+    let savedWs = inst.workspace.trim();
+    let savedPersona = (inst.persona || "").trim() || "default";
+    try {
+      const s = JSON.parse(localStorage.getItem(selStoreKey(inst.id)) || "null");
+      if (s?.ws) savedWs = String(s.ws);
+      if (s?.persona) savedPersona = String(s.persona);
+    } catch {}
+    setSelWs(savedWs);
+    setSelPersona(savedPersona);
   }, []);
 
   const selectChat = (ws: string, persona: string, chatId: string) => {
@@ -181,14 +292,16 @@ export function App() {
     setSelWs(ws);
     setSelPersona(persona);
     setChats((prev) => {
-      const current = prev[key] ?? loadBucket(key) ?? seedBucket("");
-      const hit = current.items.find((i) => i.id === chatId || i.session === chatId);
-      const items = hit
-        ? current.items
-        : [...current.items, { id: crypto.randomUUID(), session: chatId, messages: [] }];
-      const openId = hit ? hit.id : items[items.length - 1].id;
-      if (current.openId === openId && items === current.items) return prev;
-      return { ...prev, [key]: { openId, items } };
+      const current = normBucket(prev[key] ?? loadBucket(key) ?? EMPTY_BUCKET);
+      const hit = current.items.find((i) => i.id === chatId || (i.session && i.session === chatId));
+      if (hit) {
+        return current.openId === hit.id ? prev : { ...prev, [key]: { ...current, openId: hit.id } };
+      }
+      const items = [
+        ...current.items.filter((i) => i.session !== chatId),
+        { id: crypto.randomUUID(), session: chatId, messages: [] },
+      ];
+      return { ...prev, [key]: { openId: items[items.length - 1].id, items } };
     });
   };
 
@@ -218,14 +331,18 @@ export function App() {
   const newChat = (ws: string, persona: string) => {
     if (!activeInstance) return;
     const key = `${activeInstance.id} ${ws} ${persona}`;
-    const chatId = crypto.randomUUID();
     setSelWs(ws);
     setSelPersona(persona);
     setChats((prev) => {
-      const current = prev[key] ?? loadBucket(key) ?? { openId: "", items: [] };
+      const current = normBucket(prev[key] ?? loadBucket(key) ?? EMPTY_BUCKET);
+      const draft = current.items.find((i) => i.draft);
+      if (draft) {
+        return current.openId === draft.id ? prev : { ...prev, [key]: { ...current, openId: draft.id } };
+      }
+      const id = crypto.randomUUID();
       return {
         ...prev,
-        [key]: { openId: chatId, items: [...current.items, { id: chatId, session: mintSessionId(), messages: [] }] },
+        [key]: { openId: id, items: [...current.items, { id, session: "", messages: [], draft: true }] },
       };
     });
   };
@@ -247,10 +364,13 @@ export function App() {
   useEffect(() => {
     void (async () => {
       try {
-        const st = await api.authStatus(localInstance());
-        if (st.enabled && !st.authenticated) {
-          setAuth("needed");
-          return;
+        // Desktop shells talk Bearer-only; the same-origin cookie gate is web-only.
+        if (!caps.spawn) {
+          const st = await api.authStatus(localInstance());
+          if (st.enabled && !st.authenticated) {
+            setAuth("needed");
+            return;
+          }
         }
       } catch {
         // Relay unreachable or older relay without /v1/auth/*: proceed anyway.
@@ -279,19 +399,76 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Desktop global hotkey: shell raises the window and emits this event;
+  // bridge it to the window-level event the composer listens for.
+  useEffect(() => {
+    if (!caps.spawn) return;
+    const events = (window as any).__TAURI__?.event;
+    const un = events?.listen?.("klanker:focus-composer", () =>
+      window.dispatchEvent(new Event("klanker:focus-composer"))
+    );
+    return () => {
+      void un?.then?.((f: any) => f?.());
+    };
+  }, []);
+
   // Persist chats per instance (localStorage)
   useEffect(() => {
     for (const [id, bucket] of Object.entries(chats)) saveBucket(id, bucket);
   }, [chats]);
 
+  // Persist session titles (sidebar name cache across reloads)
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_TITLES, JSON.stringify(sessionTitles));
+    } catch {}
+  }, [sessionTitles]);
+
+  // Remember last ws/persona selection per instance
+  useEffect(() => {
+    if (!activeInstance || !selWs) return;
+    try {
+      localStorage.setItem(selStoreKey(activeInstance.id), JSON.stringify({ ws: selWs, persona: selPersona }));
+    } catch {}
+  }, [activeInstance?.id, selWs, selPersona]);
+
+  // Hydrate the active bucket from localStorage so the last open chat
+  // (and the open draft with its composer text) is restored on reload.
+  useEffect(() => {
+    if (!selKey) return;
+    setChats((prev) =>
+      prev[selKey] ? prev : { ...prev, [selKey]: normBucket(loadBucket(selKey) ?? EMPTY_BUCKET) }
+    );
+  }, [selKey]);
+
   // Health poll every 8s
   useEffect(() => {
     let stop = false;
     const tick = async () => {
+      const onlyLocal = instancesRef.current.every((i) => i.kind === "local");
       for (const inst of instancesRef.current) {
-        const st = await api.getGatewayStatus(inst);
-        if (stop) return;
-        setHerd((prev) => ({ ...prev, [inst.id]: st }));
+        try {
+          let st: ProcessStatus;
+          if (caps.spawn && inst.kind === "local") {
+            // Spawn only while local is the active target; remote-first users
+            // get a passive status probe so no Python is started for them.
+            const want =
+              settingsRef.current.auto_start_local_serve !== false &&
+              (activeIdRef.current === inst.id || onlyLocal);
+            const ss = want ? await api.serveEnsureLocal() : await api.serveStatus();
+            st = serveToProcess(ss);
+          } else {
+            st = await api.getGatewayStatus(inst);
+          }
+          if (stop) return;
+          setHerd((prev) => ({ ...prev, [inst.id]: st }));
+        } catch {
+          if (stop) return;
+          setHerd((prev) => ({
+            ...prev,
+            [inst.id]: { is_running: false, port: inst.port, state: "lost" },
+          }));
+        }
       }
     };
     void tick();
@@ -337,72 +514,112 @@ export function App() {
       .catch(() => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: [] })));
   };
 
+  const eventsToMessages = (events: any[]): ChatMessage[] =>
+    events
+      .filter((e) => e?.type === "message" && e?.metadata?.content)
+      .map((e) => ({
+        id: crypto.randomUUID(),
+        role: e.metadata.role === "user" ? "user" : "klanker",
+        content: String(e.metadata.content),
+        timestamp: e.ts || new Date().toISOString(),
+      }));
+
   const expandPersona = (ws: string, persona: string) => {
     const inst = activeInstance;
     if (!inst) return;
     const key = `${ws} ${persona}`;
     void api
       .listSessions(inst, ws, persona)
-      .then((rows) =>
-        setServerSessions((prev) => ({ ...prev, [key]: rows.filter((s) => s.id) }))
-      )
+      .then((rows) => {
+        const list = rows.filter((s) => s.id);
+        setServerSessions((prev) => ({ ...prev, [key]: list }));
+        // Prefetch each session's events once: sidebar title + open-time restore cache.
+        for (const s of list) {
+          const ck = `${inst.id} ${ws} ${persona} ${s.id}`;
+          if (sessionTitles[ck] || evCache.current.has(ck) || titleFetches.current.has(ck)) continue;
+          titleFetches.current.add(ck);
+          void api
+            .sessionEvents(inst, ws, persona, s.id)
+            .then((events) => {
+              if (!events) return;
+              const msgs = eventsToMessages(events);
+              evCache.current.set(ck, msgs);
+              const first = msgs.find((m) => m.role === "user")?.content;
+              if (first) setSessionTitles((prev) => (prev[ck] ? prev : { ...prev, [ck]: clipTitle(first) }));
+            })
+            .finally(() => titleFetches.current.delete(ck));
+        }
+      })
       .catch(() => setServerSessions((prev) => (prev[key] ? prev : { ...prev, [key]: [] })));
   };
 
   const personasOf = (ws: string): PersonaRow[] | undefined => treePersonas[ws];
 
   const sessionRowsOf = (ws: string, persona: string): SessionRow[] | undefined => {
-    const key = `${activeInstance?.id} ${ws} ${persona}`;
+    const instId = activeInstance?.id;
+    const key = `${instId} ${ws} ${persona}`;
     const b = chats[key];
     const server = serverSessions[`${ws} ${persona}`];
     if (!b && server === undefined) return undefined;
-    const localRows: SessionRow[] = (b?.items ?? []).map((i) => {
-      const first = i.messages.find((m) => m.role === "user")?.content?.trim();
-      return {
-        chatId: i.id,
-        session: i.session,
-        label: first ? (first.length > 22 ? `${first.slice(0, 22)}…` : first) : i.session || "new chat",
-        pending: !server?.some((s) => s.id === i.session),
-      };
-    });
+    const localRows: SessionRow[] = (b?.items ?? [])
+      // Hide drafts (the "new chat" button owns them) and legacy zombies:
+      // minted sessions that were never sent and never reached the server.
+      .filter((i) => !i.draft && (i.messages.length > 0 || Boolean(server?.some((s) => s.id === i.session))))
+      .map((i) => {
+        const first = i.messages.find((m) => m.role === "user")?.content?.trim();
+        return {
+          chatId: i.id,
+          session: i.session,
+          label: first ? clipTitle(first) : sessionTitles[`${instId} ${ws} ${persona} ${i.session}`] || "new chat",
+          pending: !server?.some((s) => s.id === i.session),
+        };
+      });
     const covered = new Set(localRows.map((r) => r.session));
     const remoteRows: SessionRow[] = (server ?? [])
       .filter((s) => !covered.has(s.id))
-      .map((s) => ({ chatId: s.id, session: s.id, label: s.id, pending: false }));
+      .map((s) => ({
+        chatId: s.id,
+        session: s.id,
+        label: sessionTitles[`${instId} ${ws} ${persona} ${s.id}`] || s.goal || "…",
+        pending: false,
+      }));
     return [...localRows, ...remoteRows];
   };
 
   // Session history: restore message bubbles from trace events when a chat
-  // with a pinned session is opened and has no local messages yet.
-  const historyTried = useRef<Set<string>>(new Set());
+  // with a pinned session is opened and has no local messages yet. Prefetched
+  // events (sidebar titles) serve as the cache; failures stay retryable.
   useEffect(() => {
     const inst = activeInstance;
     const chat = openChat;
     if (!inst || !chat || !chat.session || chat.messages.length > 0) return;
     if (!selWs || !selPersona) return;
-    if (historyTried.current.has(chat.id)) return;
-    historyTried.current.add(chat.id);
     const ws = selWs;
     const persona = selPersona;
     const key = selKey;
     const chatId = chat.id;
-    void (async () => {
-      const events = await api.sessionEvents(inst, ws, persona, chat.session);
-      if (!events) return;
-      const restored: ChatMessage[] = events
-        .filter((e) => e?.type === "message" && e?.metadata?.content)
-        .map((e) => ({
-          id: crypto.randomUUID(),
-          role: e.metadata.role === "user" ? "user" : "klanker",
-          content: String(e.metadata.content),
-          timestamp: e.ts || new Date().toISOString(),
-        }));
+    const ck = `${inst.id} ${ws} ${persona} ${chat.session}`;
+    const apply = (restored: ChatMessage[]) => {
       if (restored.length === 0) return;
       setChats((prev) =>
         mapChat(prev, key, chatId, (item) =>
           item.messages.length > 0 ? item : { ...item, messages: restored }
         )
       );
+      const first = restored.find((m) => m.role === "user")?.content;
+      if (first) setSessionTitles((prev) => (prev[ck] ? prev : { ...prev, [ck]: clipTitle(first) }));
+    };
+    const cached = evCache.current.get(ck);
+    if (cached) {
+      apply(cached);
+      return;
+    }
+    void (async () => {
+      const events = await api.sessionEvents(inst, ws, persona, chat.session);
+      if (!events) return;
+      const restored = eventsToMessages(events);
+      evCache.current.set(ck, restored);
+      apply(restored);
     })();
   }, [activeInstance, openChat?.id, openChat?.session, selWs, selPersona]);
 
@@ -415,7 +632,17 @@ export function App() {
       const mine = ++pollSeq.current;
       try {
         const next = await api.pendingApproval(inst);
-        if (!stop && mine === pollSeq.current) setPending(next);
+        if (!stop && mine === pollSeq.current) {
+          setPending(next);
+          if (
+            next &&
+            next.id !== notifiedApprovalRef.current &&
+            (document.hidden || !document.hasFocus())
+          ) {
+            notifiedApprovalRef.current = next.id;
+            void notify("Klanker needs approval", `${next.tool} @ ${inst.name}`);
+          }
+        }
       } catch {
         if (!stop && mine === pollSeq.current) setPending(null);
       }
@@ -566,20 +793,20 @@ export function App() {
     const id = inst.id;
     if (turnBusyRef.current?.instanceId === id) return;
     const current = chatsRef.current[selKey];
-    let chat = current?.items.find((item) => item.id === current.openId) ?? current?.items[0];
+    let chat = current?.items.find((item) => item.id === current.openId);
     if (!chat) {
-      // No chat exists yet (fresh bucket or all deleted): mint one so the
+      // No open chat (fresh bucket or all deleted): open a draft so the
       // first send never dies silently.
       const chatId = crypto.randomUUID();
-      chat = { id: chatId, session: mintSessionId(), messages: [] };
+      chat = { id: chatId, session: "", messages: [], draft: true };
       setChats((prev) => {
-        const b = prev[selKey] ?? loadBucket(selKey) ?? { openId: chatId, items: [] };
+        const b = normBucket(prev[selKey] ?? loadBucket(selKey) ?? EMPTY_BUCKET);
         if (b.items.some((i) => i.id === chatId)) return prev;
         return { ...prev, [selKey]: { openId: chatId, items: [...b.items, chat!] } };
       });
     }
     const chatId = chat.id;
-    const session = chat.session;
+    const session = chat.session || mintSessionId();
     rememberTurnModel(inst);
 
     const userMessage: ChatMessage = {
@@ -596,7 +823,13 @@ export function App() {
       timestamp: new Date().toISOString(),
     };
     setChats((prev) =>
-      mapChat(prev, selKey, chatId, (item) => ({ ...item, messages: [...item.messages, userMessage, assistantMessage] }))
+      mapChat(prev, selKey, chatId, (item) => ({
+        ...item,
+        session,
+        draft: false,
+        input: "",
+        messages: [...item.messages, userMessage, assistantMessage],
+      }))
     );
     const busy: TurnBusy = { instanceId: id, chatId, run: crypto.randomUUID().replace(/-/g, "") };
     turnBusyRef.current = busy;
@@ -612,7 +845,7 @@ export function App() {
       const stream = api.streamChat(inst, {
         text,
         run: busy.run,
-        session: session || undefined,
+        session,
         workspace: selWs || undefined,
         persona: selPersona || undefined,
         provider: provider || undefined,
@@ -642,6 +875,9 @@ export function App() {
               ),
             }))
           );
+          if (document.hidden || !document.hasFocus()) {
+            void notify("Klanker finished a turn", inst.name);
+          }
           if (ev.returncode && ev.returncode !== 0) {
             setStreamStatus(`turn exited ${ev.returncode}`);
           }
@@ -698,7 +934,7 @@ export function App() {
 
   if (auth !== "ok") {
     return (
-      <div className="h-dvh w-screen flex items-center justify-center bg-[#000000] text-white font-sans">
+      <div className="fixed inset-0 flex items-center justify-center bg-[#000000] text-white font-sans">
         {auth === "needed" ? (
           <form onSubmit={submitLogin} className="w-72 flex flex-col gap-3 font-mono text-xs">
             <div className="text-[#a3a3a3] tracking-widest uppercase">KLANKER</div>
@@ -727,7 +963,15 @@ export function App() {
   }
 
   return (
-    <div className="h-dvh w-screen flex bg-[#000000] text-white overflow-hidden select-none font-sans">
+    <div
+      data-kb={kbBox ? "open" : undefined}
+      style={{
+        height: kbBox ? `${kbBox.height}px` : "100dvh",
+        top: kbBox ? `${kbBox.top}px` : "0px",
+        bottom: "auto",
+      }}
+      className="fixed left-0 right-0 flex bg-[#000000] text-white overflow-hidden font-sans"
+    >
       {navOpen && (
         <div
           className="md:hidden fixed inset-0 z-40 bg-black/60"
@@ -820,10 +1064,67 @@ export function App() {
                   {wsNote}
                 </div>
               )}
+              {caps.spawn &&
+                activeInstance.kind === "local" &&
+                status &&
+                status.state !== "running" && (
+                  <div className="shrink-0 px-3 py-1.5 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] flex items-center gap-3">
+                    <span className="text-[#ffb454]">
+                      {status.state === "starting"
+                        ? "local klanker starting…"
+                        : status.state === "not_found"
+                          ? "klanker not installed"
+                          : status.state === "lost"
+                            ? "local klanker lost"
+                            : "local klanker stopped"}
+                      {status.detail ? ` — ${status.detail}` : ""}
+                    </span>
+                    {status.state !== "starting" && (
+                      <button
+                        className="text-white border border-[#333] px-2 py-0.5 hover:bg-[#1a1a1a]"
+                        onClick={() =>
+                          void api
+                            .serveRestart()
+                            .then((ss) =>
+                              setHerd((prev) => ({
+                                ...prev,
+                                [activeInstance.id]: serveToProcess(ss),
+                              }))
+                            )
+                            .catch((e) =>
+                              setWsNote(`serve: ${e instanceof Error ? e.message : e}`)
+                            )
+                        }
+                      >
+                        restart
+                      </button>
+                    )}
+                  </div>
+                )}
               <ChatConsole
                 key={`${activeInstance.id}:${openChat?.id ?? ""}`}
                 instance={activeInstance}
+                speakerName={personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || activeInstance.name}
                 messages={messages}
+                input={openChat?.input ?? ""}
+                onInput={(v) => {
+                  if (!selKey) return;
+                  setChats((prev) => {
+                    const b = normBucket(prev[selKey] ?? EMPTY_BUCKET);
+                    const open = b.items.find((i) => i.id === b.openId);
+                    if (open) {
+                      return {
+                        ...prev,
+                        [selKey]: { ...b, items: b.items.map((i) => (i.id === open.id ? { ...i, input: v } : i)) },
+                      };
+                    }
+                    const id = crypto.randomUUID();
+                    return {
+                      ...prev,
+                      [selKey]: { openId: id, items: [...b.items, { id, session: "", messages: [], draft: true, input: v }] },
+                    };
+                  });
+                }}
                 onSendMessage={handleSendMessage}
                 onClearMessages={() => {
                   if (!openChat) return;

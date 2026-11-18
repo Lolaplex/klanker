@@ -13,7 +13,7 @@ import {
 import { ModelControl } from "./ModelControl";
 import { SecretField } from "./SecretField";
 import { TracesPanel } from "./TracesPanel";
-import { api } from "../services/api";
+import { api, caps } from "../services/api";
 
 interface HostSheetProps {
   instance: KlankerInstance;
@@ -30,7 +30,7 @@ interface HostSheetProps {
 }
 
 const inputClass =
-  "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
+  "w-full bg-[#121212] border border-[#262626] focus:border-[#525252] rounded-xl px-3 py-3 md:py-2.5 text-white outline-none text-base md:text-sm";
 
 const choices: ProviderChoice[] = ["echo", "lmstudio", "openrouter", "inherit"];
 
@@ -205,7 +205,10 @@ export const HostSheet: React.FC<HostSheetProps> = ({
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-stretch md:justify-end">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="relative w-full md:w-[420px] max-h-[85vh] md:max-h-none bg-[#0a0a0a] border-t md:border-t-0 md:border-l border-[#262626] flex flex-col font-mono text-xs shadow-2xl">
+      <div className="sheet-card relative w-full md:w-[420px] md:max-h-none bg-[#0a0a0a] rounded-t-2xl md:rounded-none border-t md:border-t-0 md:border-l border-[#262626] flex flex-col font-mono text-xs shadow-2xl">
+        <div className="md:hidden shrink-0 pt-2 pb-1 flex justify-center">
+          <span className="w-10 h-1 rounded-full bg-[#2e2e2e]" />
+        </div>
         <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
           <span className="text-white font-semibold tracking-wider truncate">
             {instance.name || "host"}
@@ -217,13 +220,13 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                 onClick={() => {
                   if (window.confirm(`Remove ${instance.name || instance.id}?`)) onDelete(instance.id);
                 }}
-                className="p-1.5 text-[#737373] hover:text-white transition-colors"
+                className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors"
                 title="Remove this host"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
-            <button type="button" onClick={onClose} className="p-1.5 text-[#737373] hover:text-white transition-colors">
+            <button type="button" onClick={onClose} className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -234,16 +237,16 @@ export const HostSheet: React.FC<HostSheetProps> = ({
             {status?.state === "running" ? "up" : "down"}
             {authed !== null && <span className="ml-2">{authed ? "· authed" : "· not authed"}</span>}
           </span>
-          <div className="flex gap-1">
+          <div className="flex bg-[#141414] border border-[#262626] rounded-full p-1 gap-0.5">
             {(["config", "traces", "jobs"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => setTab(t)}
-                className={`px-2 py-1 rounded border transition-colors ${
+                className={`px-3.5 py-1.5 md:py-1 min-h-9 md:min-h-0 rounded-full transition-colors ${
                   tab === t
-                    ? "bg-white text-black border-white"
-                    : "bg-[#0a0a0a] text-[#a3a3a3] border-[#262626] hover:text-white"
+                    ? "bg-white text-black"
+                    : "text-[#a3a3a3] hover:text-white"
                 }`}
               >
                 {t}
@@ -257,8 +260,8 @@ export const HostSheet: React.FC<HostSheetProps> = ({
             <TracesPanel instance={instance} />
           </div>
         ) : tab === "jobs" ? (
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            <div className="grid grid-cols-2 gap-2">
+          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Workspace</label>
                 <select value={jobWsEff} onChange={(e) => setJobWs(e.target.value)} className={inputClass}>
@@ -296,7 +299,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                       return api.listPersonas(instance, jobWsEff).then(setPersonas);
                     }).catch((e) => setJobNote(e instanceof Error ? e.message : String(e)));
                   }}
-                  className="px-3 py-1.5 bg-white text-black rounded text-[11px] shrink-0"
+                  className="px-4 py-3 md:py-2.5 bg-white text-black rounded-xl text-[11px] shrink-0"
                 >
                   create
                 </button>
@@ -315,22 +318,25 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                 type="button"
                 onClick={() => void submitJob()}
                 disabled={jobBusy || !jobGoal.trim() || !jobWsEff || !jobPersonaEff}
-                className="mt-2 px-3 py-1.5 bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded text-[11px] transition-colors"
+                className="mt-2 w-full sm:w-auto px-4 py-3 md:py-2.5 bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded-xl text-[11px] transition-colors"
               >
                 {jobBusy ? "queueing…" : "Run job"}
               </button>
               {jobNote && <p className="mt-1 text-[11px] text-[#737373]">{jobNote}</p>}
             </div>
-            <div className="border-t border-[#262626] pt-2 space-y-2">
+            <div className="border-t border-[#262626] pt-3 space-y-2">
               {jobList.length === 0 ? (
-                <p className="text-[11px] text-[#525252]">no jobs in this workspace</p>
+                <div className="flex flex-col items-center py-6 text-[#525252]">
+                  <div className="w-9 h-9 border border-[#262626] rounded-full flex items-center justify-center mb-2 text-[11px]">∅</div>
+                  <p className="text-[11px]">no jobs in this workspace</p>
+                </div>
               ) : (
                 jobList.map((j) => (
-                  <div key={j.id} className="border border-[#262626] rounded p-2">
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="text-white truncate">{j.id}</span>
+                  <div key={j.id} className="border border-[#262626] bg-[#101010] rounded-xl p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="text-white text-[11px] leading-snug break-words min-w-0">{j.goal || j.id}</span>
                       <span
-                        className={`px-1.5 py-0.5 rounded border ${
+                        className={`shrink-0 px-2 py-0.5 rounded-full border text-[10px] ${
                           j.status === "done"
                             ? "border-white text-white"
                             : j.status === "failed" || j.status === "stopped"
@@ -341,16 +347,16 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                         {j.status || "?"}
                       </span>
                     </div>
-                    <div className="mt-1 text-[11px] text-[#737373] line-clamp-2">{j.goal}</div>
-                    {j.result && <div className="mt-1 text-[11px] text-[#525252] line-clamp-3">{j.result}</div>}
+                    {j.result && <div className="mt-1.5 text-[11px] text-[#737373] line-clamp-3">{j.result}</div>}
+                    <div className="mt-1.5 text-[10px] text-[#3f3f3f] truncate">{j.id}</div>
                   </div>
                 ))
               )}
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            <div className="grid grid-cols-2 gap-2">
+          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Name</label>
                 <input
@@ -384,6 +390,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
               />
             </div>
 
+            {!caps.spawn && (
             <div>
               <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
                 Web token login (cookie, same-origin)
@@ -400,7 +407,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                   type="button"
                   onClick={() => void doLogin()}
                   disabled={loginBusy || !loginToken.trim()}
-                  className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white disabled:opacity-40"
+                  className="shrink-0 flex items-center gap-1 px-3 py-3 md:py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white disabled:opacity-40"
                 >
                   <LogIn className="w-3.5 h-3.5" />
                   <span>login</span>
@@ -409,15 +416,16 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                   type="button"
                   onClick={() => void doLogout()}
                   disabled={loginBusy || !authed}
-                  className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white disabled:opacity-40"
+                  className="shrink-0 flex items-center gap-1 px-3 py-3 md:py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white disabled:opacity-40"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                 </button>
               </div>
               {loginNote && <p className="mt-1 text-[11px] text-[#737373]">{loginNote}</p>}
             </div>
+            )}
 
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
                   Default workspace
@@ -490,7 +498,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                       key={item}
                       type="button"
                       onClick={() => pickProvider(item)}
-                      className={`px-2 py-1.5 rounded border text-[11px] transition-colors ${
+                      className={`px-2 py-1.5 min-h-9 rounded border text-[11px] transition-colors ${
                         choice === item
                           ? "bg-white text-black border-white"
                           : "bg-[#0a0a0a] text-[#a3a3a3] border-[#262626] hover:text-white"

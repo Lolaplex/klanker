@@ -1,0 +1,28 @@
+{
+  "name": "mcp.browser.read-url",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_browser read-url",
+  "rests_on": "agents-browser stdlib fetch_text; readable text without Chrome/CDP",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "mutates": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "URL to fetch; returns readable markdown-ish text + link list",
+        "x-cli": "positional"
+      },
+      "max-chars": {
+        "type": "integer",
+        "description": "Max extracted chars (default 12000)",
+        "x-cli": "--max-chars"
+      }
+    },
+    "required": ["url"]
+  }
+}

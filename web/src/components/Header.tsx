@@ -12,11 +12,11 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, onOpenSettings, 
   const url = activeInstance?.endpoint?.base_url || activeInstance?.base_url || window.location.host;
 
   return (
-    <header data-tauri-drag-region className="min-h-12 shrink-0 bg-[#000000] border-b border-[#262626] flex items-center justify-between px-3 select-none z-30">
+    <header data-tauri-drag-region className="min-h-12 shrink-0 bg-[#000000] border-b border-[#262626] flex items-center justify-between px-3 select-none z-30 touch-none">
       <div className="flex items-center min-w-0 space-x-3 text-xs font-mono">
         <button
           onClick={onOpenNav}
-          className="md:hidden -ml-1 p-1 text-[#a3a3a3] hover:text-white"
+          className="md:hidden -ml-1 inline-flex h-11 w-11 items-center justify-center text-[#a3a3a3] hover:text-white"
           aria-label="Open navigation"
         >
           <Menu className="w-4 h-4" />
@@ -37,7 +37,7 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, onOpenSettings, 
       <div className="flex items-center space-x-2 shrink-0">
         <button
           onClick={onOpenSettings}
-          className="flex items-center space-x-1 px-2 py-1 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
+          className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
         >
           <Settings className="w-3.5 h-3.5" />
           <span className="hidden md:inline">Settings</span>

@@ -47,7 +47,7 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance }) => {
         <button
           onClick={() => instance && void loadTraces(instance)}
           disabled={loading || !instance}
-          className="flex items-center space-x-1 px-2.5 py-1 bg-[#141414] hover:bg-[#1f1f1f] border border-[#262626] rounded text-[#a3a3a3] hover:text-white transition-colors disabled:opacity-40"
+          className="flex min-h-9 items-center space-x-1 px-2.5 py-1 bg-[#141414] hover:bg-[#1f1f1f] border border-[#262626] rounded text-[#a3a3a3] hover:text-white transition-colors disabled:opacity-40"
         >
           <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
           <span>Refresh</span>
@@ -55,7 +55,7 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance }) => {
       </div>
 
       {/* Traces Stream */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+      <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 space-y-2">
         {traces.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-[#525252] text-center">
             <Layers className="w-8 h-8 text-[#333333] mb-2" />
