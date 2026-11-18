@@ -13,6 +13,8 @@ import {
   PendingApproval,
 } from "./types/klanker";
 import { api, caps, localInstance, rememberSecret } from "./services/api";
+import { dialogs } from "./services/dialogs";
+import { DialogHost } from "./components/DialogHost";
 import { focusWithoutScroll } from "./chatUi";
 import type { PersonaRow, SessionRow } from "./components/KlankerList";
 import {
@@ -495,10 +497,10 @@ export function App() {
     });
   };
 
-  const deleteChat = (ws: string, persona: string, row: SessionRow) => {
+  const deleteChat = async (ws: string, persona: string, row: SessionRow) => {
     const inst = activeInstance;
     if (!inst) return;
-    if (!window.confirm(`Delete chat "${row.label || row.session}"? This cannot be undone.`)) return;
+    if (!(await dialogs.confirm(`Delete chat "${row.label || row.session}"? This cannot be undone.`, { danger: true }))) return;
     const key = `${inst.id} ${ws} ${persona}`;
     // Optimistic: drop the row from both stores before the server answers.
     setServerSessions((prev) => ({
@@ -1185,9 +1187,9 @@ export function App() {
           onDeleteChat={deleteChat}
           onNewHost={() => { setIsNewModalOpen(true); setNavOpen(false); }}
           onInstanceSettings={(inst) => { setInstanceSheetInst(inst); setNavOpen(false); }}
-          onDeleteWorkspace={(ws) => {
+          onDeleteWorkspace={async (ws) => {
             const inst = activeInstance;
-            if (!inst || !window.confirm(`Archive workspace "${ws}"? (restorable from trash)`)) return;
+            if (!inst || !(await dialogs.confirm(`Archive workspace "${ws}"? (restorable from trash)`, { danger: true }))) return;
             void api
               .deleteWorkspace(inst, ws)
               .then(() => api.listWorkspaces(inst))
@@ -1202,9 +1204,9 @@ export function App() {
               })
               .catch((e) => setWsNote(`workspace: ${e instanceof Error ? e.message : e}`));
           }}
-          onNewPersona={(ws) => {
+          onNewPersona={async (ws) => {
             const inst = activeInstance;
-            const id = window.prompt(`new persona id in ${ws}`);
+            const id = await dialogs.prompt(`new persona id in ${ws}`);
             if (!inst || !id?.trim()) return;
             void api
               .createPersona(inst, ws, id.trim())
@@ -1212,18 +1214,18 @@ export function App() {
               .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
               .catch((e) => setWsNote(`persona: ${e instanceof Error ? e.message : e}`));
           }}
-          onDeletePersona={(ws, persona) => {
+          onDeletePersona={async (ws, persona) => {
             const inst = activeInstance;
-            if (!inst || !window.confirm(`Archive persona "${persona}"?`)) return;
+            if (!inst || !(await dialogs.confirm(`Archive persona "${persona}"?`, { danger: true }))) return;
             void api
               .deletePersona(inst, ws, persona)
               .then(() => api.listPersonas(inst, ws))
               .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
               .catch((e) => setWsNote(`persona: ${e instanceof Error ? e.message : e}`));
           }}
-          onNewWorkspace={() => {
+          onNewWorkspace={async () => {
             if (!activeInstance) return;
-            const id = window.prompt("new workspace id");
+            const id = await dialogs.prompt("new workspace id");
             if (!id?.trim()) return;
             void api
               .createWorkspace(activeInstance, id.trim())
@@ -1349,6 +1351,7 @@ export function App() {
           }}
         />
       )}
+      <DialogHost />
     </div>
   );
 }

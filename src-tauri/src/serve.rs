@@ -365,11 +365,14 @@ fn pick_port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
-/// Data root for the managed local serve: `instances/local/.agents`
-/// under app data — one self-contained folder per instance.
-fn instance_host_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = data_dir(app)?.join("instances").join("local").join(".agents");
-    fs::create_dir_all(&dir).map_err(|e| format!("create instance dir: {e}"))?;
+/// Data root for the managed local serve: the user's suite host dir
+/// `~/.agents` (AGENTS_HOST_DIR default) — the app-managed serve sees the
+/// same workspaces as any `klanker serve` started from a shell.
+fn instance_host_dir(_app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = dirs::home_dir()
+        .ok_or("no home dir")?
+        .join(".agents");
+    fs::create_dir_all(&dir).map_err(|e| format!("create host dir: {e}"))?;
     Ok(dir)
 }
 

@@ -14,6 +14,7 @@ import { ModelControl } from "./ModelControl";
 import { SecretField } from "./SecretField";
 import { TracesPanel } from "./TracesPanel";
 import { api } from "../services/api";
+import { dialogs } from "../services/dialogs";
 
 interface InstanceSheetProps {
   instance: KlankerInstance;
@@ -245,7 +246,9 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  if (window.confirm(`Remove ${instance.name || instance.id}?`)) onDelete(instance.id);
+                  void (async () => {
+                    if (await dialogs.confirm(`Remove ${instance.name || instance.id}?`, { danger: true })) onDelete(instance.id);
+                  })();
                 }}
                 className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors"
                 title="Remove this instance"
