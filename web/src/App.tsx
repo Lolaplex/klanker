@@ -12,7 +12,7 @@ import {
   ChatMessage,
   PendingApproval,
 } from "./types/klanker";
-import { api, caps, localInstance, rememberSecret } from "./services/api";
+import { api, caps, localInstance, rememberSecret, secretAccount } from "./services/api";
 import { dialogs } from "./services/dialogs";
 import { DialogHost } from "./components/DialogHost";
 import { focusWithoutScroll } from "./chatUi";
@@ -568,7 +568,7 @@ export function App() {
           try {
             const boot = await api.desktopBootstrap();
             boot.instance.secret = boot.secret;
-            rememberSecret(boot.instance.id, boot.secret);
+            rememberSecret(secretAccount(boot.instance), boot.secret);
             setManagedId(boot.instance.id);
           } catch (e) {
             setWsNote(
