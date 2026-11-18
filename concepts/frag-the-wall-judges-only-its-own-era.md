@@ -5,7 +5,16 @@ provenance: ported from klanker-desktop CI leg; corrected on first klanker PR (f
 ts: 2026-11-18
 ---
 
-Belief: the commit-discipline wall judges only commits authored into a tree that already carried it. Pre-gate history is exempt by ancestry, not by forgiveness.
+Belief: the commit-discipline wall judges only commits authored into a tree that already carried it, and attributes gardening per-commit. Pre-gate history is exempt by ancestry; each commit's Membrane covers its own diff, never the cumulative PR range.
+
+Two range rules, both in `commit-discipline.yml`:
+- Era: `BASE..HEAD` minus everything reachable from the gate's
+  introduction-parent (ancestry, not dates — rebase preserves author
+  dates — and not an allowlist — silence by another name).
+- Attribution: `HOOK_DIFF_RANGE` is `${sha}^..${sha}` per commit. A
+  cumulative `BASE..sha` range makes commit N inherit commit 1's staged
+  concepts and demands it re-declare them — impossible, so multi-commit
+  PRs could never pass.
 
 Concretely: `commit-discipline.yml` checks `BASE..HEAD`, minus everything
 reachable from the parent of the commit that first added

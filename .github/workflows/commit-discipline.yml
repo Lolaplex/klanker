@@ -42,7 +42,12 @@ jobs:
             FIRST="$(head -1 "$MSG")"
             # merge commits author no belief — same exemption as the hook
             case "$FIRST" in Merge*) continue ;; esac
-            if ! HOOK_DIFF_RANGE="${BASE_REF}..${sha}" node hooks/commit-msg.cjs "$MSG"; then
+            # concept coverage is per-commit: this commit's own diff, never the
+            # cumulative PR range (a second commit must not re-declare the
+            # concepts its ancestors already gardened). Root commits diff
+            # against the empty tree.
+            PARENT="$(git rev-parse --verify -q "${sha}^" || echo 4b825dc642cb6eb9a060e54bf8d69288fbee4904)"
+            if ! HOOK_DIFF_RANGE="${PARENT}..${sha}" node hooks/commit-msg.cjs "$MSG"; then
               echo "::error::commit $sha fails the discipline — $(echo "$FIRST" | cut -c1-72)"
               FAILED=1
             fi
