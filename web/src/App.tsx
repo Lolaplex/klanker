@@ -915,8 +915,12 @@ export function App() {
   return (
     <div
       data-kb={kbBox ? "open" : undefined}
-      style={kbBox ? { height: `${kbBox.height}px`, top: `${kbBox.top}px`, bottom: "auto" } : undefined}
-      className="fixed inset-0 flex bg-[#000000] text-white overflow-hidden font-sans"
+      style={{
+        height: kbBox ? `${kbBox.height}px` : "100dvh",
+        top: kbBox ? `${kbBox.top}px` : "0px",
+        bottom: "auto",
+      }}
+      className="fixed left-0 right-0 flex bg-[#000000] text-white overflow-hidden font-sans"
     >
       {navOpen && (
         <div
