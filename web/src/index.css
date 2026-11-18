@@ -12,6 +12,7 @@
     --ink-high: #ffffff;
     --ink-mid: #a3a3a3;
     --ink-low: #525252;
+    --sab: env(safe-area-inset-bottom, 0px);
   }
 
   html, body, #root {
@@ -43,11 +44,20 @@
 
   @media (max-width: 767px) {
     .composer {
-      padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+      padding-bottom: max(0.5rem, var(--sab));
     }
 
     [data-kb="open"] .composer {
       padding-bottom: 0.5rem;
+    }
+  }
+
+  /* iOS standalone PWAs inflate env(safe-area-inset-bottom) with phantom
+     browser chrome that is not rendered (WebKit bug): ~80px instead of the
+     ~34px home indicator. Clamp to the real inset; browser mode keeps env. */
+  @media (display-mode: standalone) {
+    :root {
+      --sab: min(env(safe-area-inset-bottom, 0px), 34px);
     }
   }
 

@@ -260,7 +260,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
             <TracesPanel instance={instance} />
           </div>
         ) : tab === "jobs" ? (
-          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-4 space-y-3">
+          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Workspace</label>
@@ -355,7 +355,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-4 space-y-4">
+          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Name</label>
