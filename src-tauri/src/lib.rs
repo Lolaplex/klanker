@@ -1,3 +1,4 @@
+pub mod migrate;
 pub mod provision;
 pub mod secrets;
 pub mod serve;
@@ -55,7 +56,8 @@ pub fn run() {
             updater::install_update,
             secret_get,
             secret_set,
-            secret_delete
+            secret_delete,
+            migrate::legacy_state
         ])
         .run(tauri::generate_context!())
         .expect("error while running klanker desktop application");

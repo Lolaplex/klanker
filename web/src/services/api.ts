@@ -11,6 +11,7 @@ import { DEFAULT_SETTINGS } from "../openrouterModels";
 
 const LS_INSTANCES = "klanker.instances";
 const LS_SETTINGS = "klanker.settings";
+const LS_IMPORTED = "klanker.legacy_imported";
 const LS_ACTIVE = "klanker.active";
 
 /** "" means same origin — the dashboard is served by the relay itself. */
@@ -532,7 +533,35 @@ export const api = {
 
   /** Spawn/attach the managed local serve and return the instance plus its
    *  bearer secret in one shot (desktop only). */
+  /** One-time import of the legacy `~/.klanker` file store (pre-thin-shell
+   *  builds): instance configs + app settings → localStorage. Secrets stay
+   *  in the OS keyring under the same `relay.<id>` accounts. */
+  async importLegacy(): Promise<void> {
+    if (!caps.keyring || localStorage.getItem(LS_IMPORTED)) return;
+    try {
+      const st = await invoke<{ instances?: Record<string, unknown>[]; settings?: unknown }>("legacy_state");
+      if (st?.settings && !localStorage.getItem(LS_SETTINGS)) {
+        localStorage.setItem(LS_SETTINGS, JSON.stringify(st.settings));
+      }
+      // Legacy `kind: "local"` rows were per-instance serves — on the thin
+      // shell the managed local entry is synthetic (desktopLocalInstance).
+      const insts = (st?.instances || [])
+        .filter((raw) => raw.kind !== "local")
+        .map(mapLegacyInstance);
+      if (insts.length) {
+        const existing: KlankerInstance[] = load(LS_INSTANCES, [] as KlankerInstance[]);
+        const merged = [...existing];
+        for (const inst of insts) {
+          if (!merged.some((i) => i.id === inst.id)) merged.push(inst);
+        }
+        localStorage.setItem(LS_INSTANCES, JSON.stringify(merged.map(stripSecrets)));
+      }
+    } catch {}
+    localStorage.setItem(LS_IMPORTED, "1");
+  },
+
   async desktopBootstrap(): Promise<DesktopBootstrap> {
+    await this.importLegacy();
     const settings = await this.loadSettings();
     const st = await this.serveEnsureLocal(settings.workspace || undefined);
     const inst = desktopLocalInstance();
@@ -601,6 +630,31 @@ export function serveToProcess(ss: ServeStatus): ProcessStatus {
     port: ss.port,
     state,
     detail: ss.detail ?? undefined,
+  };
+}
+
+/** Map a legacy `~/.klanker` instance.json onto the current shape. */
+function mapLegacyInstance(raw: Record<string, unknown>): KlankerInstance {
+  const now = new Date().toISOString();
+  const endpoint = (raw.endpoint || {}) as { base_url?: string | null };
+  const baseUrl = endpoint.base_url || (raw.base_url as string) || "";
+  return {
+    id: (raw.id as string) || (raw.slug as string) || crypto.randomUUID(),
+    name: (raw.name as string) || (raw.slug as string) || "instance",
+    slug: (raw.slug as string) || "",
+    role: (raw.role as string) || "",
+    provider: (raw.provider as string) || "",
+    model: (raw.model as string) || "",
+    workspace: (raw.workspace as string) || "",
+    lock_workspace: !!raw.lock_workspace,
+    port: (raw.port as number) || 0,
+    system_prompt: (raw.system_prompt as string) || "",
+    sensors: raw.sensors as Record<string, boolean> | undefined,
+    kind: raw.kind === "local" ? "local" : "remote",
+    endpoint: baseUrl ? { base_url: baseUrl } : undefined,
+    tailscale: (raw.tailscale as KlankerInstance["tailscale"]) || undefined,
+    created_at: (raw.created_at as string) || now,
+    updated_at: (raw.updated_at as string) || now,
   };
 }
 

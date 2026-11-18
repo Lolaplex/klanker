@@ -28,11 +28,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Local serve lifecycle: the app adopts an already-running serve (never kills it) or spawns a single tracked `klanker serve` with a generated `RELAY_WEB_TOKEN` stored in the keyring; close-to-tray keeps it alive, tray Quit kills only app-owned children, and one bounded respawn follows an unexpected death.
 - Settings gains an Updates section on desktop: app update check/install via `tauri-plugin-updater`, plus guided `uv`-based `klanker` install/upgrade when the CLI is missing.
 - Host secrets and the OpenRouter key are stored in the OS keyring on desktop (`secret_get`/`secret_set`/`secret_delete`); localStorage keeps only `has_secret` markers there. Browser/PWA storage is unchanged.
+- In-window dialogs replace native `prompt()`/`confirm()` everywhere (workspace/persona creation, delete/archive confirmations): the same styled modal renders on desktop webview, browser and PWA, with Enter/Escape/backdrop handling and a danger style for destructive actions.
+- One-time import of the legacy `~/.klanker` store on desktop: pre-thin-shell instance configs and app settings merge into the new localStorage registry (`legacy_state` command); remote bookmarks keep working because secrets already live in the OS keyring under the same `relay.<id>` accounts.
 
 ### Changed
 - `TELEGRAM_BOT_TOKEN`, `GITHUB_TOKEN`/`GH_TOKEN` resolve through `agents_workspace.resolve_secret`: `<ws>/secrets.json`, then `<host>/secrets.json`, then the environment. Shell env behaviour is unchanged when no secrets file defines the key.
 - `src-tauri` shed ~2,800 lines of the legacy multi-instance manager (`commands.rs`, `models.rs`, `presence.rs`); the dead same-origin auth gate is skipped on desktop. The window is frameless again with in-DOM titlebar controls.
-- The managed local serve's data root is `instances/local/.agents` under app data (`AGENTS_HOST_DIR`), matching the Host/Workspace layout — no flat `AGENTS_HOME`. The settings workdir is passed as `AGENTS_WORKDIR` (created if missing).
+- The managed local serve's data root is the real suite host `~/.agents` (`AGENTS_HOST_DIR` default) — the desktop app sees the same workspaces as a shell-started `klanker serve`, no parallel app-data world. The settings workdir is passed as `AGENTS_WORKDIR` (created if missing).
 - UI and code say "instance" consistently: `HostSheet` became `InstanceSheet` and "ADD HOST / Host settings / Host URL / Host secret" labels read "instance" — genuine network-host terms (`AGENTS_HOST_DIR`, `window.location.host`) keep the word.
 
 ### Added
