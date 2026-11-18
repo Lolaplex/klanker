@@ -9,16 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.
+- Editing a local instance persisted nothing — `save()` hardcoded `kind: "remote"` so every local save died at the empty `base_url` check. The sheet keeps the real kind and hides the cookie "authed" pill on desktop (bearer is the only auth path there).
+- Deleting a chat removes it from the sidebar immediately (optimistic removal, refetch on failure) and asks for confirmation first — same for archived workspaces/personas and removed instances.
+- Switching instances showed an open-but-empty workspace tree until a manual collapse: sidebar expansion sets outlived the instance while its caches were cleared. The list remounts per instance and re-opens the saved selection.
+- Racing instance starts (React StrictMode double-effects in dev) could both spawn `klanker serve` on the same port; probe/spawn is serialized so the loser adopts the winner.
+- Saving a local instance whose picked workdir does not exist yet creates the directory instead of leaving a dead path.
 
 ### Added
 - Desktop shell rewritten as a thin lifecycle adapter: the bundled `web/dist` dashboard talks to `klanker serve` over explicit HTTP+Bearer, and Rust owns only native concerns (one managed local serve on `127.0.0.1`, OS keyring, tray, Alt+Space hotkey, notifications, updater, uv provisioning).
+- Desktop boots straight into the dashboard: on startup the app spawns or attaches the managed local serve and hands the webview `{instance, base_url, secret}` via `desktop_bootstrap` — the token prompt only exists for remote/web relays.
+- Frameless window: in-DOM titlebar controls (minimize/maximize/close) with a preserved drag region; hidden in the web/PWA build.
+- Per-chat model picker in the console toolbar (favorites + recent of the instance's effective provider) overrides the instance default for that chat.
+- Remote instance onboarding asks for the secret in the same form as the URL, so `workspaces failed to fetch` no longer means "secret was missing from step one".
+- Instance sheets show a `saved` / `save: <error>` line and an explicit Save button — autosave used to swallow failures into the console. Job rows open their session directly.
+- Settings panel is an app-defaults surface: it edits the default workdir (native folder picker on desktop via `tauri-plugin-dialog`) and labels provider/model explicitly as the fallback used when an instance or chat sets nothing.
+- Sidebar separates the managed local instance from the rest: the spawned instance on top, connected remotes under "connected".
 - Local serve lifecycle: the app adopts an already-running serve (never kills it) or spawns a single tracked `klanker serve` with a generated `RELAY_WEB_TOKEN` stored in the keyring; close-to-tray keeps it alive, tray Quit kills only app-owned children, and one bounded respawn follows an unexpected death.
 - Settings gains an Updates section on desktop: app update check/install via `tauri-plugin-updater`, plus guided `uv`-based `klanker` install/upgrade when the CLI is missing.
 - Host secrets and the OpenRouter key are stored in the OS keyring on desktop (`secret_get`/`secret_set`/`secret_delete`); localStorage keeps only `has_secret` markers there. Browser/PWA storage is unchanged.
 
 ### Changed
 - `TELEGRAM_BOT_TOKEN`, `GITHUB_TOKEN`/`GH_TOKEN` resolve through `agents_workspace.resolve_secret`: `<ws>/secrets.json`, then `<host>/secrets.json`, then the environment. Shell env behaviour is unchanged when no secrets file defines the key.
-- `src-tauri` shed ~2,800 lines of the legacy multi-instance manager (`commands.rs`, `models.rs`, `presence.rs`); native window decorations are restored and the dead same-origin auth gate is skipped on desktop.
+- `src-tauri` shed ~2,800 lines of the legacy multi-instance manager (`commands.rs`, `models.rs`, `presence.rs`); the dead same-origin auth gate is skipped on desktop. The window is frameless again with in-DOM titlebar controls.
+- The managed local serve's data root is `instances/local/.agents` under app data (`AGENTS_HOST_DIR`), matching the Host/Workspace layout — no flat `AGENTS_HOME`. The settings workdir is passed as `AGENTS_WORKDIR` (created if missing).
+- UI and code say "instance" consistently: `HostSheet` became `InstanceSheet` and "ADD HOST / Host settings / Host URL / Host secret" labels read "instance" — genuine network-host terms (`AGENTS_HOST_DIR`, `window.location.host`) keep the word.
 
 ### Added
 - Suite packages `agents-keys`, `agents-docs`, `agents-voice` and `agents-store` are core dependencies and are installed in the Docker image (overridable via `KEYS_REF`, `DOCS_REF`, `VOICE_REF`, `STORE_REF`). The `keys` extra was dropped (now a core dep). Klanker instances can mint did:key identities and prove them to board.lolaplex.org out of the box.

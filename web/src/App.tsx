@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole } from "./components/ChatConsole";
-import { HostSheet } from "./components/HostSheet";
+import { InstanceSheet } from "./components/InstanceSheet";
 import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
 import {
@@ -12,7 +12,7 @@ import {
   ChatMessage,
   PendingApproval,
 } from "./types/klanker";
-import { api, caps, localInstance, notify, serveToProcess } from "./services/api";
+import { api, caps, localInstance, rememberSecret } from "./services/api";
 import type { PersonaRow, SessionRow } from "./components/KlankerList";
 import {
   choiceOf,
@@ -127,6 +127,9 @@ function mapChat(
 
 export function App() {
   const [instances, setInstances] = useState<KlankerInstance[]>([]);
+  // The one relay this app spawned/attached — sidebar shows it as the single
+  // local instance; every other instance is a remote or a legacy local.
+  const [managedId, setManagedId] = useState<string | null>(null);
   const [activeInstance, setActiveInstance] = useState<KlankerInstance | null>(null);
   const [herd, setHerd] = useState<Record<string, ProcessStatus>>({});
   const [chats, setChats] = useState<Record<string, ChatBucket>>({});
@@ -135,7 +138,7 @@ export function App() {
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [settings, setSettings] = useState<DesktopSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [hostSheetInst, setHostSheetInst] = useState<KlankerInstance | null>(null);
+  const [instanceSheetInst, setInstanceSheetInst] = useState<KlankerInstance | null>(null);
   const [rankedIds, setRankedIds] = useState<string[]>([]);
   const [modelNote, setModelNote] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -144,6 +147,8 @@ export function App() {
   const [decideError, setDecideError] = useState<string | null>(null);
   const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
   const [selWs, setSelWs] = useState("");
+  // Per-chat model override, keyed by "<inst> <ws> <persona>"; absent = instance default.
+  const [chatModels, setChatModels] = useState<Record<string, string>>({});
   const [selPersona, setSelPersona] = useState("");
   const [treePersonas, setTreePersonas] = useState<Record<string, PersonaRow[]>>({});
   const [serverSessions, setServerSessions] = useState<Record<string, { id: string; goal?: string }[]>>({});
@@ -165,6 +170,7 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [kbBox, setKbBox] = useState<{ height: number; top: number } | null>(null);
+  const [dbg, setDbg] = useState<string | null>(null);
 
   useEffect(() => {
     const vv = window.visualViewport;
@@ -194,6 +200,48 @@ export function App() {
       );
     };
 
+    // ?kbdebug=1: measure the real layout metrics on-device (iOS PWA only lies
+    // can be settled with numbers, not guesses). Probes resolve the CSS units
+    // that WebKit reports differently in standalone mode. The flag persists in
+    // localStorage because installed PWAs always launch via manifest start_url
+    // and lose the query param — set it once in Safari, then open the PWA.
+    const params = new URLSearchParams(window.location.search);
+    try {
+      if (params.get("kbdebug") === "0") {
+        window.localStorage.removeItem("kbdebug");
+      } else if (params.has("kbdebug")) {
+        window.localStorage.setItem("kbdebug", "1");
+      }
+    } catch {
+      /* private mode */
+    }
+    // Debug branch: always on in standalone — installed PWAs have a storage jar
+    // separate from Safari, so the localStorage flag never reaches the app.
+    let DBG =
+      params.has("kbdebug") ||
+      window.matchMedia("(display-mode: standalone)").matches;
+    if (!DBG) {
+      try {
+        DBG = window.localStorage.getItem("kbdebug") === "1";
+      } catch {
+        /* private mode */
+      }
+    }
+    let probes: HTMLElement[] = [];
+    if (DBG) {
+      const mk = (css: string) => {
+        const d = document.createElement("div");
+        d.style.cssText = `position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;${css}`;
+        document.documentElement.appendChild(d);
+        return d;
+      };
+      probes = [
+        mk("height:100dvh"),
+        mk("height:100vh"),
+        mk("height:env(safe-area-inset-bottom)"),
+      ];
+    }
+
     const sync = () => {
       // --vvh feeds modal/sheet max-height (dvh does not shrink for the iOS keyboard).
       document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
@@ -206,7 +254,31 @@ export function App() {
       // report can never wedge the shell: no editable focus, no keyboard box.
       const covered = fullHeight - (vv.height + vv.offsetTop);
       const keyboardOpen = editableFocused() && (covered > 100 || vv.offsetTop > 100);
-      setKbBox(keyboardOpen ? { height: vv.height, top: vv.offsetTop } : null);
+      setKbBox((prev) => {
+        const next = keyboardOpen ? { height: vv.height, top: vv.offsetTop } : null;
+        if (prev === next) return prev;
+        if (prev && next && prev.height === next.height && prev.top === next.top)
+          return prev;
+        return next;
+      });
+      if (DBG && probes.length === 3) {
+        const comp = document.querySelector(".composer");
+        const r = comp ? comp.getBoundingClientRect() : null;
+        const card = comp?.querySelector("form");
+        const cr = card ? card.getBoundingClientRect() : null;
+        const pb = comp ? getComputedStyle(comp).paddingBottom : "-";
+        const ae = document.activeElement as HTMLElement | null;
+        const sd = window.matchMedia("(display-mode: standalone)").matches ? 1 : 0;
+        setDbg(
+          `ih=${window.innerHeight} vv=${vv.height.toFixed(0)}+${vv.offsetTop.toFixed(0)} ` +
+            `scr=${window.screen.height}\ndvh=${probes[0].offsetHeight} vh=${probes[1].offsetHeight} ` +
+            `sab=${probes[2].offsetHeight} sy=${window.scrollY.toFixed(0)} sd=${sd}\n` +
+            `kb=${keyboardOpen ? `${vv.height.toFixed(0)}+${vv.offsetTop.toFixed(0)}` : "null"} ` +
+            `cov=${covered.toFixed(0)} foc=${ae?.tagName ?? "-"} pb=${pb}\n` +
+            `comp=${r ? `${r.top.toFixed(0)}..${r.bottom.toFixed(0)}` : "-"} ` +
+            `card=${cr ? `${cr.top.toFixed(0)}..${cr.bottom.toFixed(0)}` : "-"}`
+        );
+      }
     };
 
     // iOS animates the keyboard over ~300ms; final vv values arrive late.
@@ -217,6 +289,7 @@ export function App() {
     };
 
     sync();
+    const dbgTick = DBG ? window.setInterval(sync, 700) : 0;
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
     window.addEventListener("resize", sync);
@@ -224,6 +297,8 @@ export function App() {
     document.addEventListener("focusout", syncSettled);
     return () => {
       window.clearTimeout(settle);
+      window.clearInterval(dbgTick);
+      probes.forEach((p) => p.remove());
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
       window.removeEventListener("resize", sync);
@@ -234,7 +309,6 @@ export function App() {
   const instancesRef = useRef(instances);
   instancesRef.current = instances;
   const activeIdRef = useRef<string | null>(null);
-  const notifiedApprovalRef = useRef<string>("");
   const chatsRef = useRef(chats);
   chatsRef.current = chats;
   const turnBusyRef = useRef(turnBusy);
@@ -275,11 +349,14 @@ export function App() {
       next.delete(inst.id);
       return next;
     });
-    let savedWs = inst.workspace.trim();
+    // inst.workspace is the workdir boundary, not a workspace id — the ws
+    // selection only ever comes from the stored choice.
+    let savedWs = "";
     let savedPersona = (inst.persona || "").trim() || "default";
     try {
       const s = JSON.parse(localStorage.getItem(selStoreKey(inst.id)) || "null");
-      if (s?.ws) savedWs = String(s.ws);
+      // Older sessions stored the workdir path here; ws ids are bare slugs.
+      if (s?.ws && /^[\w.-]+$/.test(String(s.ws))) savedWs = String(s.ws);
       if (s?.persona) savedPersona = String(s.persona);
     } catch {}
     setSelWs(savedWs);
@@ -306,18 +383,15 @@ export function App() {
   };
 
   const deleteChat = (ws: string, persona: string, row: SessionRow) => {
-    if (!activeInstance) return;
-    const key = `${activeInstance.id} ${ws} ${persona}`;
     const inst = activeInstance;
-    if (!row.pending) {
-      void api
-        .deleteSession(inst, ws, persona, row.session)
-        .then(() => setServerSessions((prev) => ({
-          ...prev,
-          [`${ws} ${persona}`]: (prev[`${ws} ${persona}`] || []).filter((s) => s.id !== row.session),
-        })))
-        .catch((e) => setWsNote(`delete: ${e instanceof Error ? e.message : e}`));
-    }
+    if (!inst) return;
+    if (!window.confirm(`Delete chat "${row.label || row.session}"? This cannot be undone.`)) return;
+    const key = `${inst.id} ${ws} ${persona}`;
+    // Optimistic: drop the row from both stores before the server answers.
+    setServerSessions((prev) => ({
+      ...prev,
+      [`${ws} ${persona}`]: (prev[`${ws} ${persona}`] || []).filter((s) => s.id !== row.session),
+    }));
     setChats((prev) => {
       const current = prev[key];
       if (!current) return prev;
@@ -326,6 +400,12 @@ export function App() {
       const openId = items.some((i) => i.id === current.openId) ? current.openId : items[items.length - 1].id;
       return { ...prev, [key]: { openId, items } };
     });
+    if (!row.pending) {
+      void api.deleteSession(inst, ws, persona, row.session).catch((e) => {
+        setWsNote(`delete: ${e instanceof Error ? e.message : e}`);
+        expandPersona(ws, persona);
+      });
+    }
   };
 
   const newChat = (ws: string, persona: string) => {
@@ -360,27 +440,45 @@ export function App() {
     return run;
   }, []);
 
-  // Boot: same-origin auth check first, then instances + settings
+  // Boot: desktop spawns/attaches its local relay (token never asked); web
+  // does the same-origin auth check, then instances + settings.
   useEffect(() => {
     void (async () => {
-      try {
-        // Desktop shells talk Bearer-only; the same-origin cookie gate is web-only.
-        if (!caps.spawn) {
+      let booted: KlankerInstance | null = null;
+      if (caps.spawn) {
+        try {
+          const boot = await api.desktopBootstrap();
+          boot.instance.secret = boot.secret;
+          rememberSecret(boot.instance.id, boot.secret);
+          setManagedId(boot.instance.id);
+          booted = boot.instance;
+        } catch (e) {
+          setWsNote(
+            `local relay unavailable: ${e instanceof Error ? e.message : String(e)}`
+          );
+        }
+        setAuth("ok");
+      } else {
+        try {
           const st = await api.authStatus(localInstance());
           if (st.enabled && !st.authenticated) {
             setAuth("needed");
             return;
           }
+        } catch {
+          // Relay unreachable or older relay without /v1/auth/*: proceed anyway.
         }
-      } catch {
-        // Relay unreachable or older relay without /v1/auth/*: proceed anyway.
+        setAuth("ok");
       }
-      setAuth("ok");
       try {
         const list = await api.listKlankers();
         setInstances(list);
         const remembered = api.loadActiveId();
-        const initial = list.find((i) => i.id === remembered) ?? list[0] ?? null;
+        const initial =
+          list.find((i) => i.id === remembered) ??
+          (booted ? list.find((i) => i.id === booted.id) : null) ??
+          list[0] ??
+          null;
         if (initial) selectInstance(initial);
       } catch (e) {
         console.error("Failed to load instances:", e);
@@ -397,19 +495,6 @@ export function App() {
       settingsWrite.current = run.then(() => undefined, () => undefined);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Desktop global hotkey: shell raises the window and emits this event;
-  // bridge it to the window-level event the composer listens for.
-  useEffect(() => {
-    if (!caps.spawn) return;
-    const events = (window as any).__TAURI__?.event;
-    const un = events?.listen?.("klanker:focus-composer", () =>
-      window.dispatchEvent(new Event("klanker:focus-composer"))
-    );
-    return () => {
-      void un?.then?.((f: any) => f?.());
-    };
   }, []);
 
   // Persist chats per instance (localStorage)
@@ -445,30 +530,10 @@ export function App() {
   useEffect(() => {
     let stop = false;
     const tick = async () => {
-      const onlyLocal = instancesRef.current.every((i) => i.kind === "local");
       for (const inst of instancesRef.current) {
-        try {
-          let st: ProcessStatus;
-          if (caps.spawn && inst.kind === "local") {
-            // Spawn only while local is the active target; remote-first users
-            // get a passive status probe so no Python is started for them.
-            const want =
-              settingsRef.current.auto_start_local_serve !== false &&
-              (activeIdRef.current === inst.id || onlyLocal);
-            const ss = want ? await api.serveEnsureLocal() : await api.serveStatus();
-            st = serveToProcess(ss);
-          } else {
-            st = await api.getGatewayStatus(inst);
-          }
-          if (stop) return;
-          setHerd((prev) => ({ ...prev, [inst.id]: st }));
-        } catch {
-          if (stop) return;
-          setHerd((prev) => ({
-            ...prev,
-            [inst.id]: { is_running: false, port: inst.port, state: "lost" },
-          }));
-        }
+        const st = await api.getGatewayStatus(inst);
+        if (stop) return;
+        setHerd((prev) => ({ ...prev, [inst.id]: st }));
       }
     };
     void tick();
@@ -495,6 +560,7 @@ export function App() {
         if (stop) return;
         setWorkspaces(rows);
         setSelWs((cur) => cur || rows[0]?.id || "");
+        rows.forEach((w) => expandWs(w.id));
       } catch (e) {
         if (!stop) setWsNote(`workspaces: ${e instanceof Error ? e.message : e}`);
       }
@@ -632,17 +698,7 @@ export function App() {
       const mine = ++pollSeq.current;
       try {
         const next = await api.pendingApproval(inst);
-        if (!stop && mine === pollSeq.current) {
-          setPending(next);
-          if (
-            next &&
-            next.id !== notifiedApprovalRef.current &&
-            (document.hidden || !document.hasFocus())
-          ) {
-            notifiedApprovalRef.current = next.id;
-            void notify("Klanker needs approval", `${next.tool} @ ${inst.name}`);
-          }
-        }
+        if (!stop && mine === pollSeq.current) setPending(next);
       } catch {
         if (!stop && mine === pollSeq.current) setPending(null);
       }
@@ -679,8 +735,9 @@ export function App() {
     try {
       const saved = await api.saveKlanker(inst);
       if (gen !== saveGen.current) return;
+      // A name edit may rename the id (folder = slug): replace by the sent id.
       setInstances((prevList) => {
-        const idx = prevList.findIndex((i) => i.id === saved.id);
+        const idx = prevList.findIndex((i) => i.id === inst.id || i.id === saved.id);
         if (idx >= 0) {
           const next = [...prevList];
           next[idx] = saved;
@@ -688,7 +745,7 @@ export function App() {
         }
         return [...prevList, saved];
       });
-      if (activeIdRef.current === saved.id) setActiveInstance(saved);
+      if (activeIdRef.current === inst.id || activeIdRef.current === saved.id) setActiveInstance(saved);
       const provider = saved.provider.trim().toLowerCase() as ModelProvider;
       const model = provider === "lmstudio" || provider === "openrouter" ? saved.model.trim() : "";
       if (model) {
@@ -696,6 +753,7 @@ export function App() {
       }
     } catch (e) {
       console.error("Failed to save instance:", e);
+      throw e;
     }
   };
 
@@ -747,7 +805,7 @@ export function App() {
   };
 
   const handleCreate = (draft: KlankerInstance) => {
-    void handleSaveInstance({ ...draft, provider: "inherit" });
+    void handleSaveInstance({ ...draft, provider: "inherit" }).catch(() => undefined);
   };
 
 
@@ -841,7 +899,7 @@ export function App() {
     try {
       const choice = choiceOf(inst);
       const provider = choice === "inherit" ? "" : inst.provider.trim();
-      const model = (choice === "inherit" ? inst.model.trim() || settingsRef.current.model : inst.model).trim();
+      const model = (chatModels[selKey] ?? (choice === "inherit" ? inst.model.trim() || settingsRef.current.model : inst.model)).trim();
       const stream = api.streamChat(inst, {
         text,
         run: busy.run,
@@ -875,9 +933,6 @@ export function App() {
               ),
             }))
           );
-          if (document.hidden || !document.hasFocus()) {
-            void notify("Klanker finished a turn", inst.name);
-          }
           if (ev.returncode && ev.returncode !== 0) {
             setStreamStatus(`turn exited ${ev.returncode}`);
           }
@@ -972,6 +1027,19 @@ export function App() {
       }}
       className="fixed left-0 right-0 flex bg-[#000000] text-white overflow-hidden font-sans"
     >
+      {dbg && (
+        <>
+          <pre className="fixed left-0 z-[9999] m-0 p-1.5 text-[11px] leading-tight font-mono bg-black/90 text-lime-300 pointer-events-none max-w-full whitespace-pre-wrap border border-lime-900" style={{ top: "calc(env(safe-area-inset-top, 0px) + 104px)" }}>
+            {dbg}
+          </pre>
+          {/* render-clip probes: fixed strips at known clientY. If the webview
+              framebuffer clips at the layout viewport (797), the 755 strip
+              shows but 800/835 do not. */}
+          <div className="fixed left-0 z-[9999] w-2 h-4 bg-green-500 pointer-events-none" style={{ top: "755px" }} />
+          <div className="fixed left-0 z-[9999] w-2 h-4 bg-red-500 pointer-events-none" style={{ top: "800px" }} />
+          <div className="fixed left-0 z-[9999] w-2 h-4 bg-blue-500 pointer-events-none" style={{ top: "835px" }} />
+        </>
+      )}
       {navOpen && (
         <div
           className="md:hidden fixed inset-0 z-40 bg-black/60"
@@ -984,7 +1052,9 @@ export function App() {
         }`}
       >
         <KlankerList
+          key={activeInstance?.id ?? "none"}
           instances={instances}
+          managedId={managedId}
           activeId={activeInstance?.id ?? null}
           unread={unread}
           statuses={herd}
@@ -1001,7 +1071,7 @@ export function App() {
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
           onNewHost={() => { setIsNewModalOpen(true); setNavOpen(false); }}
-          onHostSettings={(inst) => { setHostSheetInst(inst); setNavOpen(false); }}
+          onInstanceSettings={(inst) => { setInstanceSheetInst(inst); setNavOpen(false); }}
           onDeleteWorkspace={(ws) => {
             const inst = activeInstance;
             if (!inst || !window.confirm(`Archive workspace "${ws}"? (restorable from trash)`)) return;
@@ -1054,7 +1124,7 @@ export function App() {
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <Header activeInstance={activeInstance} onOpenSettings={openSettings} onOpenNav={() => setNavOpen(true)} />
+        <Header activeInstance={activeInstance} selWs={selWs} onOpenSettings={openSettings} onOpenNav={() => setNavOpen(true)} />
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activeInstance ? (
@@ -1064,43 +1134,6 @@ export function App() {
                   {wsNote}
                 </div>
               )}
-              {caps.spawn &&
-                activeInstance.kind === "local" &&
-                status &&
-                status.state !== "running" && (
-                  <div className="shrink-0 px-3 py-1.5 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] flex items-center gap-3">
-                    <span className="text-[#ffb454]">
-                      {status.state === "starting"
-                        ? "local klanker starting…"
-                        : status.state === "not_found"
-                          ? "klanker not installed"
-                          : status.state === "lost"
-                            ? "local klanker lost"
-                            : "local klanker stopped"}
-                      {status.detail ? ` — ${status.detail}` : ""}
-                    </span>
-                    {status.state !== "starting" && (
-                      <button
-                        className="text-white border border-[#333] px-2 py-0.5 hover:bg-[#1a1a1a]"
-                        onClick={() =>
-                          void api
-                            .serveRestart()
-                            .then((ss) =>
-                              setHerd((prev) => ({
-                                ...prev,
-                                [activeInstance.id]: serveToProcess(ss),
-                              }))
-                            )
-                            .catch((e) =>
-                              setWsNote(`serve: ${e instanceof Error ? e.message : e}`)
-                            )
-                        }
-                      >
-                        restart
-                      </button>
-                    )}
-                  </div>
-                )}
               <ChatConsole
                 key={`${activeInstance.id}:${openChat?.id ?? ""}`}
                 instance={activeInstance}
@@ -1136,6 +1169,21 @@ export function App() {
                 streamStatus={streamStatus}
                 sessionLabel={`${selWs || "default"} · ${selPersona || "default"} · ${openChat?.session || "new"}`}
                 sendHold={sendHold}
+                modelOptions={(() => {
+                  const kind = choiceOf(activeInstance) === "inherit" ? windowKind(settings) : choiceOf(activeInstance);
+                  return kind === "openrouter" || kind === "lmstudio"
+                    ? [...new Set([...settings.favorites[kind], ...settings.recent_models[kind]])].filter(Boolean)
+                    : [];
+                })()}
+                model={chatModels[selKey] ?? ""}
+                onModel={(id) =>
+                  setChatModels((prev) => {
+                    const next = { ...prev };
+                    if (id) next[selKey] = id;
+                    else delete next[selKey];
+                    return next;
+                  })
+                }
                 pending={pending}
                 deciding={deciding}
                 decideError={decideError}
@@ -1151,10 +1199,10 @@ export function App() {
       </div>
 
       <NewKlankerModal isOpen={isNewModalOpen} onClose={() => setIsNewModalOpen(false)} onSave={handleCreate} />
-      {hostSheetInst && (
-        <HostSheet
-          instance={instances.find((i) => i.id === hostSheetInst.id) ?? hostSheetInst}
-          status={herd[hostSheetInst.id] ?? null}
+      {instanceSheetInst && (
+        <InstanceSheet
+          instance={instances.find((i) => i.id === instanceSheetInst.id) ?? instanceSheetInst}
+          status={herd[instanceSheetInst.id] ?? null}
           settings={settings}
           rankedIds={rankedIds}
           modelNote={modelNote}
@@ -1166,9 +1214,13 @@ export function App() {
           }}
           onDelete={(id) => {
             handleDeleteInstance(id);
-            setHostSheetInst(null);
+            setInstanceSheetInst(null);
           }}
-          onClose={() => setHostSheetInst(null)}
+          onOpenSession={(ws, persona, session) => {
+            setInstanceSheetInst(null);
+            selectChat(ws, persona, session);
+          }}
+          onClose={() => setInstanceSheetInst(null)}
         />
       )}
       {settingsOpen && (

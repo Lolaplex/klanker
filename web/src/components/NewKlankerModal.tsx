@@ -12,6 +12,7 @@ interface NewKlankerModalProps {
 export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClose, onSave }) => {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [secret, setSecret] = useState("");
   const [discovering, setDiscovering] = useState(false);
   const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
 
@@ -72,7 +73,10 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
       lock_workspace: false,
       port: 0,
       system_prompt: "",
-      endpoint: { base_url: url.trim().replace(/\/+$/, "") },
+      endpoint: {
+        base_url: url.trim().replace(/\/+$/, ""),
+        secret: secret.trim() || undefined,
+      },
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       kind: "remote",
@@ -86,7 +90,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="modal-card flex flex-col bg-[#0a0a0a] border border-[#262626] w-full max-w-sm rounded-lg shadow-2xl overflow-hidden font-mono text-xs">
         <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
-          <span className="text-white font-semibold tracking-wider">ADD HOST</span>
+          <span className="text-white font-semibold tracking-wider">ADD INSTANCE</span>
           <button type="button" onClick={close} className="inline-flex h-11 w-11 items-center justify-center text-[#737373] hover:text-white transition-colors">
             <X className="w-4 h-4" />
           </button>
@@ -112,6 +116,16 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
               placeholder="https://relay.example.com (empty = this origin)"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
+              className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+            />
+          </div>
+          <div>
+            <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Instance secret</label>
+            <input
+              type="password"
+              placeholder="RELAY_SECRET of that instance"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
               className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
             />
           </div>

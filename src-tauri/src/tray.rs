@@ -58,7 +58,7 @@ fn open_logs(app: &AppHandle) {
 fn restart_serve(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let _ = crate::serve::serve_restart(app).await;
+        let _ = crate::serve::serve_restart(app, None).await;
     });
 }
 

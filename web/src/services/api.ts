@@ -1,4 +1,5 @@
 import {
+  DesktopBootstrap,
   DesktopSettings,
   DiscoveredPeer,
   KlankerInstance,
@@ -24,15 +25,30 @@ function headers(inst: KlankerInstance, json = false): Record<string, string> {
   return h;
 }
 
+/** In-memory secret cache: a token minted at spawn is usable before it hits
+ *  the keyring read path, and survives listKlankers() rebuilds. */
+const secretCache = new Map<string, string>();
+
+export function rememberSecret(id: string, secret: string): void {
+  if (secret) secretCache.set(id, secret);
+}
+
 /** Pull a keyring secret into inst.secret. Called lazily — the local
  *  serve's token is only minted at spawn, after instances were loaded. */
 async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void> {
   if (!caps.keyring) return;
   if (!force && inst.secret) return;
+  const cached = secretCache.get(inst.id);
+  if (cached && !force) {
+    inst.secret = cached;
+    inst.has_secret = true;
+    return;
+  }
   try {
     const s = await invoke<string | null>("secret_get", { account: `relay.${inst.id}` });
     inst.secret = s || undefined;
     inst.has_secret = !!s;
+    if (s) secretCache.set(inst.id, s);
   } catch {}
 }
 
@@ -507,11 +523,23 @@ export const api = {
   async serveStatus(): Promise<ServeStatus> {
     return invoke<ServeStatus>("serve_status");
   },
-  async serveEnsureLocal(): Promise<ServeStatus> {
-    return invoke<ServeStatus>("serve_ensure_local");
+  async serveEnsureLocal(workdir?: string): Promise<ServeStatus> {
+    return invoke<ServeStatus>("serve_ensure_local", { workdir });
   },
-  async serveRestart(): Promise<ServeStatus> {
-    return invoke<ServeStatus>("serve_restart");
+  async serveRestart(workdir?: string): Promise<ServeStatus> {
+    return invoke<ServeStatus>("serve_restart", { workdir });
+  },
+
+  /** Spawn/attach the managed local serve and return the instance plus its
+   *  bearer secret in one shot (desktop only). */
+  async desktopBootstrap(): Promise<DesktopBootstrap> {
+    const settings = await this.loadSettings();
+    const st = await this.serveEnsureLocal(settings.workspace || undefined);
+    const inst = desktopLocalInstance();
+    const secret = (await this.secretGet(`relay.${inst.id}`)) || "";
+    if (secret) rememberSecret(inst.id, secret);
+    const base_url = inst.endpoint?.base_url || "";
+    return { instance: inst, base_url, secret, status: serveToProcess(st) };
   },
 
   async klankerVersion(): Promise<ProvisionStatus> {

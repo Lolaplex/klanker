@@ -24,6 +24,9 @@ interface ChatConsoleProps {
   sendHold: boolean;
   streamStatus?: string | null;
   sessionLabel?: string;
+  modelOptions?: string[];
+  model?: string;
+  onModel?: (id: string) => void;
   pending: PendingApproval | null;
   deciding: boolean;
   decideError: string | null;
@@ -43,6 +46,9 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   sendHold,
   streamStatus,
   sessionLabel,
+  modelOptions = [],
+  model = "",
+  onModel,
   pending,
   deciding,
   decideError,
@@ -151,6 +157,22 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         </div>
 
         <div className="flex items-center space-x-2">
+          {modelOptions.length > 0 && onModel && (
+            <select
+              value={model}
+              onChange={(e) => onModel(e.target.value)}
+              title="Model for this chat"
+              style={{ colorScheme: "dark" }}
+              className="hidden md:block bg-[#0a0a0a] border border-[#262626] hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] text-[#d4d4d4] focus:text-white focus:border-white outline-none cursor-pointer max-w-[240px] truncate"
+            >
+              <option value="">default model</option>
+              {modelOptions.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          )}
           {isLoading && (
             <button
               onClick={onStop}

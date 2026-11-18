@@ -60,6 +60,14 @@ export interface ProcessStatus {
   detail?: string;
 }
 
+/** desktop_bootstrap: managed local relay + its bearer secret (memory only). */
+export interface DesktopBootstrap {
+  instance: KlankerInstance;
+  base_url: string;
+  secret: string;
+  status: ProcessStatus;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "klanker" | "system" | "tool";
