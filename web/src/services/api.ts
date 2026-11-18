@@ -186,8 +186,9 @@ export const api = {
   async listKlankers(): Promise<KlankerInstance[]> {
     let list = await registryList();
     if (caps.spawn) {
-      // Managed local entry is synthetic — never persisted to the registry.
-      list = [desktopLocalInstance(), ...list.filter((i) => i.id !== "local")];
+      // Managed local entry is synthetic — never persisted. Legacy
+      // `kind: "local"` rows were per-instance serves (monolith) — dead.
+      list = [desktopLocalInstance(), ...list.filter((i) => i.id !== "local" && i.kind !== "local")];
     } else if (list.length === 0) {
       list = [localInstance()];
       await registrySave(list[0]);
