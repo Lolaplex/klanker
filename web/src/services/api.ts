@@ -527,9 +527,15 @@ export const api = {
   },
 
   // --- not available in the browser -----------------------------------------
+  // Tailnet discovery needs a local tailscale CLI + LAN probes — desktop only.
 
   async discoverPeers(): Promise<DiscoveredPeer[]> {
-    return [];
+    if (!isTauri()) return [];
+    try {
+      return await invoke<DiscoveredPeer[]>("discover_peers");
+    } catch {
+      return [];
+    }
   },
 
   // --- desktop (Tauri) only ---------------------------------------------------
