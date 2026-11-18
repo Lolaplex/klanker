@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.
+
 ### Added
 - Desktop shell rewritten as a thin lifecycle adapter: the bundled `web/dist` dashboard talks to `klanker serve` over explicit HTTP+Bearer, and Rust owns only native concerns (one managed local serve on `127.0.0.1`, OS keyring, tray, Alt+Space hotkey, notifications, updater, uv provisioning).
 - Local serve lifecycle: the app adopts an already-running serve (never kills it) or spawns a single tracked `klanker serve` with a generated `RELAY_WEB_TOKEN` stored in the keyring; close-to-tray keeps it alive, tray Quit kills only app-owned children, and one bounded respawn follows an unexpected death.
