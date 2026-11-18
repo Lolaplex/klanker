@@ -91,6 +91,27 @@ export interface TracePage {
   note: string;
 }
 
+/** road-declaration/1 road inside a signed presence offer. */
+export interface PresenceRoad {
+  kind: string;
+  addr: string;
+  priority: number;
+  endpoint: string;
+}
+
+/** One *.road.json in the shared presence registry — an offer is a claim,
+ *  never truth; invalid rows carry their refusal reason. */
+export interface PresenceOffer {
+  file: string;
+  label: string;
+  did: string;
+  roads: PresenceRoad[];
+  iat: number;
+  exp: number;
+  valid: boolean;
+  reason: string;
+}
+
 export interface DiscoveredPeer {
   hostname: string;
   ip: string;

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- The add-instance modal lists signed presence offers from the serving relay (`/v1/presence/offers`) — valid roads are one-click picks, forged/expired entries show their refusal reason. A "publish this host" form signs a `road-declaration/1` via `agents_keys` through `POST /v1/presence/publish`.
+
 ### Fixed
 - `serve_restart` actually restarts: an owned serve is killed and the respawn waits for the pid to die — previously the health probe re-adopted the still-running process, so a new agents-relay build or changed env was never picked up. Foreign serves are still never killed.
 

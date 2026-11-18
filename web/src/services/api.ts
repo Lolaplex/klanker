@@ -3,6 +3,7 @@ import {
   DesktopSettings,
   DiscoveredPeer,
   KlankerInstance,
+  PresenceOffer,
   PendingApproval,
   ProcessStatus,
   TracePage,
@@ -613,6 +614,37 @@ export const api = {
   },
 
   // --- not available in the browser -----------------------------------------
+  /** Signed presence offers from the serving relay's registry —
+   *  PWA hits same-origin, desktop the managed local relay. */
+  async listPresenceOffers(): Promise<PresenceOffer[]> {
+    const res = caps.keyring
+      ? await localRelayFetch("/v1/presence/offers")
+      : await fetch("/v1/presence/offers").catch(() => null);
+    if (!res?.ok) return [];
+    const data = await res.json().catch(() => ({}));
+    return (data.offers as PresenceOffer[]) || [];
+  },
+
+  /** Publish a road declaration for this host via agents_keys signing. */
+  async publishPresenceOffer(
+    keySlug: string,
+    label: string,
+    roads: { kind: string; addr: string; priority?: number }[]
+  ): Promise<{ ok: boolean; reason?: string }> {
+    const body = { key_slug: keySlug, label, roads };
+    const res = caps.keyring
+      ? await localRelayFetch("/v1/presence/publish", "POST", body)
+      : await fetch("/v1/presence/publish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }).catch(() => null);
+    if (!res) return { ok: false, reason: "relay unreachable" };
+    if (res.ok) return { ok: true };
+    const text = await res.text().catch(() => "");
+    return { ok: false, reason: text.replace(/^.*?"([^"]+)".*$/, "$1") || `HTTP ${res.status}` };
+  },
+
   // Tailnet discovery needs a local tailscale CLI + LAN probes — desktop only.
 
   async discoverPeers(): Promise<DiscoveredPeer[]> {
@@ -871,6 +903,33 @@ function hostKey(inst: { endpoint?: { base_url?: string }; base_url?: string }):
   }
 }
 
+/** Managed local relay fetch — desktop talks to the canonical host relay
+ *  on loopback (remotes graph, presence registry). PWA uses same-origin
+ *  paths instead. */
+async function localRelayFetch(
+  path: string,
+  method: "GET" | "POST" | "DELETE" = "GET",
+  body?: Record<string, unknown>
+): Promise<Response | null> {
+  if (!caps.keyring) return null;
+  try {
+    const secret =
+      secretCache.get("relay.local") ||
+      (await invoke<string | null>("secret_get", { account: "relay.local" }).catch(() => null)) ||
+      "";
+    return await fetch(`http://127.0.0.1:8787${path}`, {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Managed local relay `/v1/remotes` — the canonical remote graph shared
  *  with PWA clients of this host. The desktop file registry mirrors into
  *  it so an instance added on either surface appears on both (#60). */
@@ -879,25 +938,9 @@ async function localRelayRemotes(
   body?: Record<string, unknown>,
   id?: string
 ): Promise<{ remotes?: { id: string; base_url: string; label: string; has_secret: boolean }[] } | null> {
-  if (!caps.keyring) return null;
-  try {
-    const secret =
-      secretCache.get("relay.local") ||
-      (await invoke<string | null>("secret_get", { account: "relay.local" }).catch(() => null)) ||
-      "";
-    const res = await fetch(`http://127.0.0.1:8787/v1/remotes${id ? `/${encodeURIComponent(id)}` : ""}`, {
-      method,
-      headers: {
-        "Content-Type": "application/json",
-        ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    });
-    if (!res.ok) return null;
-    return method === "GET" ? await res.json() : {};
-  } catch {
-    return null;
-  }
+  const res = await localRelayFetch(`/v1/remotes${id ? `/${encodeURIComponent(id)}` : ""}`, method, body);
+  if (!res?.ok) return null;
+  return method === "GET" ? await res.json() : {};
 }
 
 async function remoteSave(inst: KlankerInstance): Promise<boolean> {
