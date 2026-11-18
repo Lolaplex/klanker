@@ -15,14 +15,18 @@ const LS_SETTINGS = "klanker.settings";
 const LS_IMPORTED = "klanker.legacy_imported";
 const LS_ACTIVE = "klanker.active";
 
-/** "" means same origin — the dashboard is served by the relay itself. */
+/** "" means same origin — the dashboard is served by the relay itself.
+ *  `via: "relay"` instances mount through the relay's authenticated proxy. */
 const base = (inst: KlankerInstance): string =>
-  (inst.endpoint?.base_url || inst.base_url || "").replace(/\/+$/, "");
+  inst.via === "relay"
+    ? `/v1/remote/${encodeURIComponent(inst.id)}`
+    : (inst.endpoint?.base_url || inst.base_url || "").replace(/\/+$/, "");
 
 function headers(inst: KlankerInstance, json = false): Record<string, string> {
   const h: Record<string, string> = {};
   const secret = (inst.secret || "").trim();
-  if (secret) h["Authorization"] = `Bearer ${secret}`;
+  // Mounted remotes: the relay injects the bearer — the client holds none.
+  if (secret && inst.via !== "relay") h["Authorization"] = `Bearer ${secret}`;
   if (json) h["Content-Type"] = "application/json";
   return h;
 }
@@ -38,7 +42,7 @@ export function rememberSecret(id: string, secret: string): void {
 /** Pull a keyring secret into inst.secret. Called lazily — the local
  *  serve's token is only minted at spawn, after instances were loaded. */
 async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void> {
-  if (!caps.keyring) return;
+  if (!caps.keyring || inst.via === "relay") return;
   if (!force && inst.secret) return;
   const cached = secretCache.get(inst.id);
   if (cached && !force) {
@@ -218,8 +222,7 @@ export const api = {
         next.has_secret = !!secret || !!next.has_secret;
       } catch {}
     }
-    const stored = stripSecrets(next);
-    await registrySave(stored);
+    const stored = await registrySave(next);
     return { ...stored, secret: inst.secret || inst.endpoint?.secret };
   },
 
@@ -229,6 +232,9 @@ export const api = {
         await invoke("instance_delete", { id });
       } catch {}
     } else {
+      try {
+        await fetch(`/v1/remotes/${encodeURIComponent(id)}`, { method: "DELETE" });
+      } catch {}
       const list = load(LS_INSTANCES, [] as KlankerInstance[]).filter((i) => i.id !== id);
       localStorage.setItem(LS_INSTANCES, JSON.stringify(list));
     }
@@ -722,15 +728,97 @@ async function registryList(): Promise<KlankerInstance[]> {
     }
     return rows;
   }
+  // Web/PWA: the serving relay holds the registry + secrets server-side.
+  const remote = await relayRemotes();
+  if (remote !== null) {
+    // One-time move: localStorage bookmarks (which held plaintext secrets)
+    // onto the relay — then the browser drops them.
+    if (!localStorage.getItem(LS_INSTANCES_MIGRATED)) {
+      const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
+      for (const inst of Array.isArray(ls) ? ls : []) {
+        if (inst.id === "local" || remote.some((r) => r.id === inst.id)) continue;
+        await remoteSave(inst);
+      }
+      localStorage.setItem(LS_INSTANCES_MIGRATED, "1");
+      localStorage.removeItem(LS_INSTANCES);
+      return relayRemotes().then((r) => r ?? remote);
+    }
+    return remote;
+  }
   const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
   return Array.isArray(ls) ? ls : [];
 }
 
-async function registrySave(inst: KlankerInstance): Promise<void> {
-  if (isTauri()) {
-    await invoke("instance_save", { inst });
-    return;
+/** `/v1/remotes` rows as mounted instances; null = relay predates the mount API. */
+async function relayRemotes(): Promise<KlankerInstance[] | null> {
+  try {
+    const r = await fetch("/v1/remotes");
+    if (!r.ok) return null;
+    const data = await r.json();
+    const now = new Date().toISOString();
+    return ((data.remotes || []) as { id: string; base_url: string; label: string; has_secret: boolean }[]).map(
+      (m): KlankerInstance => ({
+        id: m.id,
+        name: m.label || m.id,
+        slug: m.id,
+        role: "",
+        provider: "",
+        model: "",
+        workspace: "",
+        lock_workspace: false,
+        port: 0,
+        system_prompt: "",
+        kind: "remote",
+        via: "relay",
+        has_secret: m.has_secret,
+        endpoint: { base_url: m.base_url },
+        created_at: now,
+        updated_at: now,
+      })
+    );
+  } catch {
+    return null;
   }
+}
+
+async function remoteSave(inst: KlankerInstance): Promise<boolean> {
+  try {
+    const r = await fetch("/v1/remotes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: inst.id,
+        base_url: inst.endpoint?.base_url || inst.base_url || "",
+        label: inst.name,
+        secret: inst.secret || inst.endpoint?.secret || "",
+      }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Persist an instance; returns the stored form (secrets stripped). */
+async function registrySave(inst: KlankerInstance): Promise<KlankerInstance> {
+  if (isTauri()) {
+    const stored = stripSecrets(inst);
+    await invoke("instance_save", { inst: stored });
+    return stored;
+  }
+  // The synthetic origin entry never goes to the relay registry.
+  if (inst.id === "local") {
+    lsWrite(inst);
+    return inst;
+  }
+  if (await remoteSave(inst)) {
+    return { ...stripSecrets(inst), via: "relay", has_secret: inst.has_secret || !!(inst.secret || inst.endpoint?.secret) };
+  }
+  lsWrite(inst);
+  return inst;
+}
+
+function lsWrite(inst: KlankerInstance): void {
   const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
   const arr = Array.isArray(ls) ? ls : [];
   const idx = arr.findIndex((i) => i.id === inst.id);

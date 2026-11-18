@@ -41,6 +41,9 @@ export interface KlankerInstance {
   system_prompt: string;
   sensors?: Record<string, boolean>;
   kind: InstanceKind;
+  /** "relay" = mounted through the serving relay's /v1/remote/<id> proxy —
+   *  the remote secret lives server-side, never in the client. */
+  via?: "relay";
   endpoint?: InstanceEndpoint;
   tailscale?: InstanceTailscale;
   created_at: string;
