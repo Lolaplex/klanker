@@ -1,3 +1,4 @@
+pub mod discovery;
 pub mod migrate;
 pub mod provision;
 pub mod registry;
@@ -66,7 +67,8 @@ pub fn run() {
             migrate::legacy_state,
             registry::instances_list,
             registry::instance_save,
-            registry::instance_delete
+            registry::instance_delete,
+            discovery::discover_peers
         ])
         .run(tauri::generate_context!())
         .expect("error while running klanker desktop application");
