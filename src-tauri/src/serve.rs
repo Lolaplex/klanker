@@ -262,7 +262,14 @@ fn find_klanker(app: &AppHandle) -> Option<(Vec<String>, Option<String>)> {
     None
 }
 
-fn spawn_klanker(argv: &[String], port: u16, token: &str, log: &PathBuf) -> Result<u32, String> {
+fn spawn_klanker(
+    argv: &[String],
+    port: u16,
+    token: &str,
+    log: &PathBuf,
+    host_dir: &PathBuf,
+    workdir: &str,
+) -> Result<u32, String> {
     let file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -287,6 +294,10 @@ fn spawn_klanker(argv: &[String], port: u16, token: &str, log: &PathBuf) -> Resu
         .env("RELAY_SECRET", token)
         .env("RELAY_WEB_TOKEN", token)
         .env("AGENTS_NO_UPDATE_CHECK", "1")
+        // Data lives under the instance folder, matching the
+        // `instances/<id>/.agents` convention.
+        .env("AGENTS_HOST_DIR", host_dir)
+        .env("PYTHONUTF8", "1")
         // The bundled webview fetches cross-origin; relay CORS is opt-in
         // via RELAY_CORS_ORIGINS. tauri.localhost covers the packaged app,
         // localhost:1420 covers `tauri dev`.
@@ -297,6 +308,9 @@ fn spawn_klanker(argv: &[String], port: u16, token: &str, log: &PathBuf) -> Resu
         .stdin(Stdio::null())
         .stdout(Stdio::from(file))
         .stderr(Stdio::from(err));
+    if !workdir.is_empty() {
+        cmd.env("AGENTS_WORKDIR", workdir);
+    }
     // No DETACHED_PROCESS: the python entry-point shim dies instantly
     // without a console. CREATE_NO_WINDOW hides it for our GUI parent.
     #[cfg(target_os = "windows")]
@@ -351,7 +365,15 @@ fn pick_port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
-fn do_ensure(app: &AppHandle) -> Result<ServeStatus, String> {
+/// Data root for the managed local serve: `instances/local/.agents`
+/// under app data — one self-contained folder per instance.
+fn instance_host_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = data_dir(app)?.join("instances").join("local").join(".agents");
+    fs::create_dir_all(&dir).map_err(|e| format!("create instance dir: {e}"))?;
+    Ok(dir)
+}
+
+fn do_ensure(app: &AppHandle, workdir: &str) -> Result<ServeStatus, String> {
     let state = app.state::<ServeState>();
     let mut s = state.0.lock().map_err(|e| e.to_string())?;
 
@@ -404,7 +426,11 @@ fn do_ensure(app: &AppHandle) -> Result<ServeStatus, String> {
     let port = pick_port();
     let token = uuid::Uuid::new_v4().simple().to_string();
     let log = log_path(app)?;
-    match spawn_klanker(&argv, port, &token, &log) {
+    let host_dir = instance_host_dir(app)?;
+    if !workdir.is_empty() {
+        let _ = fs::create_dir_all(workdir);
+    }
+    match spawn_klanker(&argv, port, &token, &log, &host_dir, workdir) {
         Ok(pid) => {
             let _ = crate::secrets::set(&crate::secrets::relay_account("local"), &token);
             write_pid_file(app, pid, port);
@@ -503,19 +529,19 @@ pub async fn serve_status(app: AppHandle) -> Result<ServeStatus, String> {
 /// Ensure a local serve answers. Called by the web layer when the active
 /// instance is the managed `local` entry — spawn policy lives in JS.
 #[tauri::command]
-pub async fn serve_ensure_local(app: AppHandle) -> Result<ServeStatus, String> {
-    do_ensure(&app)
+pub async fn serve_ensure_local(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
+    do_ensure(&app, workdir.as_deref().unwrap_or(""))
 }
 
 /// Manual retry from the "server lost" state — resets the respawn budget.
 #[tauri::command]
-pub async fn serve_restart(app: AppHandle) -> Result<ServeStatus, String> {
+pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
     {
         let state = app.state::<ServeState>();
         let mut s = state.0.lock().map_err(|e| e.to_string())?;
         s.failed_spawns = 0;
     }
-    do_ensure(&app)
+    do_ensure(&app, workdir.as_deref().unwrap_or(""))
 }
 
 /// Warm the state at app start: a live pid-file serve on its recorded

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, Radar, Settings2, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { KlankerMark } from "./KlankerMark";
@@ -17,6 +17,9 @@ export interface PersonaRow {
 
 interface KlankerListProps {
   instances: KlankerInstance[];
+  /** The relay this app spawned/attached. Other local-kind instances are
+   *  legacy multi-instance leftovers, listed separately from the managed one. */
+  managedId?: string | null;
   activeId: string | null;
   unread: ReadonlySet<string>;
   statuses: Record<string, ProcessStatus | undefined>;
@@ -34,7 +37,7 @@ interface KlankerListProps {
   onDeleteChat: (ws: string, persona: string, row: SessionRow) => void;
   onNewHost: () => void;
   onNewWorkspace: () => void;
-  onHostSettings: (instance: KlankerInstance) => void;
+  onInstanceSettings: (instance: KlankerInstance) => void;
   onDeleteWorkspace: (ws: string) => void;
   onNewPersona: (ws: string) => void;
   onDeletePersona: (ws: string, persona: string) => void;
@@ -42,7 +45,7 @@ interface KlankerListProps {
 
 function rowHealth(row: ProcessStatus | undefined): "up" | "down" | "busy" {
   if (row?.state === "running" || row?.state === "not_owned") return "up";
-  if (row?.state === "port_busy" || row?.state === "starting") return "busy";
+  if (row?.state === "port_busy") return "busy";
   return "down";
 }
 
@@ -55,6 +58,7 @@ function dotClass(row: ProcessStatus | undefined): string {
 
 export const KlankerList: React.FC<KlankerListProps> = ({
   instances,
+  managedId = null,
   activeId,
   unread,
   statuses,
@@ -72,14 +76,38 @@ export const KlankerList: React.FC<KlankerListProps> = ({
   onDeleteChat,
   onNewHost,
   onNewWorkspace,
-  onHostSettings,
+  onInstanceSettings,
   onDeleteWorkspace,
   onNewPersona,
   onDeletePersona,
 }) => {
-  const [openWs, setOpenWs] = useState<ReadonlySet<string>>(new Set());
-  const [openPersona, setOpenPersona] = useState<ReadonlySet<string>>(new Set());
+  const [openWs, setOpenWs] = useState<ReadonlySet<string>>(() => new Set(selWs ? [selWs] : []));
+  const [openPersona, setOpenPersona] = useState<ReadonlySet<string>>(
+    () => new Set(selWs && selPersona ? [`${selWs} ${selPersona}`] : [])
+  );
+  // Component remounts per instance (key=activeId): expand the saved
+  // selection once so the tree opens where the user left it.
+  useEffect(() => {
+    if (selWs) {
+      onExpandWs(selWs);
+      if (selPersona) onExpandPersona(selWs, selPersona);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const rows = instances.slice().sort((a, b) => Number(unread.has(b.id)) - Number(unread.has(a.id)));
+  // One managed local instance (its workspaces separate the data); remotes are
+  // connected/discovered peers; other local files predate the managed model.
+  const managed = rows.filter((i) => i.kind === "local" && (!managedId || i.id === managedId));
+  const remotes = rows.filter((i) => i.kind === "remote");
+  const legacy = rows.filter((i) => i.kind === "local" && managedId !== null && i.id !== managedId);
+  type Item = KlankerInstance | "__connected__" | "__other__";
+  const items: Item[] = [
+    ...managed,
+    ...(remotes.length ? (["__connected__"] as const) : []),
+    ...remotes,
+    ...(legacy.length ? (["__other__"] as const) : []),
+    ...legacy,
+  ];
 
   const toggleWs = (ws: string) => {
     setOpenWs((prev) => {
@@ -120,7 +148,18 @@ export const KlankerList: React.FC<KlankerListProps> = ({
         {instances.length === 0 ? (
           <p className="px-3 py-3 text-[#525252] font-mono text-xs">No Klankers.</p>
         ) : (
-          rows.map((inst) => {
+          items.map((item) => {
+            if (typeof item === "string") {
+              return (
+                <div
+                  key={item}
+                  className="px-3 pt-3 pb-1 font-mono text-[10px] uppercase tracking-wider text-[#525252]"
+                >
+                  {item === "__connected__" ? "connected" : "other local"}
+                </div>
+              );
+            }
+            const inst = item;
             const row = statuses[inst.id];
             const selected = inst.id === activeId;
             const hot = unread.has(inst.id) && !selected;
@@ -134,7 +173,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelect(inst)}
-                    title={row?.detail ? `${rowHealth(row)} — ${row.detail}` : rowHealth(row)}
+                    title={rowHealth(row)}
                     className={`flex-1 min-w-0 min-h-11 text-left px-3 py-2 flex items-center gap-2 font-mono text-xs transition-colors ${
                       selected ? "text-white" : "text-[#a3a3a3]"
                     }`}
@@ -145,9 +184,9 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                   </button>
                   <button
                     type="button"
-                    onClick={() => onHostSettings(inst)}
-                    title="Host settings"
-                    aria-label="Host settings"
+                    onClick={() => onInstanceSettings(inst)}
+                    title="Instance settings"
+                    aria-label="Instance settings"
                     className={`inline-flex h-11 w-11 shrink-0 items-center justify-center transition-colors ${
                       selected ? "text-[#a3a3a3] hover:text-white" : "text-[#525252] hover:text-white"
                     }`}

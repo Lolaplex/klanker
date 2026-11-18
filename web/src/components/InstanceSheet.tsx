@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Trash2, LogIn, LogOut, X } from "lucide-react";
+import { Trash2, FolderOpen, LogIn, LogOut, X } from "lucide-react";
 import { DesktopSettings, KlankerInstance, ProcessStatus } from "../types/klanker";
 import {
   choiceOf,
@@ -13,9 +13,9 @@ import {
 import { ModelControl } from "./ModelControl";
 import { SecretField } from "./SecretField";
 import { TracesPanel } from "./TracesPanel";
-import { api, caps } from "../services/api";
+import { api } from "../services/api";
 
-interface HostSheetProps {
+interface InstanceSheetProps {
   instance: KlankerInstance;
   status: ProcessStatus | null;
   settings: DesktopSettings;
@@ -23,9 +23,11 @@ interface HostSheetProps {
   modelNote: string | null;
   loadingModels: boolean;
   onNeedModels: () => void;
-  onSave: (updated: KlankerInstance) => void;
+  onSave: (updated: KlankerInstance) => void | Promise<void>;
   onStar: (provider: ModelProvider, id: string) => void;
   onDelete: (id: string) => void;
+  /** Job id is its goal-session id — open it as a chat. */
+  onOpenSession?: (ws: string, persona: string, session: string) => void;
   onClose: () => void;
 }
 
@@ -34,7 +36,7 @@ const inputClass =
 
 const choices: ProviderChoice[] = ["echo", "lmstudio", "openrouter", "inherit"];
 
-export const HostSheet: React.FC<HostSheetProps> = ({
+export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   instance,
   status,
   settings,
@@ -45,6 +47,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
   onSave,
   onStar,
   onDelete,
+  onOpenSession,
   onClose,
 }) => {
   const [formData, setFormData] = useState<KlankerInstance>(instance);
@@ -78,17 +81,20 @@ export const HostSheet: React.FC<HostSheetProps> = ({
     void api.listWorkspaces(instance).then(setWorkspaces).catch(() => undefined);
   }, [instance.id, instance.updated_at]);
 
-  const jobWsEff = jobWs || formData.workspace.trim();
+  // Workspace ids come from the relay; instance.workspace is the workdir
+  // boundary (a filesystem path), never a ws id.
+  const firstWs = workspaces[0]?.id || "";
+  const jobWsEff = jobWs || firstWs;
   const jobPersonaEff = jobPersona || (formData.persona || "").trim() || personas[0]?.id || "";
 
   useEffect(() => {
-    const ws = tab === "jobs" ? jobWsEff : formData.workspace.trim();
+    const ws = tab === "jobs" ? jobWsEff : firstWs;
     if (!ws) {
       setPersonas([]);
       return;
     }
     void api.listPersonas(instance, ws).then(setPersonas).catch(() => setPersonas([]));
-  }, [instance.id, formData.workspace, tab, jobWsEff]);
+  }, [instance.id, firstWs, tab, jobWsEff]);
 
   useEffect(() => {
     if (choice === "openrouter") onNeedModels();
@@ -138,17 +144,23 @@ export const HostSheet: React.FC<HostSheetProps> = ({
     setFormData(next);
   };
 
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+
   const save = (next?: KlankerInstance) => {
     const inst = next ?? draftRef.current;
-    onSave({
-      ...inst,
-      name: inst.name.trim(),
-      secret: inst.secret?.trim() || undefined,
-      endpoint: { base_url: (inst.endpoint?.base_url || "").trim().replace(/\/+$/, "") },
-      workspace: inst.workspace.trim(),
-      persona: (inst.persona || "").trim() || undefined,
-      kind: "remote",
-    });
+    void Promise.resolve(
+      onSave({
+        ...inst,
+        name: inst.name.trim(),
+        secret: inst.secret?.trim() || undefined,
+        endpoint: { base_url: (inst.endpoint?.base_url || "").trim().replace(/\/+$/, "") },
+        workspace: inst.workspace.trim(),
+        persona: (inst.persona || "").trim() || undefined,
+        kind: inst.kind || instance.kind,
+      })
+    )
+      .then(() => setSaveNote("saved"))
+      .catch((e) => setSaveNote(`save: ${e instanceof Error ? e.message : e}`));
   };
 
   const pickProvider = (next: ProviderChoice) => {
@@ -201,6 +213,21 @@ export const HostSheet: React.FC<HostSheetProps> = ({
   };
 
   const windowModel = kind !== "echo" ? settings.model.trim() : "";
+  // Managed/spawned locals: endpoint is derived, bearer secret lives in the
+  // keyring — the remote-only fields (URL, cookie login) stay hidden.
+  const local = instance.kind === "local";
+  const desktop = typeof window !== "undefined" && "__TAURI__" in window;
+
+  const pickWorkdir = async () => {
+    const dir = await (window as unknown as { __TAURI__: { core: { invoke: (c: string, a?: Record<string, unknown>) => Promise<string | null> } } })
+      .__TAURI__.core.invoke("plugin:dialog|open", { options: { directory: true, title: "Choose workdir" } })
+      .catch(() => null);
+    if (dir) {
+      const next = { ...draftRef.current, workspace: dir };
+      writeForm(next);
+      save(next);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-stretch md:justify-end">
@@ -211,7 +238,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
         </div>
         <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
           <span className="text-white font-semibold tracking-wider truncate">
-            {instance.name || "host"}
+            {instance.name || "instance"}
           </span>
           <div className="flex items-center gap-2">
             {instance.id !== "local" && (
@@ -221,7 +248,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                   if (window.confirm(`Remove ${instance.name || instance.id}?`)) onDelete(instance.id);
                 }}
                 className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors"
-                title="Remove this host"
+                title="Remove this instance"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
@@ -235,7 +262,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
         <div className="shrink-0 px-4 py-2 border-b border-[#262626] flex items-center justify-between text-[11px]">
           <span className="text-[#737373]">
             {status?.state === "running" ? "up" : "down"}
-            {authed !== null && <span className="ml-2">{authed ? "· authed" : "· not authed"}</span>}
+            {!local && !desktop && authed !== null && <span className="ml-2">{authed ? "· authed" : "· not authed"}</span>}
           </span>
           <div className="flex bg-[#141414] border border-[#262626] rounded-full p-1 gap-0.5">
             {(["config", "traces", "jobs"] as const).map((t) => (
@@ -254,6 +281,11 @@ export const HostSheet: React.FC<HostSheetProps> = ({
             ))}
           </div>
         </div>
+        {saveNote && (
+          <div className="shrink-0 px-4 py-1 border-b border-[#262626] text-[10px] text-[#737373] truncate">
+            {saveNote}
+          </div>
+        )}
 
         {tab === "traces" ? (
           <div className="flex-1 min-h-0 overflow-hidden">
@@ -332,7 +364,15 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                 </div>
               ) : (
                 jobList.map((j) => (
-                  <div key={j.id} className="border border-[#262626] bg-[#101010] rounded-xl p-3">
+                  <button
+                    key={j.id}
+                    type="button"
+                    onClick={() => onOpenSession?.(jobWsEff, jobPersonaEff, j.id)}
+                    title={onOpenSession ? "Open the job's chat" : undefined}
+                    className={`w-full text-left border border-[#262626] bg-[#101010] rounded-xl p-3 ${
+                      onOpenSession ? "hover:border-[#525252] cursor-pointer" : ""
+                    }`}
+                  >
                     <div className="flex items-start justify-between gap-2">
                       <span className="text-white text-[11px] leading-snug break-words min-w-0">{j.goal || j.id}</span>
                       <span
@@ -349,7 +389,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                     </div>
                     {j.result && <div className="mt-1.5 text-[11px] text-[#737373] line-clamp-3">{j.result}</div>}
                     <div className="mt-1.5 text-[10px] text-[#3f3f3f] truncate">{j.id}</div>
-                  </div>
+                  </button>
                 ))
               )}
             </div>
@@ -367,22 +407,24 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                   className={inputClass}
                 />
               </div>
-              <div>
-                <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Host URL</label>
-                <input
-                  type="text"
-                  value={formData.endpoint?.base_url || ""}
-                  onChange={(e) => writeForm({ ...draftRef.current, endpoint: { base_url: e.target.value } })}
-                  onBlur={() => save()}
-                  placeholder="https://host.example.com (empty = this origin)"
-                  className={inputClass}
-                />
-              </div>
+              {!local && (
+                <div>
+                  <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Instance URL</label>
+                  <input
+                    type="text"
+                    value={formData.endpoint?.base_url || ""}
+                    onChange={(e) => writeForm({ ...draftRef.current, endpoint: { base_url: e.target.value } })}
+                    onBlur={() => save()}
+                    placeholder="https://klanker.example.com (empty = this origin)"
+                    className={inputClass}
+                  />
+                </div>
+              )}
             </div>
 
             <div onBlur={() => save()}>
               <SecretField
-                label="Host secret"
+                label="Instance secret"
                 stored={Boolean(instance.has_secret || instance.secret)}
                 value={formData.secret || ""}
                 onChange={(value) => writeForm({ ...draftRef.current, secret: value || undefined })}
@@ -390,11 +432,14 @@ export const HostSheet: React.FC<HostSheetProps> = ({
               />
             </div>
 
-            {!caps.spawn && (
+            {!local && !desktop && (
             <div>
               <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
-                Web token login (cookie, same-origin)
+                Browser dashboard login (optional)
               </label>
+              <p className="text-[10px] text-[#525252] mb-1.5">
+                RELAY_WEB_TOKEN cookie — only for the web UI served by the relay itself. This app uses the instance secret above; you can skip this.
+              </p>
               <div className="flex items-center gap-1">
                 <input
                   type="password"
@@ -425,50 +470,33 @@ export const HostSheet: React.FC<HostSheetProps> = ({
             </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {local && (
               <div>
                 <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
-                  Default workspace
+                  Workdir
                 </label>
-                <select
-                  value={formData.workspace}
-                  onChange={(e) => {
-                    const next = { ...draftRef.current, workspace: e.target.value };
-                    writeForm(next);
-                    save(next);
-                  }}
-                  className={inputClass}
-                >
-                  <option value="">(host default)</option>
-                  {workspaces.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.label || w.id}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="text"
+                    value={formData.workspace}
+                    onChange={(e) => writeForm({ ...draftRef.current, workspace: e.target.value })}
+                    onBlur={() => save()}
+                    placeholder="tool confinement dir (empty = workspace work dir)"
+                    className={inputClass}
+                  />
+                  {desktop && (
+                    <button
+                      type="button"
+                      title="Browse…"
+                      onClick={() => void pickWorkdir()}
+                      className="shrink-0 p-2 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
-              <div>
-                <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
-                  Default persona
-                </label>
-                <select
-                  value={formData.persona || ""}
-                  onChange={(e) => {
-                    const next = { ...draftRef.current, persona: e.target.value || undefined };
-                    writeForm(next);
-                    save(next);
-                  }}
-                  className={inputClass}
-                >
-                  <option value="">(host default)</option>
-                  {personas.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name || p.id}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            )}
 
             <div className="space-y-2">
               <div className="text-[10px] text-[#737373] uppercase tracking-wider">Provider</div>
@@ -482,7 +510,7 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                   }}
                   className={inputClass}
                 >
-                  <option value="">(host default)</option>
+                  <option value="">(instance default)</option>
                   <option value="inherit">inherit app setting</option>
                   {providers.map((p) => (
                     <option key={p.name} value={p.name}>
@@ -531,6 +559,14 @@ export const HostSheet: React.FC<HostSheetProps> = ({
                 />
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => save()}
+              className="w-full px-4 py-3 md:py-2.5 bg-white hover:bg-[#e5e5e5] text-black rounded-xl text-[11px] transition-colors"
+            >
+              Save
+            </button>
           </div>
         )}
       </div>
