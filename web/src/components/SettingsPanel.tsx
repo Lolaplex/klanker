@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { DesktopSettings } from "../types/klanker";
+import { api, caps, ProvisionStatus, UpdateInfo } from "../services/api";
 import { LM_URL, ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
 import { ModelControl } from "./ModelControl";
 import { SecretField } from "./SecretField";
@@ -31,7 +32,41 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 }) => {
   const [draft, setDraft] = useState<DesktopSettings>({ ...settings, openrouter_api_key: "" });
   const [keyDraft, setKeyDraft] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [provision, setProvision] = useState<ProvisionStatus | null>(null);
+  const [updateNote, setUpdateNote] = useState<string | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
   const kind: ProviderKind = draft.provider === "lmstudio" || draft.provider === "openrouter" ? draft.provider : "echo";
+
+  useEffect(() => {
+    if (!caps.updates) return;
+    void api.klankerVersion().then(setProvision).catch(() => {});
+  }, []);
+
+  const runProvision = (fn: () => Promise<ProvisionStatus>, done: string) => {
+    setUpdateBusy(true);
+    setUpdateNote(null);
+    void fn()
+      .then((p) => {
+        setProvision(p);
+        setUpdateNote(p.klanker_version ? done : (p.detail ?? "failed"));
+      })
+      .catch((e) => setUpdateNote(e instanceof Error ? e.message : String(e)))
+      .finally(() => setUpdateBusy(false));
+  };
+
+  const checkUpdate = () => {
+    setUpdateBusy(true);
+    setUpdateNote(null);
+    void api
+      .checkAppUpdates()
+      .then((info) => {
+        setUpdateInfo(info);
+        if (!info.available) setUpdateNote("app is up to date");
+      })
+      .catch((e) => setUpdateNote(e instanceof Error ? e.message : String(e)))
+      .finally(() => setUpdateBusy(false));
+  };
 
   const save = (event: React.FormEvent) => {
     event.preventDefault();
@@ -121,6 +156,77 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               onCommit={(id) => setDraft({ ...draft, model: id.trim() })}
               onToggleStar={star}
             />
+          )}
+
+          {caps.updates && (
+            <div className="border-t border-[#262626] pt-3 space-y-2">
+              <div className="text-[#737373] tracking-wider">UPDATES</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[#a3a3a3] truncate">
+                  app {updateInfo?.current_version ?? ""}
+                  {updateInfo?.available ? ` → v${updateInfo.version}` : ""}
+                </span>
+                {updateInfo?.available ? (
+                  <button
+                    type="button"
+                    disabled={updateBusy}
+                    onClick={() => {
+                      setUpdateBusy(true);
+                      void api
+                        .installAppUpdate()
+                        .catch((e) => setUpdateNote(e instanceof Error ? e.message : String(e)))
+                        .finally(() => setUpdateBusy(false));
+                    }}
+                    className="inline-flex min-h-9 items-center px-3 py-1 bg-white text-black font-semibold rounded disabled:opacity-50"
+                  >
+                    install & restart
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={updateBusy}
+                    onClick={checkUpdate}
+                    className="inline-flex min-h-9 items-center px-3 py-1 border border-[#333] text-[#a3a3a3] hover:text-white rounded disabled:opacity-50"
+                  >
+                    check
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[#a3a3a3] truncate">
+                  klanker {provision?.klanker_version ?? "not found"}
+                </span>
+                {provision?.klanker_version ? (
+                  <button
+                    type="button"
+                    disabled={updateBusy}
+                    onClick={() => runProvision(api.klankerUpgrade, "klanker updated")}
+                    className="inline-flex min-h-9 items-center px-3 py-1 border border-[#333] text-[#a3a3a3] hover:text-white rounded disabled:opacity-50"
+                  >
+                    update
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={updateBusy}
+                    onClick={() => runProvision(api.klankerInstall, "klanker installed")}
+                    className="inline-flex min-h-9 items-center px-3 py-1 border border-[#333] text-[#a3a3a3] hover:text-white rounded disabled:opacity-50"
+                  >
+                    install
+                  </button>
+                )}
+              </div>
+              <label className="flex items-center gap-2 text-[#a3a3a3] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={draft.auto_start_local_serve}
+                  onChange={(e) => setDraft({ ...draft, auto_start_local_serve: e.target.checked })}
+                  className="accent-white"
+                />
+                auto-start local klanker
+              </label>
+              {updateNote && <div className="text-[#ffb454]">{updateNote}</div>}
+            </div>
           )}
 
           <div className="flex items-center justify-end space-x-2">

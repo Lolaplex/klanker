@@ -1,24 +1,38 @@
-pub mod commands;
-pub mod models;
-pub mod presence;
+pub mod provision;
 pub mod secrets;
+pub mod serve;
 pub mod tray;
+pub mod updater;
 
-use commands::AppState;
-use std::collections::HashMap;
-use std::sync::Mutex;
 use tauri::Manager;
+
+#[tauri::command]
+fn secret_get(account: String) -> Option<String> {
+    secrets::get(&account)
+}
+
+#[tauri::command]
+fn secret_set(account: String, secret: String) -> Result<(), String> {
+    secrets::set(&account, &secret)
+}
+
+#[tauri::command]
+fn secret_delete(account: String) -> Result<(), String> {
+    secrets::delete(&account);
+    Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tray::show_main(app);
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .manage(AppState {
-            running_processes: Mutex::new(HashMap::new()),
-        })
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
+            serve::init(app.handle());
             if let Err(err) = tray::setup_tray(app.handle()) {
                 eprintln!("tray setup failed: {err}");
             }
@@ -30,21 +44,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            commands::load_settings,
-            commands::save_settings,
-            commands::list_klankers,
-            commands::save_klanker,
-            commands::delete_klanker,
-            commands::get_gateway_status,
-            commands::instance_start,
-            commands::instance_stop,
-            commands::execute_turn,
-            commands::discover_peers,
-            commands::list_presence_offers,
-            commands::publish_presence_offer,
-            commands::read_recent_traces,
-            commands::pending_approval,
-            commands::resolve_approval
+            serve::serve_status,
+            serve::serve_ensure_local,
+            serve::serve_restart,
+            provision::klanker_version,
+            provision::klanker_install,
+            provision::klanker_upgrade,
+            updater::check_for_updates,
+            updater::install_update,
+            secret_get,
+            secret_set,
+            secret_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running klanker desktop application");

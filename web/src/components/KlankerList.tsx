@@ -42,7 +42,7 @@ interface KlankerListProps {
 
 function rowHealth(row: ProcessStatus | undefined): "up" | "down" | "busy" {
   if (row?.state === "running" || row?.state === "not_owned") return "up";
-  if (row?.state === "port_busy") return "busy";
+  if (row?.state === "port_busy" || row?.state === "starting") return "busy";
   return "down";
 }
 
@@ -134,7 +134,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                   <button
                     type="button"
                     onClick={() => onSelect(inst)}
-                    title={rowHealth(row)}
+                    title={row?.detail ? `${rowHealth(row)} — ${row.detail}` : rowHealth(row)}
                     className={`flex-1 min-w-0 min-h-11 text-left px-3 py-2 flex items-center gap-2 font-mono text-xs transition-colors ${
                       selected ? "text-white" : "text-[#a3a3a3]"
                     }`}
