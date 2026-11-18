@@ -13,6 +13,7 @@ import {
   PendingApproval,
 } from "./types/klanker";
 import { api, caps, localInstance, rememberSecret } from "./services/api";
+import { focusWithoutScroll } from "./chatUi";
 import type { PersonaRow, SessionRow } from "./components/KlankerList";
 import {
   choiceOf,
@@ -67,6 +68,11 @@ function clipTitle(text: string): string {
 }
 
 const EMPTY_BUCKET: ChatBucket = { openId: "", items: [] };
+
+// Installed iOS PWA: the layout viewport stops 47px above the screen bottom
+// (see index.css). The idle shell then lives in document flow at 100vh.
+const STANDALONE =
+  typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches;
 
 /** Merge legacy/dup drafts into one, drop draft flags off real chats. */
 function normBucket(b: ChatBucket): ChatBucket {
@@ -170,11 +176,38 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [kbBox, setKbBox] = useState<{ height: number; top: number } | null>(null);
-  const [dbg, setDbg] = useState<string | null>(null);
+  const [idleH, setIdleH] = useState<number>(() =>
+    typeof window !== "undefined"
+      ? STANDALONE
+        ? window.screen.height || window.innerHeight
+        : window.innerHeight
+      : 844
+  );
 
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return;
+
+    const TEXT_INPUT_TYPES = new Set([
+      "text",
+      "search",
+      "email",
+      "url",
+      "tel",
+      "password",
+      "number",
+    ]);
+
+    const isTextEditable = (el: EventTarget | null): el is HTMLElement => {
+      if (!(el instanceof HTMLElement)) return false;
+      if (el instanceof HTMLTextAreaElement) return !el.readOnly && !el.disabled;
+      if (el instanceof HTMLInputElement) {
+        return TEXT_INPUT_TYPES.has(el.type) && !el.readOnly && !el.disabled;
+      }
+      return el.isContentEditable;
+    };
+
+    const editableFocused = () => isTextEditable(document.activeElement);
 
     // Installed iOS PWAs lie about heights: window.innerHeight shrinks on the
     // first keyboard open and never restores, and vv.height under-reports by
@@ -188,122 +221,202 @@ export function App() {
       probe.remove();
       return h || window.innerHeight;
     };
-    let fullHeight = probeFullHeight();
+
+    let fullHeight = STANDALONE ? probeFullHeight() : window.innerHeight;
+    setIdleH(fullHeight);
     let lastWidth = window.innerWidth;
     let settle = 0;
+    let unlockTimer = 0;
+    let focusInAt = -10000;
 
-    const editableFocused = () => {
-      const el = document.activeElement as HTMLElement | null;
-      return (
-        !!el &&
-        (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)
-      );
-    };
-
-    // ?kbdebug=1: measure the real layout metrics on-device (iOS PWA only lies
-    // can be settled with numbers, not guesses). Probes resolve the CSS units
-    // that WebKit reports differently in standalone mode. The flag persists in
-    // localStorage because installed PWAs always launch via manifest start_url
-    // and lose the query param — set it once in Safari, then open the PWA.
-    const params = new URLSearchParams(window.location.search);
-    try {
-      if (params.get("kbdebug") === "0") {
-        window.localStorage.removeItem("kbdebug");
-      } else if (params.has("kbdebug")) {
-        window.localStorage.setItem("kbdebug", "1");
-      }
-    } catch {
-      /* private mode */
-    }
-    // Debug branch: always on in standalone — installed PWAs have a storage jar
-    // separate from Safari, so the localStorage flag never reaches the app.
-    let DBG =
-      params.has("kbdebug") ||
-      window.matchMedia("(display-mode: standalone)").matches;
-    if (!DBG) {
+    const kbStoreKey = (baseH: number) =>
+      `klanker.kbh.${STANDALONE ? "pwa" : "web"}.${Math.round(baseH)}`;
+    const readLastKbH = (baseH: number) => {
       try {
-        DBG = window.localStorage.getItem("kbdebug") === "1";
+        const raw = window.localStorage.getItem(kbStoreKey(baseH));
+        const n = raw ? Number(raw) : 0;
+        if (n >= 160 && n < baseH - 100) return n;
       } catch {
         /* private mode */
       }
-    }
-    let probes: HTMLElement[] = [];
-    if (DBG) {
-      const mk = (css: string) => {
-        const d = document.createElement("div");
-        d.style.cssText = `position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;${css}`;
-        document.documentElement.appendChild(d);
-        return d;
-      };
-      probes = [
-        mk("height:100dvh"),
-        mk("height:100vh"),
-        mk("height:env(safe-area-inset-bottom)"),
-      ];
-    }
+      return Math.max(180, Math.round(baseH - (STANDALONE ? (baseH < 500 ? 200 : 376) : 290)));
+    };
+    const saveLastKbH = (baseH: number, h: number) => {
+      try {
+        window.localStorage.setItem(kbStoreKey(baseH), String(Math.round(h)));
+      } catch {
+        /* private mode */
+      }
+    };
+    let lastKbH = readLastKbH(fullHeight);
+
+    const setStandaloneLock = (lock: boolean) => {
+      if (!STANDALONE) return;
+      const root = document.documentElement;
+      if (lock) {
+        window.clearTimeout(unlockTimer);
+        if (root.dataset.kbLock !== "1") root.dataset.kbLock = "1";
+      } else if (root.dataset.kbLock) {
+        delete root.dataset.kbLock;
+      }
+    };
+
+    const clampScroll = () => {
+      if (window.scrollX !== 0 || window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
 
     const sync = () => {
+      clampScroll();
+      if (vv.scale > 1.01) return;
       // --vvh feeds modal/sheet max-height (dvh does not shrink for the iOS keyboard).
       document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
       if (window.innerWidth !== lastWidth) {
         lastWidth = window.innerWidth;
-        fullHeight = probeFullHeight(); // rotation changes the real full height
+        fullHeight = STANDALONE ? probeFullHeight() : window.innerHeight;
+        setIdleH(fullHeight);
+        lastKbH = readLastKbH(fullHeight);
       }
-      // iOS covers the layout bottom two ways: visualViewport shrinks (resize
-      // mode) or pans (offsetTop>0). Gate on focus so a stale visualViewport
-      // report can never wedge the shell: no editable focus, no keyboard box.
+      const focused = editableFocused();
       const covered = fullHeight - (vv.height + vv.offsetTop);
-      const keyboardOpen = editableFocused() && (covered > 100 || vv.offsetTop > 100);
+      const vvShrunk = covered > 100 || vv.offsetTop > 100;
+      if (!STANDALONE && (!focused || !vvShrunk) && Math.abs(vv.height - window.innerHeight) < 20) {
+        fullHeight = window.innerHeight;
+        setIdleH(fullHeight);
+      }
+      if (focused && vvShrunk && vv.height >= 160) {
+        lastKbH = Math.round(vv.height);
+        saveLastKbH(fullHeight, lastKbH);
+      }
+      const touchLayout =
+        window.innerWidth < 768 || window.matchMedia("(pointer: coarse)").matches;
+      const openingWindow =
+        focused &&
+        touchLayout &&
+        performance.now() - focusInAt < 450;
+      const keyboardOpen = focused && (vvShrunk || openingWindow);
+      const targetH = vvShrunk ? Math.round(vv.height) : lastKbH;
+      const settledTop =
+        !STANDALONE &&
+        vv.offsetTop > 4 &&
+        performance.now() - focusInAt >= 360
+          ? Math.round(vv.offsetTop)
+          : 0;
+      if (focused || keyboardOpen) {
+        setStandaloneLock(true);
+      }
       setKbBox((prev) => {
-        const next = keyboardOpen ? { height: vv.height, top: vv.offsetTop } : null;
+        const next = keyboardOpen ? { height: targetH, top: settledTop } : null;
         if (prev === next) return prev;
         if (prev && next && prev.height === next.height && prev.top === next.top)
           return prev;
         return next;
       });
-      if (DBG && probes.length === 3) {
-        const comp = document.querySelector(".composer");
-        const r = comp ? comp.getBoundingClientRect() : null;
-        const card = comp?.querySelector("form");
-        const cr = card ? card.getBoundingClientRect() : null;
-        const pb = comp ? getComputedStyle(comp).paddingBottom : "-";
-        const ae = document.activeElement as HTMLElement | null;
-        const sd = window.matchMedia("(display-mode: standalone)").matches ? 1 : 0;
-        setDbg(
-          `ih=${window.innerHeight} vv=${vv.height.toFixed(0)}+${vv.offsetTop.toFixed(0)} ` +
-            `scr=${window.screen.height}\ndvh=${probes[0].offsetHeight} vh=${probes[1].offsetHeight} ` +
-            `sab=${probes[2].offsetHeight} sy=${window.scrollY.toFixed(0)} sd=${sd}\n` +
-            `kb=${keyboardOpen ? `${vv.height.toFixed(0)}+${vv.offsetTop.toFixed(0)}` : "null"} ` +
-            `cov=${covered.toFixed(0)} foc=${ae?.tagName ?? "-"} pb=${pb}\n` +
-            `comp=${r ? `${r.top.toFixed(0)}..${r.bottom.toFixed(0)}` : "-"} ` +
-            `card=${cr ? `${cr.top.toFixed(0)}..${cr.bottom.toFixed(0)}` : "-"}`
-        );
+    };
+
+    let tap: { el: HTMLElement; id: number; x: number; y: number } | null = null;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) {
+        tap = null;
+        return;
+      }
+      const target = e.target;
+      if (isTextEditable(target) && document.activeElement !== target) {
+        const t = e.touches[0];
+        tap = { el: target, id: t.identifier, x: t.clientX, y: t.clientY };
+        if (STANDALONE) setStandaloneLock(true);
+      } else {
+        tap = null;
       }
     };
 
-    // iOS animates the keyboard over ~300ms; final vv values arrive late.
-    const syncSettled = () => {
+    const onTouchCancel = () => {
+      tap = null;
+    };
+
+    // Intercept qualified first-taps on unfocused mobile inputs (react-aria /
+    // futo-notes / tweb pattern): prevent native touch-focus scroll & pan, then
+    // lift off-screen for focus({ preventScroll: true }) + double-rAF restore.
+    const onTouchEnd = (e: TouchEvent) => {
+      const cur = tap;
+      tap = null;
+      if (!cur || e.touches.length > 0 || !cur.el.isConnected) return;
+      if (document.activeElement === cur.el) return;
+      let match: Touch | null = null;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        if (t.identifier === cur.id) {
+          match = t;
+          break;
+        }
+      }
+      if (!match) return;
+      if (Math.hypot(match.clientX - cur.x, match.clientY - cur.y) >= 12) {
+        if (STANDALONE && !editableFocused()) {
+          window.clearTimeout(unlockTimer);
+          unlockTimer = window.setTimeout(() => {
+            if (!editableFocused()) setStandaloneLock(false);
+          }, 120);
+        }
+        return;
+      }
+      e.preventDefault();
+      if (STANDALONE) setStandaloneLock(true);
+      focusWithoutScroll(cur.el);
+    };
+
+    const onFocusIn = (e: FocusEvent) => {
+      if (isTextEditable(e.target)) {
+        focusInAt = performance.now();
+        if (STANDALONE) setStandaloneLock(true);
+      }
       sync();
       window.clearTimeout(settle);
-      settle = window.setTimeout(sync, 400);
+      settle = window.setTimeout(sync, 460);
+    };
+
+    const onFocusOut = (e: FocusEvent) => {
+      if (isTextEditable(e.relatedTarget)) return;
+      // Trigger the CSS height transition back to idleH immediately at t=0ms
+      // so the shell glides down in lockstep with the iOS keyboard, then
+      // release kbLock once the slide finishes.
+      focusInAt = -10000;
+      sync();
+      window.clearTimeout(settle);
+      settle = window.setTimeout(sync, 460);
+      window.clearTimeout(unlockTimer);
+      unlockTimer = window.setTimeout(() => {
+        if (!editableFocused()) {
+          setStandaloneLock(false);
+          sync();
+        }
+      }, STANDALONE ? 340 : 460);
     };
 
     sync();
-    const dbgTick = DBG ? window.setInterval(sync, 700) : 0;
+    document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+    document.addEventListener("touchend", onTouchEnd, { capture: true, passive: false });
+    document.addEventListener("touchcancel", onTouchCancel, true);
+    document.addEventListener("focusin", onFocusIn, true);
+    document.addEventListener("focusout", onFocusOut, true);
     vv.addEventListener("resize", sync);
     vv.addEventListener("scroll", sync);
     window.addEventListener("resize", sync);
-    document.addEventListener("focusin", syncSettled);
-    document.addEventListener("focusout", syncSettled);
+    window.addEventListener("scroll", clampScroll, { passive: true });
     return () => {
       window.clearTimeout(settle);
-      window.clearInterval(dbgTick);
-      probes.forEach((p) => p.remove());
+      window.clearTimeout(unlockTimer);
+      document.removeEventListener("touchstart", onTouchStart, true);
+      document.removeEventListener("touchend", onTouchEnd, true);
+      document.removeEventListener("touchcancel", onTouchCancel, true);
+      document.removeEventListener("focusin", onFocusIn, true);
+      document.removeEventListener("focusout", onFocusOut, true);
       vv.removeEventListener("resize", sync);
       vv.removeEventListener("scroll", sync);
       window.removeEventListener("resize", sync);
-      document.removeEventListener("focusin", syncSettled);
-      document.removeEventListener("focusout", syncSettled);
+      window.removeEventListener("scroll", clampScroll);
     };
   }, []);
   const instancesRef = useRef(instances);
@@ -1020,26 +1133,26 @@ export function App() {
   return (
     <div
       data-kb={kbBox ? "open" : undefined}
-      style={{
-        height: kbBox ? `${kbBox.height}px` : "100dvh",
-        top: kbBox ? `${kbBox.top}px` : "0px",
-        bottom: "auto",
-      }}
-      className="fixed left-0 right-0 flex bg-[#000000] text-white overflow-hidden font-sans"
+      style={
+        STANDALONE
+          ? {
+              // Constant absolute/translateZ layer inside the 100vh body so the
+              // compositor layer is never recreated and both open and close
+              // height transitions glide between idleH and kbBox.height.
+              position: "absolute",
+              height: `${kbBox ? kbBox.height : idleH}px`,
+              top: 0,
+              bottom: "auto",
+              transform: "translateZ(0)",
+            }
+          : {
+              height: `${kbBox ? kbBox.height : idleH}px`,
+              top: `${kbBox ? kbBox.top : 0}px`,
+              bottom: "auto",
+            }
+      }
+      className="app-shell fixed left-0 right-0 flex bg-[#000000] text-white overflow-hidden font-sans"
     >
-      {dbg && (
-        <>
-          <pre className="fixed left-0 z-[9999] m-0 p-1.5 text-[11px] leading-tight font-mono bg-black/90 text-lime-300 pointer-events-none max-w-full whitespace-pre-wrap border border-lime-900" style={{ top: "calc(env(safe-area-inset-top, 0px) + 104px)" }}>
-            {dbg}
-          </pre>
-          {/* render-clip probes: fixed strips at known clientY. If the webview
-              framebuffer clips at the layout viewport (797), the 755 strip
-              shows but 800/835 do not. */}
-          <div className="fixed left-0 z-[9999] w-2 h-4 bg-green-500 pointer-events-none" style={{ top: "755px" }} />
-          <div className="fixed left-0 z-[9999] w-2 h-4 bg-red-500 pointer-events-none" style={{ top: "800px" }} />
-          <div className="fixed left-0 z-[9999] w-2 h-4 bg-blue-500 pointer-events-none" style={{ top: "835px" }} />
-        </>
-      )}
       {navOpen && (
         <div
           className="md:hidden fixed inset-0 z-40 bg-black/60"

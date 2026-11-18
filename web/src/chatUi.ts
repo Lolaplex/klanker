@@ -41,3 +41,33 @@ export function visibleImageSrc(src: string | null | undefined): string {
 export function codeFenceText(raw: string): string {
   return raw.replace(/\n$/, "");
 }
+
+/**
+ * Focus a field without triggering iOS WebKit's native scroll/pan to reveal
+ * bottom-positioned inputs: lift off-screen before focus({ preventScroll: true })
+ * and restore after two animation frames once UIProcess IPC commits.
+ */
+export function focusWithoutScroll(el: HTMLElement | null): void {
+  if (!el) return;
+  const isTouchLike =
+    typeof window === "undefined" ||
+    window.innerWidth < 768 ||
+    Boolean(window.matchMedia?.("(pointer: coarse)").matches);
+  if (!isTouchLike) {
+    el.focus({ preventScroll: true });
+    return;
+  }
+  const prevTransform = el.style.transform;
+  const prevTransition = el.style.transition;
+  el.style.transition = "none";
+  el.style.transform = "translateY(-99999px)";
+  el.focus({ preventScroll: true });
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      if (el.style.transform === "translateY(-99999px)") {
+        el.style.transform = prevTransform;
+        el.style.transition = prevTransition;
+      }
+    });
+  });
+}

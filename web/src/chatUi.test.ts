@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { codeFenceText, safeUrl, shouldSubmitOnEnter, visibleImageSrc } from "./chatUi.ts";
+import {
+  codeFenceText,
+  focusWithoutScroll,
+  safeUrl,
+  shouldSubmitOnEnter,
+  visibleImageSrc,
+} from "./chatUi.ts";
 
 describe("shouldSubmitOnEnter", () => {
   const base = { key: "Enter", shiftKey: false, composing: false, coarsePointer: false };
@@ -64,5 +70,95 @@ describe("codeFenceText", () => {
     assert.equal(codeFenceText("const a = 1\n"), "const a = 1");
     assert.equal(codeFenceText("line\n\n"), "line\n");
     assert.equal(codeFenceText("  spaced  "), "  spaced  ");
+  });
+});
+
+describe("focusWithoutScroll", () => {
+  it("lifts off-screen on mobile before focus(preventScroll) and restores after two frames", () => {
+    const origWindow = globalThis.window;
+    const origRaf = globalThis.requestAnimationFrame;
+    const frames: FrameRequestCallback[] = [];
+    (globalThis as Record<string, unknown>).window = { innerWidth: 390 };
+    (globalThis as Record<string, unknown>).requestAnimationFrame = (cb: FrameRequestCallback) => {
+      frames.push(cb);
+      return frames.length;
+    };
+    try {
+      const calls: Array<{ transform: string; preventScroll?: boolean }> = [];
+      const el = {
+        style: { transform: "scale(1)", transition: "opacity 1s" },
+        focus(opts?: FocusOptions) {
+          calls.push({ transform: this.style.transform, preventScroll: opts?.preventScroll });
+        },
+      } as unknown as HTMLElement;
+
+      focusWithoutScroll(el);
+      assert.deepEqual(calls, [{ transform: "translateY(-99999px)", preventScroll: true }]);
+      assert.equal(el.style.transform, "translateY(-99999px)");
+      assert.equal(frames.length, 1);
+
+      frames.shift()!(16);
+      assert.equal(el.style.transform, "translateY(-99999px)");
+      assert.equal(frames.length, 1);
+
+      frames.shift()!(32);
+      assert.equal(el.style.transform, "scale(1)");
+      assert.equal(el.style.transition, "opacity 1s");
+    } finally {
+      (globalThis as Record<string, unknown>).window = origWindow;
+      (globalThis as Record<string, unknown>).requestAnimationFrame = origRaf;
+    }
+  });
+
+  it("focuses directly with preventScroll on desktop widths", () => {
+    const origWindow = globalThis.window;
+    (globalThis as Record<string, unknown>).window = {
+      innerWidth: 1280,
+      matchMedia: () => ({ matches: false }),
+    };
+    try {
+      let optsSeen: FocusOptions | undefined;
+      const el = {
+        style: { transform: "", transition: "" },
+        focus(opts?: FocusOptions) {
+          optsSeen = opts;
+        },
+      } as unknown as HTMLElement;
+
+      focusWithoutScroll(el);
+      assert.equal(el.style.transform, "");
+      assert.deepEqual(optsSeen, { preventScroll: true });
+    } finally {
+      (globalThis as Record<string, unknown>).window = origWindow;
+    }
+  });
+
+  it("lifts off-screen on wide coarse-pointer screens (landscape iPhone)", () => {
+    const origWindow = globalThis.window;
+    const origRaf = globalThis.requestAnimationFrame;
+    const frames: FrameRequestCallback[] = [];
+    (globalThis as Record<string, unknown>).window = {
+      innerWidth: 844,
+      matchMedia: () => ({ matches: true }),
+    };
+    (globalThis as Record<string, unknown>).requestAnimationFrame = (cb: FrameRequestCallback) => {
+      frames.push(cb);
+      return frames.length;
+    };
+    try {
+      const el = {
+        style: { transform: "", transition: "" },
+        focus() {},
+      } as unknown as HTMLElement;
+
+      focusWithoutScroll(el);
+      assert.equal(el.style.transform, "translateY(-99999px)");
+      frames.shift()!(16);
+      frames.shift()!(32);
+      assert.equal(el.style.transform, "");
+    } finally {
+      (globalThis as Record<string, unknown>).window = origWindow;
+      (globalThis as Record<string, unknown>).requestAnimationFrame = origRaf;
+    }
   });
 });

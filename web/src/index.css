@@ -13,6 +13,11 @@
     --ink-mid: #a3a3a3;
     --ink-low: #525252;
     --sab: env(safe-area-inset-bottom, 0px);
+    --kb-dur: 0.42s;
+  }
+
+  [data-kb="open"] {
+    --kb-dur: 0.28s;
   }
 
   html, body, #root {
@@ -29,9 +34,7 @@
     top: 0;
     left: 0;
     right: 0;
-    /* 100dvh, not inset:0: in standalone PWAs bottom:0 pins to a fixed-position
-       viewport that excludes phantom bottom chrome; dvh is the real height. */
-    height: 100dvh;
+    height: 100%;
     width: 100%;
     overflow: hidden;
   }
@@ -47,13 +50,20 @@
     padding-top: env(safe-area-inset-top);
   }
 
+  @media (max-width: 767px), (pointer: coarse) {
+    .app-shell {
+      transition: height var(--kb-dur, 0.28s) cubic-bezier(0.32, 0.72, 0, 1);
+    }
+  }
+
   @media (max-width: 767px) {
     .composer {
-      padding-bottom: max(0.5rem, var(--sab));
+      padding-bottom: max(0.75rem, var(--sab));
+      transition: padding-bottom var(--kb-dur, 0.28s) cubic-bezier(0.32, 0.72, 0, 1);
     }
 
     [data-kb="open"] .composer {
-      padding-bottom: 0.5rem;
+      padding-bottom: 0.75rem;
     }
   }
 
@@ -63,6 +73,32 @@
   @media (display-mode: standalone) {
     :root {
       --sab: min(env(safe-area-inset-bottom, 0px), 34px);
+      --kb-dur: 0.28s;
+    }
+
+    [data-kb="open"] {
+      --kb-dur: 0.28s;
+    }
+
+    /* iOS standalone sizes the layout viewport (ICB, 100%, dvh, innerHeight)
+       as if a 47px browser toolbar sat at the bottom, while the web view and
+       100vh span the full screen. Keep html/body/#root at 100vh so idle
+       paints the full screen without clipping, and lock body fixed during
+       touch/focus (data-kb-lock) without changing heights. */
+    html, body, #root {
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    body {
+      position: relative;
+    }
+
+    html[data-kb-lock] body {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
     }
   }
 

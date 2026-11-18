@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Terminal, Trash2, ArrowUp, Bot, User, Square, Paperclip, X } from "lucide-react";
-import { shouldSubmitOnEnter } from "../chatUi";
+import { shouldSubmitOnEnter, focusWithoutScroll } from "../chatUi";
 import { ChatMessage, KlankerInstance, PendingApproval } from "../types/klanker";
 import { CopyButton } from "./CopyButton";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -70,7 +70,25 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   }, [messages, isLoading]);
 
   useEffect(() => {
-    const focus = () => textareaRef.current?.focus();
+    const el = listRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let prevH = el.clientHeight;
+    const ro = new ResizeObserver(() => {
+      const nextH = el.clientHeight;
+      const delta = prevH - nextH;
+      prevH = nextH;
+      if (stickRef.current) {
+        el.scrollTop = el.scrollHeight;
+      } else if (delta > 0) {
+        el.scrollTop += delta;
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const focus = () => focusWithoutScroll(textareaRef.current);
     window.addEventListener("klanker:focus-composer", focus);
     return () => window.removeEventListener("klanker:focus-composer", focus);
   }, []);
@@ -272,7 +290,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="composer touch-none px-3 pt-2 bg-[#000000] border-t border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
+      <div className="composer touch-none px-3 pt-3 bg-[#000000] border-t border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
         <form
           onSubmit={handleSubmit}
           className="w-full flex flex-col min-h-12 bg-[#121212] border border-[#262626] focus-within:border-[#525252] rounded transition-colors"

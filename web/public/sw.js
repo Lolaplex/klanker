@@ -1,6 +1,6 @@
 // Klanker PWA shell. Precaches the app shell only; /v1/* and /health are
 // auth/live data and must never touch the cache.
-const CACHE = "klanker-shell-v5";
+const CACHE = "klanker-shell-v11";
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/klanker.svg"];
 
 self.addEventListener("install", (event) => {

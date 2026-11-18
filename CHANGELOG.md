@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Dashboard iOS PWA bottom gap and keyboard jump: standalone mode now keeps the document at `100vh` with a constant `translateZ(0)` shell (avoiding the 47px WebKit clip and compositor teardown), intercepts first-tap input focus via `touchend` + `focus({ preventScroll: true })` to prevent native viewport panning, starts opening/closing spring transitions immediately at `t = 0`, anchors the message scroll container across keyboard animations, unlocks PWA landscape orientation, and balances `.composer` padding (`sw` cache `v11`).
 - Dashboard composer uses a 16px font below the `md` breakpoint so mobile browsers do not zoom the page when the field is focused. Desktop stays at the smaller size.
 - Editing a local instance persisted nothing — `save()` hardcoded `kind: "remote"` so every local save died at the empty `base_url` check. The sheet keeps the real kind and hides the cookie "authed" pill on desktop (bearer is the only auth path there).
 - Deleting a chat removes it from the sidebar immediately (optimistic removal, refetch on failure) and asks for confirmation first — same for archived workspaces/personas and removed instances.
