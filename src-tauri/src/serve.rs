@@ -365,13 +365,15 @@ fn pick_port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
-/// Data root for the managed local serve: `~/.klanker` — the app's own host
-/// root (`<host>/workspaces/<id>`). Workspaces live at the top level; there
-/// is no instance-level `.agents` nesting and `~/.agents` stays untouched.
+/// Data root for the managed local serve: `~/.klanker/instances/default` —
+/// the instance dir IS the host root (`<inst>/workspaces/<id>`), no
+/// `.agents` nesting, and `~/.agents` stays untouched.
 fn instance_host_dir(_app: &AppHandle) -> Result<PathBuf, String> {
     let dir = dirs::home_dir()
         .ok_or("no home dir")?
-        .join(".klanker");
+        .join(".klanker")
+        .join("instances")
+        .join("default");
     fs::create_dir_all(&dir).map_err(|e| format!("create host dir: {e}"))?;
     Ok(dir)
 }

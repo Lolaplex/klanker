@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - `TELEGRAM_BOT_TOKEN`, `GITHUB_TOKEN`/`GH_TOKEN` resolve through `agents_workspace.resolve_secret`: `<ws>/secrets.json`, then `<host>/secrets.json`, then the environment. Shell env behaviour is unchanged when no secrets file defines the key.
 - `src-tauri` shed ~2,800 lines of the legacy multi-instance manager (`commands.rs`, `models.rs`, `presence.rs`); the dead same-origin auth gate is skipped on desktop. The window is frameless again with in-DOM titlebar controls.
-- The managed local serve's host root is `~/.klanker` (`AGENTS_HOST_DIR`) — workspaces at `<host>/workspaces/<id>` with no instance-level `.agents` nesting; `~/.agents` stays untouched. The settings workdir is passed as `AGENTS_WORKDIR` (created if missing).
+- The managed local serve's host root is `~/.klanker/instances/default` (`AGENTS_HOST_DIR`) — the instance dir is the host root with `workspaces/<id>` inside, no `.agents` nesting; `~/.agents` stays untouched. The settings workdir is passed as `AGENTS_WORKDIR` (created if missing).
 - UI and code say "instance" consistently: `HostSheet` became `InstanceSheet` and "ADD HOST / Host settings / Host URL / Host secret" labels read "instance" — genuine network-host terms (`AGENTS_HOST_DIR`, `window.location.host`) keep the word.
 
 ### Added
