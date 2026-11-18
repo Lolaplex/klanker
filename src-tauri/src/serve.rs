@@ -558,12 +558,33 @@ pub async fn serve_ensure_local(app: AppHandle, workdir: Option<String>) -> Resu
 }
 
 /// Manual retry from the "server lost" state — resets the respawn budget.
+/// An owned serve is actually killed first: without that the health probe
+/// in `do_ensure` adopts the still-dying process and the "restart" becomes
+/// a no-op, so a new agents-relay build or changed env is never picked up.
+/// A foreign serve is never touched — it is just adopted again.
 #[tauri::command]
 pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
+    let mut killed = None;
     {
         let state = app.state::<ServeState>();
         let mut s = state.0.lock().map_err(|e| e.to_string())?;
         s.failed_spawns = 0;
+        if s.owned {
+            if let Some(pid) = s.pid.take() {
+                kill_tree(pid);
+                killed = Some(pid);
+            }
+            s.state = "stopped".into();
+            s.owned = false;
+        }
+    }
+    if let Some(pid) = killed {
+        for _ in 0..40 {
+            if !pid_alive(pid) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
     }
     do_ensure(&app, workdir.as_deref().unwrap_or(""))
 }
