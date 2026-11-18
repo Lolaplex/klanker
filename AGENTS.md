@@ -37,6 +37,47 @@ klanker cron                        # scheduled care flows
 - `src/klanker/nucleus.py` — spawns `klanker.turn` (argv shims, then `runner.loop`).
 - `src/klanker/__main__.py` — CLI parser and dispatch.
 
+## Inherited rules (koru-distill discipline)
+
+- **Ground truth = running code.** `python -m pytest -q`,
+  `bash scripts/board.sh` — a claim without a measured command is
+  `unmeasured`, and `unmeasured` is a complete sentence.
+- **Claim states: blocker / not a blocker / unmeasured.** Re-measure
+  anything inherited from another session, doc, or header before
+  relying on it. Pin `git rev-parse HEAD` on scans.
+- **Find it before you build it.** Search klanker, agents-*, client-*
+  first; report an empty search as a result.
+- **Refusals are loud.** No fallbacks, no silent skips, no degraded
+  path labeled default. A contract mismatch is fixed at the wire,
+  never papered over client-side.
+- **Never present option menus.** Pick the steelman, defend it in a
+  paragraph, let Fabian veto.
+- **Evidence classes V/M/C/D** on every challenge entry. `landed`
+  requires `evidence/` artifacts — `scripts/board.sh` enforces it.
+
+## Challenge entry discipline
+
+- One self-contained dir per slot under `challenges/`. Copy
+  `challenges/_template/`.
+- `entry.md` frontmatter is the contract: `name`, `area`, `needs`,
+  `accept`, `surface`, `status`, `evidence`, `provenance`.
+- `accept:` names the falsifying oracle — a check that can only confirm
+  is not a gate. Prefer runnable commands; manual oracles say so.
+- Status: `open → claimed → landed` (or `waived` with a named reason).
+  `claimed` requires all `needs:` landed or waived.
+- Append happens automatically: `bash scripts/board.sh --write`
+  regenerates the CATALOG table block; `--check` verifies freshness.
+
+## Before pushing
+
+```bash
+bash scripts/board.sh          # challenges ↔ evidence consistency
+python -m pytest -q            # test suite
+```
+
+`git push` to a public remote is submission surface — explicit approval
+of exact content required, every time.
+
 ## Commit discipline (installed via `bash hooks/install.sh`)
 
 Every authored commit answers three sectioned questions — silence is a
