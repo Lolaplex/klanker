@@ -16,7 +16,12 @@ def setup_git_identity(target_home: Path | None = None) -> dict[str, str]:
     home = target_home or Path(os.environ.get("HOME", "/data"))
     home.mkdir(parents=True, exist_ok=True)
 
-    token = os.environ.get("GITHUB_TOKEN", "").strip() or os.environ.get("GH_TOKEN", "").strip()
+    try:
+        from agents_workspace import resolve_secret
+
+        token = resolve_secret("GITHUB_TOKEN").strip() or resolve_secret("GH_TOKEN").strip()
+    except Exception:
+        token = os.environ.get("GITHUB_TOKEN", "").strip() or os.environ.get("GH_TOKEN", "").strip()
     name = (
         os.environ.get("GIT_AUTHOR_NAME", "").strip()
         or os.environ.get("GIT_NAME", "").strip()

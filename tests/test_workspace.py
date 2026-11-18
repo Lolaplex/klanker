@@ -135,7 +135,8 @@ def test_terminal_edit_counts_as_a_file_write():
 def test_prompt_subcommand_shows_coding_block(tmp_path, monkeypatch, capsys):
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
-    monkeypatch.setenv("AGENTS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("AGENTS_WORKSPACE", raising=False)
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "home"))
     with patch("klanker.updates.check_for_updates", return_value=None):
         rc = cli.main(["prompt", "--workspace", str(repo)])
     assert rc == 0
