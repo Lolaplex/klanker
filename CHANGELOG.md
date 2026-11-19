@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Mobile chats healed from dead streams: when the SSE fetch dies client-side (iOS suspend / "Load failed"), the app re-pulls the session's trace events (brief retry window) and merges them over localStorage state — stranded empty bubbles and stale error text converge to server truth. The open chat also reconciles on open and when the app regains visibility, so replies recorded on other devices appear without a manual restore.
+- Live cross-device sync: the open chat polls the session's newest trace ts every 12s (one raw JSONL line) and only pulls full events on change — turns from Telegram/other devices surface without a reload.
+- A stream that goes silent without erroring (suspended fetch, dead network) no longer pins the spinner and busy-lock forever: a 5-minute idle watchdog fails the turn and the reconcile path heals the bubbles.
 
 ### Fixed
 - `serve_restart` actually restarts: an owned serve is killed and the respawn waits for the pid to die — previously the health probe re-adopted the still-running process, so a new agents-relay build or changed env was never picked up. Foreign serves are still never killed.
