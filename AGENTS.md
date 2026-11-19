@@ -80,6 +80,11 @@ of exact content required, every time.
 
 ## Commit discipline (installed via `bash hooks/install.sh`)
 
+**Every contributor and agent** must run `bash hooks/install.sh` once per
+clone. That sets `core.hooksPath=hooks` so git runs the tracked dispatchers
+under `hooks/`. **`core.hooksPath=/dev/null` is not allowed** — it disables
+hooks silently (worse than `--no-verify` because it looks configured).
+
 Every authored commit answers three sectioned questions — silence is a
 refusal, honest opt-outs are explicit:
 
