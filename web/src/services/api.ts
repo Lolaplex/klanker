@@ -582,6 +582,24 @@ export const api = {
     }
   },
 
+  /** `ts` of the session's newest trace event — the cheap change detector for
+   *  cross-device sync (one raw JSONL line instead of the full events pull). */
+  async sessionTailTs(inst: KlankerInstance, workspace: string, session: string): Promise<string> {
+    try {
+      const wq = workspace ? `&workspace=${encodeURIComponent(workspace)}` : "";
+      const r = await req<{ lines?: string[] }>(
+        inst,
+        `/v1/traces?limit=1&session=${encodeURIComponent(session)}${wq}`,
+        { headers: headers(inst) }
+      );
+      const line = r.lines?.[0];
+      if (!line) return "";
+      return String(JSON.parse(line).ts || "");
+    } catch {
+      return "";
+    }
+  },
+
   // --- jobs (goal-sessions) --------------------------------------------------
 
   async listJobs(

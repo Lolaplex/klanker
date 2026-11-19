@@ -870,7 +870,29 @@ export function App() {
     };
     void run();
     document.addEventListener("visibilitychange", onVisible);
-    return () => document.removeEventListener("visibilitychange", onVisible);
+    // Cheap sync: one raw JSONL line per tick; the heavy events pull only runs
+    // when the session's newest trace ts actually moved (turns from other
+    // devices/channels land without a reload).
+    let lastTs = "";
+    const poll = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (turnBusyRef.current?.chatId === chatId) return;
+      void api.sessionTailTs(inst, ws, session).then((ts) => {
+        if (!ts) return;
+        if (!lastTs) {
+          lastTs = ts;
+          return;
+        }
+        if (ts !== lastTs) {
+          lastTs = ts;
+          void run();
+        }
+      });
+    }, 12_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(poll);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInstance, openChat?.id, openChat?.session, selWs, selPersona]);
 
@@ -1102,7 +1124,21 @@ export function App() {
         model: model || undefined,
         attachments: attachments && attachments.length ? attachments : undefined,
       });
-      for await (const ev of stream) {
+      // iOS can suspend the SSE fetch without erroring it: no delta, no done,
+      // no catch — the spinner and the busy-lock would hang forever. An idle
+      // watchdog fails the turn; the reconcile in `finally` heals from server
+      // truth. Generous: prefill/stall gaps are bounded by provider settings.
+      const it = stream[Symbol.asyncIterator]();
+      const STREAM_IDLE_MS = 5 * 60_000;
+      for (;;) {
+        const next = await Promise.race([
+          it.next(),
+          new Promise<never>((_, reject) =>
+            window.setTimeout(() => reject(new Error("stream stalled (no events for 5m)")), STREAM_IDLE_MS)
+          ),
+        ]);
+        if (next.done) break;
+        const ev = next.value;
         if (ev.type === "delta" && ev.text) {
           const piece = ev.text;
           setChats((prev) =>
