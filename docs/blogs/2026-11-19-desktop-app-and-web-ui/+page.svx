@@ -1,0 +1,144 @@
+---
+title: "Desktop app and web UI: Tauri shell and PWA land on dev"
+subject: "Desktop app and web UI"
+kind: receipt
+date: 2026-11-19
+version: 1
+summary: "Felix (@Klix927) added a Tauri 2 desktop app and a shared web UI to klanker on dev. The work is not on main and is not a release."
+tags: [klanker, desktop, tauri, pwa]
+ai_authored: mostly
+refs:
+  prs:
+    - Lolaplex/klanker#44
+    - Lolaplex/klanker#48
+    - Lolaplex/klanker#52
+    - Lolaplex/klanker#62
+    - Lolaplex/klanker#63
+    - Lolaplex/klanker#64
+    - Lolaplex/klanker#73
+    - Lolaplex/klanker#75
+  commits:
+    - c670b39
+    - 1b03968
+    - 6cb7300
+    - 690f4b6
+    - 698c9d5
+---
+
+<lx-callout tone="warn" title="On dev, not released">
+This work is on the <code>dev</code> branch. The work is not on <code>main</code>. The work is not a release. <code>main</code> stays at commit <a href="https://github.com/Lolaplex/klanker/commit/698c9d51dd2228686ffc1bcbf8beb644a3d2b0f4">698c9d5</a> (2026-11-06).
+</lx-callout>
+
+This receipt records the desktop app and the web UI that Felix ([@Klix927](https://github.com/Klix927)) added to klanker between 2026-11-10 and 2026-11-18 (Europe/Berlin).
+
+The shared UI lives in `web/`. The desktop app wraps that UI in a Tauri 2 shell under `src-tauri/`. The same UI is a PWA that `klanker serve` can serve.
+
+## What landed
+
+Felix added a Tauri 2 desktop app. The crate name is `klanker_desktop` in `src-tauri/`. The product name is Klanker. The identifier is `org.lolaplex.klanker`. Root scripts in `package.json` start and build the app: `pnpm desktop:dev` and `pnpm desktop:build`.
+
+[PR #44](https://github.com/Lolaplex/klanker/pull/44) (2026-11-11) put the React UI in `web/` and served it as a PWA. `klanker serve` sets `AGENTS_RELAY_WEB_DIR` to vendored files in `src/klanker/_web` when that variable is unset. `scripts/vendor-web.py` copies `web/dist` into that folder. The Docker image builds `web/` in a Node stage and copies the result into the Python image. The runtime image has no Node.
+
+Commit [1b03968](https://github.com/Lolaplex/klanker/commit/1b03968f78b3b2d6f74afe7eb0853bbcdeee3bf1) (2026-11-12) first added `src-tauri/` to this repository.
+
+[PR #48](https://github.com/Lolaplex/klanker/pull/48) (2026-11-18) replaced that first manager with a thin shell. The Rust side now owns only native work:
+
+- one managed local `klanker serve` on `127.0.0.1:8787` (the app adopts a serve that already runs; it does not kill a foreign serve)
+- OS keyring for secrets
+- tray, close-to-tray, and an Alt+Space raise
+- `uv` install and upgrade of the `klanker` CLI (`src-tauri/src/provision.rs`, uv 0.9.16)
+- a durable instance registry at `~/.klanker/instances/<id>/instance.json`
+- Tailscale peer discovery (`src-tauri/src/discovery.rs`)
+
+The dashboard talks to `klanker serve` over HTTP with a Bearer token. The app stores the token in the OS keyring. The webview does not keep the secret in localStorage.
+
+Later PRs on 2026-11-18 extended that shell: window model ([#52](https://github.com/Lolaplex/klanker/pull/52)), dialogs and legacy import ([#53](https://github.com/Lolaplex/klanker/pull/53)), registry cards ([#62](https://github.com/Lolaplex/klanker/pull/62)), Tailscale discovery ([#63](https://github.com/Lolaplex/klanker/pull/63)), remote mount through the relay ([#64](https://github.com/Lolaplex/klanker/pull/64)), registry reconcile with `remotes.json` ([#73](https://github.com/Lolaplex/klanker/pull/73)), keyring by endpoint host ([#71](https://github.com/Lolaplex/klanker/pull/71)), re-auth ([#72](https://github.com/Lolaplex/klanker/pull/72)), real restart ([#74](https://github.com/Lolaplex/klanker/pull/74)), and presence offers in the add-instance modal ([#75](https://github.com/Lolaplex/klanker/pull/75)).
+
+Instance kinds in `web/src/types/klanker.ts` are `local` and `remote` only.
+
+## Web and PWA polish
+
+Felix also improved the phone and browser surface. Chat replies render as Markdown. Messages and code blocks have a copy control. Touch targets are at least 44px. The composer uses a 16px font on small screens so iOS Safari does not zoom the page. Further commits fix the iOS PWA viewport, keyboard overlap, and safe-area layout.
+
+The Markdown chat work landed on `dev` as commit [09c6eaf](https://github.com/Lolaplex/klanker/commit/09c6eaf) (2026-11-14), which cites PR #47. GitHub shows that pull request as closed, not merged. The zoom fix from the closed PR #46 is in later commits, including [PR #49](https://github.com/Lolaplex/klanker/pull/49).
+
+## Other notable work in the same window
+
+Between 2026-11-10 and 2026-11-12 Felix also landed the workspace and persona CLI (PRs [#26](https://github.com/Lolaplex/klanker/pull/26) through [#41](https://github.com/Lolaplex/klanker/pull/41)): `klanker workspace create|list`, `klanker persona list|add|inbox|task|handoff`, and a stricter host layout. `klanker serve` now refuses a legacy host layout until the operator runs `agents-workspace migrate`.
+
+A later commit, [8eb756b](https://github.com/Lolaplex/klanker/commit/8eb756b), moved `agents-keys`, `agents-voice`, `agents-store`, and `agents-browser` to core dependencies and added the `mcp.browser.read-url` module.
+
+## Timeline of the main desktop and web PRs
+
+The dates below are Europe/Berlin.
+
+<lx-timeline layout="start">
+<script type="application/json">
+{"events":[{"date":"2026-11-11","title":"Web dashboard","body":"PR #44 extracts the UI into web/ and serves it as a PWA.","href":"https://github.com/Lolaplex/klanker/pull/44","state":"done"},{"date":"2026-11-12","title":"src-tauri first lands","body":"Commit 1b03968 adds the first desktop shell to this repo.","href":"https://github.com/Lolaplex/klanker/commit/1b03968f78b3b2d6f74afe7eb0853bbcdeee3bf1","state":"done"},{"date":"2026-11-14","title":"Markdown chat","body":"Commit 09c6eaf lands selectable Markdown chat and 44px controls.","href":"https://github.com/Lolaplex/klanker/commit/09c6eaf","state":"done"},{"date":"2026-11-18","title":"Thin desktop shell","body":"PR #48 replaces the ported manager with a thin Tauri shell.","href":"https://github.com/Lolaplex/klanker/pull/48","state":"done"},{"date":"2026-11-18","title":"Registry, discovery, remotes","body":"PRs #62, #63, and #64 add cards, Tailscale discovery, and relay mounts.","href":"https://github.com/Lolaplex/klanker/pull/62","state":"done"},{"date":"2026-11-18","title":"Presence offers","body":"PR #75 lists signed presence offers in the add-instance modal.","href":"https://github.com/Lolaplex/klanker/pull/75","state":"done"}]}
+</script>
+</lx-timeline>
+
+## How to build and run
+
+These commands come from `package.json`, `src-tauri/tauri.conf.json`, `scripts/vendor-web.py`, and `src/klanker/web_assets.py`. This receipt does not re-run them.
+
+Install the root package dependencies:
+
+```bash
+pnpm install
+```
+
+Start the desktop app in development mode. This command starts the `web/` dev server on port 1420 and then starts the Tauri shell:
+
+```bash
+pnpm desktop:dev
+```
+
+Build the desktop app:
+
+```bash
+pnpm desktop:build
+```
+
+Build the web UI only:
+
+```bash
+pnpm --dir web install
+pnpm --dir web build
+```
+
+Vendor the web build into the Python package, then start the serve. Set `RELAY_WEB_TOKEN` first:
+
+```bash
+python scripts/vendor-web.py
+klanker serve
+```
+
+A managed desktop serve uses `~/.klanker/instances/default` as `AGENTS_HOST_DIR`. The first start can also install the CLI with `uv tool install klanker` from the Settings panel.
+
+## Known gaps and next steps
+
+- The desktop app does not provision Docker, VPS, or NAS instances yet. Instance kinds are `local` and `remote` only.
+- A managed local serve uses `~/.klanker/instances/default` as the host root. A CLI `klanker serve` uses `~/.agents` by default. These are two different host roots.
+- The shared `client-repl`, `client-overlay`, and `client-host` layers are not in this repository. The CLI REPL stays in `src/klanker/shell/`. The GUI is the `web/` UI in a Tauri webview.
+- There is no CI job that builds `web/` or the Tauri app. Felix's PRs targeted `dev`, so they did not get a passing pytest job on GitHub Actions.
+- The updater public key in `src-tauri/tauri.conf.json` is still the placeholder `REPLACE_WITH_KLANKER_MINISIGN_PUBKEY`.
+- `.github/workflows/publish.yml` publishes the Python package only. That workflow does not vendor `web/` and does not ship desktop artifacts or `latest.json`.
+- `agents-store>=0.0.1` is a new core dependency. That package is not on PyPI (HTTP 404 on 2026-11-19).
+- `README.md` still lists "Desktop Companion GUI" as an unchecked roadmap item. The README does not document `pnpm desktop:dev` or `web/`.
+- The private repo `Lolaplex/klanker-desktop` still exists and still holds the older Rust manager. This repo does not vendor that tree as-is.
+- Open PR [#22](https://github.com/Lolaplex/klanker/pull/22) (receipt-read guards) is not part of this desktop work. That PR is not ready to merge.
+
+## Evidence
+
+| Item | Pointer |
+| --- | --- |
+| Web dashboard | [PR #44](https://github.com/Lolaplex/klanker/pull/44), commit [c670b39](https://github.com/Lolaplex/klanker/commit/c670b39) |
+| First `src-tauri/` drop | commit [1b03968](https://github.com/Lolaplex/klanker/commit/1b03968f78b3b2d6f74afe7eb0853bbcdeee3bf1) |
+| Thin desktop shell | [PR #48](https://github.com/Lolaplex/klanker/pull/48), commit [6cb7300](https://github.com/Lolaplex/klanker/commit/6cb7300) |
+| Last Felix commit on `dev` in this window | [690f4b6](https://github.com/Lolaplex/klanker/commit/690f4b6) (PR #75) |
+| `main` tip (unchanged) | [698c9d5](https://github.com/Lolaplex/klanker/commit/698c9d51dd2228686ffc1bcbf8beb644a3d2b0f4) |
+
+<lx-pr repo="Lolaplex/klanker" number="48"></lx-pr>
+<lx-pr repo="Lolaplex/klanker" number="44"></lx-pr>
+<lx-commit sha="6cb7300" repo="Lolaplex/klanker">desktop shell (#48)</lx-commit>
