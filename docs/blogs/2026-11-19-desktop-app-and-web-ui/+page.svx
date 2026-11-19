@@ -3,7 +3,6 @@ title: "Desktop app and web UI: Tauri shell and PWA land on dev"
 subject: "Desktop app and web UI"
 kind: receipt
 date: 2026-11-19
-status: published
 version: 1
 summary: "Felix (@Klix927) added a Tauri 2 desktop app and a shared web UI to klanker on dev. The work is not on main and is not a release."
 tags: [klanker, desktop, tauri, pwa]
