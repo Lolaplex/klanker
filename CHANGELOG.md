@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - The add-instance modal lists signed presence offers from the serving relay (`/v1/presence/offers`) — valid roads are one-click picks, forged/expired entries show their refusal reason. A "publish this host" form signs a `road-declaration/1` via `agents_keys` through `POST /v1/presence/publish`.
+- Sent attachments echo back as filename chips on the user bubble instead of disappearing into a bare `[attach]` path.
+- The system prompt tells the agent that a `<page .../>` line marks only the first page of tool output and to continue it with `read_content` before counting or summarizing.
+
+### Fixed
+- Mobile chats healed from dead streams: when the SSE fetch dies client-side (iOS suspend / "Load failed"), the app re-pulls the session's trace events (brief retry window) and merges them over localStorage state — stranded empty bubbles and stale error text converge to server truth. The open chat also reconciles on open and when the app regains visibility, so replies recorded on other devices appear without a manual restore.
 
 ### Fixed
 - `serve_restart` actually restarts: an owned serve is killed and the respawn waits for the pid to die — previously the health probe re-adopted the still-running process, so a new agents-relay build or changed env was never picked up. Foreign serves are still never killed.

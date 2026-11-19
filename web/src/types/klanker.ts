@@ -77,6 +77,8 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   elapsed_ms?: number;
+  /** Names of files sent with this message (echo only — blobs are not kept). */
+  attachments?: string[];
 }
 
 export interface TurnResponse {

@@ -707,6 +707,63 @@ export function App() {
         timestamp: e.ts || new Date().toISOString(),
       }));
 
+  /**
+   * Merge server-restored messages over the local copy. localStorage is
+   * per-device: a dead stream (iOS suspends the SSE fetch) leaves stranded
+   * empty bubbles or "Error executing turn" text while the server completed
+   * the turn. Server messages win; local messages only survive when they are
+   * newer than the last server event (unsent/failed) or an error annotation
+   * the server genuinely never answered.
+   */
+  const mergeMessages = (local: ChatMessage[], server: ChatMessage[]): ChatMessage[] => {
+    if (!server.length) return local;
+    const lastTs = server[server.length - 1].timestamp;
+    const seen = new Set(server.map((m) => `${m.role}\n${m.content}`));
+    const lastUserTs = server.reduce((acc, m) => (m.role === "user" ? m.timestamp : acc), "");
+    const serverReplied = !lastUserTs || server.some((m) => m.role === "klanker" && m.timestamp >= lastUserTs);
+    const extra = local.filter((m) => {
+      if (!m.content) return false;
+      if (seen.has(`${m.role}\n${m.content}`)) return false;
+      if (m.timestamp > lastTs) return true;
+      return m.role === "klanker" && m.content.startsWith("Error") && !serverReplied;
+    });
+    return [...server, ...extra];
+  };
+
+  /** Pull session events and merge them into a chat. With `awaitReply` it
+   *  retries briefly: after a client-side stream death the server turn may
+   *  still be running, so the reply lands in the next poll. */
+  const reconcileChat = async (
+    inst: KlankerInstance,
+    key: string,
+    chatId: string,
+    ws: string,
+    persona: string,
+    session: string,
+    awaitReply = false
+  ) => {
+    const deadline = Date.now() + 90_000;
+    for (;;) {
+      const events = await api.sessionEvents(inst, ws, persona, session);
+      if (events) {
+        const serverMsgs = eventsToMessages(events);
+        evCache.current.set(`${inst.id} ${ws} ${persona} ${session}`, serverMsgs);
+        setChats((prev) =>
+          mapChat(prev, key, chatId, (item) => {
+            const next = mergeMessages(item.messages, serverMsgs);
+            return next === item.messages ? item : { ...item, messages: next };
+          })
+        );
+        const lastUser = serverMsgs.reduce((acc, m, i) => (m.role === "user" ? i : acc), -1);
+        const replied = lastUser < 0 || serverMsgs.some((m, i) => i > lastUser && m.role === "klanker");
+        if (replied || !awaitReply || Date.now() > deadline) return;
+      } else if (!awaitReply || Date.now() > deadline) {
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+  };
+
   const expandPersona = (ws: string, persona: string) => {
     const inst = activeInstance;
     if (!inst) return;
@@ -769,41 +826,51 @@ export function App() {
     return [...localRows, ...remoteRows];
   };
 
-  // Session history: restore message bubbles from trace events when a chat
-  // with a pinned session is opened and has no local messages yet. Prefetched
-  // events (sidebar titles) serve as the cache; failures stay retryable.
+  // Session history: reconcile the open chat with server trace events when it
+  // is opened and whenever the app regains visibility. Stranded optimistic
+  // bubbles (dead mobile streams) heal here; prefetched events (sidebar
+  // titles) serve as the cache; failures stay retryable.
   useEffect(() => {
     const inst = activeInstance;
     const chat = openChat;
-    if (!inst || !chat || !chat.session || chat.messages.length > 0) return;
+    if (!inst || !chat || !chat.session) return;
     if (!selWs || !selPersona) return;
     const ws = selWs;
     const persona = selPersona;
     const key = selKey;
     const chatId = chat.id;
-    const ck = `${inst.id} ${ws} ${persona} ${chat.session}`;
+    const session = chat.session;
+    const ck = `${inst.id} ${ws} ${persona} ${session}`;
     const apply = (restored: ChatMessage[]) => {
       if (restored.length === 0) return;
       setChats((prev) =>
-        mapChat(prev, key, chatId, (item) =>
-          item.messages.length > 0 ? item : { ...item, messages: restored }
-        )
+        mapChat(prev, key, chatId, (item) => {
+          if (turnBusyRef.current?.chatId === chatId) return item;
+          const next = mergeMessages(item.messages, restored);
+          return next === item.messages ? item : { ...item, messages: next };
+        })
       );
       const first = restored.find((m) => m.role === "user")?.content;
       if (first) setSessionTitles((prev) => (prev[ck] ? prev : { ...prev, [ck]: clipTitle(first) }));
     };
-    const cached = evCache.current.get(ck);
-    if (cached) {
-      apply(cached);
-      return;
-    }
-    void (async () => {
-      const events = await api.sessionEvents(inst, ws, persona, chat.session);
+    const run = async () => {
+      const cached = evCache.current.get(ck);
+      if (cached && chat.messages.length === 0) {
+        apply(cached);
+      }
+      const events = await api.sessionEvents(inst, ws, persona, session);
       if (!events) return;
       const restored = eventsToMessages(events);
       evCache.current.set(ck, restored);
       apply(restored);
-    })();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void run();
+    };
+    void run();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInstance, openChat?.id, openChat?.session, selWs, selPersona]);
 
   // Approvals poll
@@ -994,6 +1061,7 @@ export function App() {
       role: "user",
       content: text,
       timestamp: new Date().toISOString(),
+      attachments: attachments?.map((a) => a.name || "file"),
     };
     const assistantId = crypto.randomUUID();
     const assistantMessage: ChatMessage = {
@@ -1015,6 +1083,7 @@ export function App() {
     turnBusyRef.current = busy;
     setTurnBusy(busy);
     const started = Date.now();
+    let sawTrailer = false;
 
     setStreamStatus(null);
 
@@ -1046,6 +1115,7 @@ export function App() {
         } else if (ev.type === "error") {
           throw new Error(ev.text || "turn failed");
         } else if (ev.type === "trailer") {
+          sawTrailer = true;
           setChats((prev) =>
             mapChat(prev, selKey, chatId, (item) => ({
               ...item,
@@ -1084,6 +1154,12 @@ export function App() {
       }
       setTurnBusy((b) => (b?.instanceId === id && b.chatId === chatId ? null : b));
       setStreamStatus(null);
+      // A dead client stream (iOS "Load failed", suspend, reload) does not
+      // mean the turn failed: the server may still be writing the reply into
+      // the session. Reconcile so the bubbles converge to server truth.
+      if (!sawTrailer && session) {
+        void reconcileChat(inst, selKey, chatId, selWs, selPersona, session, true);
+      }
       if (activeIdRef.current !== id) {
         setUnread((prev) => {
           if (prev.has(id) || activeIdRef.current === id) return prev;

@@ -407,6 +407,19 @@ function MessageBubble({
               : "border-[#262626] bg-[#0a0a0a] text-[#e5e5e5]"
           }`}
         >
+          {message.attachments?.length ? (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {message.attachments.map((name, i) => (
+                <span
+                  key={`${name}-${i}`}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#1f1f1f] border border-[#2e2e2e] rounded text-[10px] text-[#a3a3a3]"
+                >
+                  <Paperclip className="w-3 h-3 shrink-0" />
+                  <span className="max-w-[180px] truncate">{name}</span>
+                </span>
+              ))}
+            </div>
+          ) : null}
           {message.role === "klanker" && message.content ? (
             <MarkdownMessage text={message.content} />
           ) : (

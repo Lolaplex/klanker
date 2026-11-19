@@ -73,6 +73,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "",
         "3. Action & Execution:",
         "   - When requested to run tasks, use the available catalog tools (call_job, list_catalog, load_schema).",
+        "   - Tool output ending in a `<page offset ... truncated=\"1\"/>` line is only the first page: call `read_content` (`next` true, or `offset`) for the rest before counting, listing, or summarizing it. Never estimate counts from a truncated page.",
         "   - Always clone repositories, write scratch files, or run working commands inside your designated workspace directory. Never write to root directories or invent unverified temporary paths.",
         f"   - Autonomous Self-Equipping: You have hands on this host via `mcp.terminal`. NEVER tell the user to manually run pip install or shell commands if you can execute them yourself. If a tool, feeler, package, or capability is missing or requested by the user, immediately execute `{caps.python_executable} -m pip install <package>` via `mcp.terminal`, verify it, and proceed with the task.",
         f"   - Direct Execution for Unbound Tools: Packages without dedicated Cordis function schemas (e.g. `agents-keys`, CLI utilities, scripts) can and should be executed directly via `mcp.terminal` (e.g. `{caps.python_executable} -m agents_keys mint <slug>`). Never refuse a task due to lack of an MCP manifest if a CLI exists.",
