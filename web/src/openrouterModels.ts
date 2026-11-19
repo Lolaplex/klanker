@@ -71,7 +71,10 @@ export function windowKind(settings: DesktopSettings): ProviderKind {
 export function providerLabel(kind: ProviderKind): string {
   if (kind === "openrouter") return "OpenRouter";
   if (kind === "lmstudio") return "LM Studio";
-  return "Echo";
+  // "echo" is the scripted test provider — it replays the input. It is not
+  // the env-configured default (that's `openai.default`, picked by "" /
+  // "inherit" on the instance).
+  return "Echo (test)";
 }
 
 export function withChoice(

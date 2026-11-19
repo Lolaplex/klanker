@@ -281,3 +281,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.1.0]: https://github.com/Lolaplex/klanker/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/Lolaplex/klanker/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/Lolaplex/klanker/releases/tag/v0.0.1
+
+### Fixed
+
+- Per-instance provider selections of real host manifests (`acp.cursor`,
+  `openai.default`, `scripted.tool`, …) were silently dropped: the send path
+  gated on the UI provider taxonomy, which maps unknown names to "inherit".
+  The raw manifest name is now sent; ""/"inherit" still means host default.
+- The web app no longer shows desktop-local settings (default workdir, the
+  Echo/LM Studio/OpenRouter fallback tri-toggle, LM Studio base URL) — they
+  only exist for the managed local serve in the desktop build.
+- A turn still running on another device/channel now shows the thinking
+  indicator instead of looking idle: the session sync reads the newest trace
+  event type, not just completed replies.
+
+### Changed
+
+- The "Echo" fallback provider is labelled "Echo (test)" — it is the scripted
+  replay provider, not the env-configured default. The instance provider
+  picker labels its empty choice "host default (env)" and only offers
+  "inherit app setting" on desktop.

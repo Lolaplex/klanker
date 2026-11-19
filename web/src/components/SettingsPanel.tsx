@@ -71,6 +71,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </button>
         </div>
         <form onSubmit={save} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 space-y-4">
+          {/* Workdir + LM Studio/Echo are desktop-local concepts: a browser
+              can't spawn a local serve and the relay never sees these URLs. */}
+          {desktop && (
           <div>
             <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
               Default workdir
@@ -83,22 +86,22 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 placeholder="tool confinement dir for new local instances"
                 className={inputClass}
               />
-              {desktop && (
-                <button
-                  type="button"
-                  title="Browse…"
-                  onClick={() => void pickWorkdir()}
-                  className="shrink-0 p-2 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white"
-                >
-                  <FolderOpen className="w-3.5 h-3.5" />
-                </button>
-              )}
+              <button
+                type="button"
+                title="Browse…"
+                onClick={() => void pickWorkdir()}
+                className="shrink-0 p-2 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </button>
             </div>
             <p className="text-[10px] text-[#525252] mt-1">
               Fallback file-access boundary for local instances that don't set their own.
             </p>
           </div>
+          )}
 
+          {desktop && (
           <div>
             <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Fallback provider</div>
             <div className="grid grid-cols-3 gap-1">
@@ -118,8 +121,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               ))}
             </div>
           </div>
+          )}
 
-          {kind === "lmstudio" && (
+          {desktop && kind === "lmstudio" && (
             <div>
               <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
                 LM Studio base URL

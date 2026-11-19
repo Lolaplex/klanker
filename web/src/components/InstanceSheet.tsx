@@ -518,8 +518,8 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                   }}
                   className={inputClass}
                 >
-                  <option value="">(instance default)</option>
-                  <option value="inherit">inherit app setting</option>
+                  <option value="">host default (env)</option>
+                  {desktop && <option value="inherit">inherit app setting</option>}
                   {providers.map((p) => (
                     <option key={p.name} value={p.name}>
                       {p.name}

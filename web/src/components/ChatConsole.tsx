@@ -21,6 +21,8 @@ interface ChatConsoleProps {
   onClearMessages: () => void;
   onStop: () => void;
   isLoading: boolean;
+  /** A turn on another device/channel is still running for this session. */
+  remoteActive?: boolean;
   sendHold: boolean;
   streamStatus?: string | null;
   sessionLabel?: string;
@@ -43,6 +45,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   onClearMessages,
   onStop,
   isLoading,
+  remoteActive,
   sendHold,
   streamStatus,
   sessionLabel,
@@ -272,7 +275,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
           ))
         )}
 
-        {isLoading && !streamingBubble && (
+        {(isLoading || (remoteActive && last?.role === "user")) && !streamingBubble && (
           <div className="flex flex-col items-start">
             <div className="flex items-center space-x-1.5 mb-1 text-[10px] text-[#525252] px-1">
               <Bot className="w-3 h-3 text-white" />

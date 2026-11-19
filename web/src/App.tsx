@@ -177,6 +177,7 @@ export function App() {
   const [loginBusy, setLoginBusy] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const [remoteActive, setRemoteActive] = useState(false);
   const [kbBox, setKbBox] = useState<{ height: number; top: number } | null>(null);
   const [idleH, setIdleH] = useState<number>(() =>
     typeof window !== "undefined"
@@ -842,6 +843,7 @@ export function App() {
     const chatId = chat.id;
     const session = chat.session;
     const ck = `${inst.id} ${ws} ${persona} ${session}`;
+    setRemoteActive(false);
     const apply = (restored: ChatMessage[]) => {
       if (restored.length === 0) return;
       setChats((prev) =>
@@ -861,6 +863,14 @@ export function App() {
       }
       const events = await api.sessionEvents(inst, ws, persona, session);
       if (!events) return;
+      // A foreign turn is in flight when the newest trace event is anything
+      // but an assistant message (user msg awaiting reply, tool_call, …) and
+      // is recent. Stale tails don't pretend a dead turn still runs.
+      const lastEv = events[events.length - 1];
+      const lastTs = lastEv ? Date.parse(String(lastEv.ts || "")) : NaN;
+      const settled =
+        !lastEv || (lastEv.type === "message" && lastEv.metadata?.role === "assistant");
+      setRemoteActive(!settled && Number.isFinite(lastTs) && Date.now() - lastTs < 120_000);
       const restored = eventsToMessages(events);
       evCache.current.set(ck, restored);
       apply(restored);
@@ -892,6 +902,7 @@ export function App() {
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
       window.clearInterval(poll);
+      setRemoteActive(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInstance, openChat?.id, openChat?.session, selWs, selPersona]);
@@ -1112,7 +1123,12 @@ export function App() {
 
     try {
       const choice = choiceOf(inst);
-      const provider = choice === "inherit" ? "" : inst.provider.trim();
+      // Provider = raw host manifest name; ""/"inherit" = host default (env).
+      // Do not gate on `choice` — real manifest names (acp.cursor,
+      // scripted.tool) map to "inherit" in the UI taxonomy and were silently
+      // dropped before reaching the relay.
+      const instProvider = inst.provider.trim();
+      const provider = instProvider && instProvider !== "inherit" ? instProvider : "";
       const model = (chatModels[selKey] ?? (choice === "inherit" ? inst.model.trim() || settingsRef.current.model : inst.model)).trim();
       const stream = api.streamChat(inst, {
         text,
@@ -1401,6 +1417,7 @@ export function App() {
                 }}
                 onStop={handleStop}
                 isLoading={isLoadingTurn}
+                remoteActive={remoteActive}
                 streamStatus={streamStatus}
                 sessionLabel={`${selWs || "default"} · ${selPersona || "default"} · ${openChat?.session || "new"}`}
                 sendHold={sendHold}
