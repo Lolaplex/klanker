@@ -750,6 +750,7 @@ export function App() {
         evCache.current.set(`${inst.id} ${ws} ${persona} ${session}`, serverMsgs);
         setChats((prev) =>
           mapChat(prev, key, chatId, (item) => {
+            if (turnBusyRef.current?.chatId === chatId) return item;
             const next = mergeMessages(item.messages, serverMsgs);
             return next === item.messages ? item : { ...item, messages: next };
           })
