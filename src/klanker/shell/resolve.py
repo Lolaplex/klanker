@@ -117,6 +117,8 @@ def _resolve_meta(text: str) -> ResolveResult:
         return ResolveResult(route="builtin", intent="tools")
     if text == ":usage":
         return ResolveResult(route="builtin", intent="usage")
+    if text == ":insights" or text.startswith(":insights "):
+        return ResolveResult(route="builtin", intent="insights", payload=text.split(" ", 1)[1].strip() if " " in text else "")
     if text.startswith(":turn "):
         return ResolveResult(route="agent", payload=text.split(" ", 1)[1].strip())
     if text.startswith(":"):

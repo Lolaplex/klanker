@@ -39,6 +39,10 @@ class UsageResolveTests(unittest.TestCase):
             r = resolve_line("/tmp/x", env=env)
         self.assertNotEqual(r.intent, "usage")
 
+    def test_slash_insights_days(self):
+        r = resolve_line("/insights 14", env=os.environ.copy())
+        self.assertEqual((r.route, r.intent, r.payload), ("builtin", "insights", "14"))
+
 
 class UsageOutputTests(unittest.TestCase):
     def test_session_usage_filters_events(self):
@@ -75,6 +79,33 @@ class UsageOutputTests(unittest.TestCase):
             with patch("klanker.stats._store", return_value=store):
                 _, lines = process_line(state, "/usage")
         self.assertTrue(any("tokens" in line for line in lines))
+
+
+class InsightsOutputTests(unittest.TestCase):
+    def test_insights_reports_sessions(self):
+        from klanker.stats import insights_lines
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _store_with_events(tmp)
+            lines = insights_lines(3, store=store)
+            text = "\n".join(lines)
+            self.assertIn("last 3d", lines[0])
+            self.assertIn("sessions 2", text)
+            self.assertIn("2,148", text)
+
+    def test_insights_empty_window(self):
+        from klanker.stats import insights_lines
+
+        with tempfile.TemporaryDirectory() as tmp:
+            from agents_traces.store import TraceStore
+
+            store = TraceStore(Path(tmp))
+            self.assertIn("no trace events", insights_lines(7, store=store)[0])
+
+    def test_dispatch_insights_bad_days(self):
+        state = ShellState.from_os()
+        _, lines = process_line(state, ":insights nope")
+        self.assertIn("invalid days", lines[0])
 
 
 if __name__ == "__main__":

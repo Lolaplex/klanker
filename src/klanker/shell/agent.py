@@ -57,7 +57,7 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
             "cd <dir>  pwd  exit  |  external commands on PATH",
             ":session :new-session :health :provider <name>",
             ":modules :providers :tools  (harness)",
-            ":usage  (traces; alias /usage)",
+            ":usage :insights [days]  (traces; /usage /insights)",
             ":turn <msg> | bare text → agent (needs gateway)",
         ]
         return rows
@@ -100,4 +100,12 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
 
         session = gw.session if gw is not None else ""
         return usage_lines(session)
+    if intent == "insights":
+        from ..stats import insights_lines
+
+        try:
+            days = int(payload) if payload else 7
+        except ValueError:
+            return [f"insights: invalid days: {payload!r}"]
+        return insights_lines(days)
     return []
