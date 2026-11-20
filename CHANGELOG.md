@@ -8,7 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Mobile WebKit E2E suite (klanker#56): `web/playwright.config.ts` + `web/e2e/mobile.spec.ts` run the real built UI against a fully stubbed relay (`page.route`) on two mobile viewports — chat send/stream-receive, sidebar drawer, settings open/cancel, approval allow/deny. Icon-only header controls now carry `aria-label`s so the flows (and screen readers) have stable selectors.
 - Relay version compat (klanker#106): `web` probes each running instance's public `/health` once and compares the reported `version` against the bundled `MIN_RELAY` constant. Local managed instance below the floor shows an inline banner with an "upgrade klanker" button (`klanker_upgrade` invoke, `caps.spawn` gated, re-probes after); a remote instance below the floor shows a warning banner but keeps working; relays too old to report a version get a single hint per session, never a nag.
+
+### Fixed
+- Composer losing focus after the first typed character on a fresh bucket: the first keystroke created the draft chat, which changed the `ChatConsole` remount key and dropped the keyboard mid-word (mobile lost every char after the first). Each bucket now always keeps an open draft so the key is stable from boot.
 
 ### Changed
 - `web/src/App.tsx` split (1667 → ~830 LOC) along existing seams — zero behavior change: `chatBuckets.ts` (bucket types + localStorage helpers), `chatSync.ts` (event merge + reconcile), `hooks/useKeyboardViewport.ts` (iOS keyboard geometry), `components/AuthGate.tsx` (token gate), `hooks/useInstances.ts` (boot/auth + health poll), `hooks/usePersistChats.ts` (dirty-scoped persistence), `hooks/useSidebarTree.ts` (ws/persona/session tree), `hooks/useChatSync.ts` (reconcile + foreign-run SSE attach), `hooks/useApprovals.ts` (approval poll + decide).

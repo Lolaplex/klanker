@@ -55,6 +55,7 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, selWs, onOpenSet
         {activeInstance && (
           <button
             onClick={onOpenManage}
+            aria-label="Manage"
             className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -63,6 +64,7 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, selWs, onOpenSet
         )}
         <button
           onClick={onOpenSettings}
+          aria-label="Settings"
           className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
         >
           <Settings className="w-3.5 h-3.5" />

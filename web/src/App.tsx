@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole } from "./components/ChatConsole";
@@ -174,6 +174,23 @@ export function App() {
 
   const bucket = selKey ? chats[selKey] : undefined;
   const openChat = bucket?.items.find((item) => item.id === bucket.openId) ?? bucket?.items[0] ?? null;
+
+  // Always keep one open draft per bucket: the composer is keyed by chat id,
+  // so a draft created by the first keystroke would remount it mid-typing
+  // and drop focus (mobile eats every char after the first).
+  useEffect(() => {
+    if (!selKey || openChat) return;
+    setChats((prev) => {
+      const b = normBucket(prev[selKey] ?? EMPTY_BUCKET);
+      if (b.items.some((i) => i.id === b.openId)) return prev;
+      const id = crypto.randomUUID();
+      return {
+        ...prev,
+        [selKey]: { openId: id, items: [...b.items, { id, session: "", messages: [], draft: true }] },
+      };
+    });
+  }, [selKey, openChat]);
+
   const messages = openChat?.messages ?? [];
   const isLoadingTurn = Boolean(
     turnBusy && openChat && turnBusy.instanceId === activeInstance?.id && turnBusy.chatId === openChat.id
