@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Relay version compat (klanker#106): `web` probes each running instance's public `/health` once and compares the reported `version` against the bundled `MIN_RELAY` constant. Local managed instance below the floor shows an inline banner with an "upgrade klanker" button (`klanker_upgrade` invoke, `caps.spawn` gated, re-probes after); a remote instance below the floor shows a warning banner but keeps working; relays too old to report a version get a single hint per session, never a nag.
+
 ### Changed
 - `web/src/App.tsx` split (1667 → ~830 LOC) along existing seams — zero behavior change: `chatBuckets.ts` (bucket types + localStorage helpers), `chatSync.ts` (event merge + reconcile), `hooks/useKeyboardViewport.ts` (iOS keyboard geometry), `components/AuthGate.tsx` (token gate), `hooks/useInstances.ts` (boot/auth + health poll), `hooks/usePersistChats.ts` (dirty-scoped persistence), `hooks/useSidebarTree.ts` (ws/persona/session tree), `hooks/useChatSync.ts` (reconcile + foreign-run SSE attach), `hooks/useApprovals.ts` (approval poll + decide).
 

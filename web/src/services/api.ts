@@ -355,6 +355,23 @@ export const api = {
     }
   },
 
+  /** Public /health probe: `{version, klanker_version?}` on relays that
+   *  report it (agents-relay#27), null otherwise/unreachable. */
+  async relayVersion(inst: KlankerInstance): Promise<{ version?: string; klanker_version?: string } | null> {
+    try {
+      const res = await fetch(base(inst) + "/health", { headers: headers(inst) });
+      if (!res.ok) return null;
+      const body = await res.json().catch(() => null);
+      if (!body || typeof body !== "object") return null;
+      return {
+        version: typeof body.version === "string" ? body.version : undefined,
+        klanker_version: typeof body.klanker_version === "string" ? body.klanker_version : undefined,
+      };
+    } catch {
+      return null;
+    }
+  },
+
   async authStatus(inst: KlankerInstance): Promise<{ authenticated: boolean; enabled: boolean; user: string }> {
     const r = await req<{ authenticated?: boolean; enabled?: boolean; user?: string }>(
       inst,

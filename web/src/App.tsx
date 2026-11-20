@@ -38,6 +38,7 @@ import {
   selStoreKey,
 } from "./chatBuckets";
 import { reconcileChat } from "./chatSync";
+import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
 import { useKeyboardViewport } from "./hooks/useKeyboardViewport";
 import { useInstances } from "./hooks/useInstances";
@@ -45,6 +46,7 @@ import { usePersistChats } from "./hooks/usePersistChats";
 import { useSidebarTree } from "./hooks/useSidebarTree";
 import { useChatSync } from "./hooks/useChatSync";
 import { useApprovals } from "./hooks/useApprovals";
+import { useRelayCompat } from "./hooks/useRelayCompat";
 
 function loadedSettings(loaded: DesktopSettings): DesktopSettings {
   return {
@@ -147,6 +149,7 @@ export function App() {
   const herdStatus = activeInstance ? inst.herd[activeInstance.id] ?? null : null;
 
   const approvals = useApprovals({ activeInstance, status: herdStatus });
+  const relayCompat = useRelayCompat({ activeInstance, managedId: inst.managedId, herd: inst.herd });
 
   const tree = useSidebarTree({
     activeInstance,
@@ -706,6 +709,29 @@ export function App() {
               {wsNote && (
                 <div className="shrink-0 px-3 py-1 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-red-500 truncate">
                   {wsNote}
+                </div>
+              )}
+              {relayCompat.note && (
+                <div className="shrink-0 px-3 py-1 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-amber-500 truncate">
+                  {relayCompat.note.compat.kind === "stale-local" && (
+                    <>
+                      relay {relayCompat.note.compat.version} &lt; required {MIN_RELAY} —{" "}
+                      <button
+                        onClick={() => void relayCompat.upgrade()}
+                        disabled={relayCompat.upgrading}
+                        className="underline hover:text-amber-300 disabled:opacity-50"
+                      >
+                        {relayCompat.upgrading ? "upgrading…" : "upgrade klanker"}
+                      </button>{" "}
+                      (restart relay to apply)
+                    </>
+                  )}
+                  {relayCompat.note.compat.kind === "stale-remote" && (
+                    <>relay {relayCompat.note.compat.version} &lt; required {MIN_RELAY} — upgrade on that host</>
+                  )}
+                  {relayCompat.note.compat.kind === "unknown" && (
+                    <>relay version unknown — some features need a newer relay</>
+                  )}
                 </div>
               )}
               <ChatConsole
