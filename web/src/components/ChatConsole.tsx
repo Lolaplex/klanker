@@ -12,6 +12,19 @@ export interface OutAttachment {
   name?: string;
 }
 
+/** Per-chat override: "" fields inherit the instance/host default. */
+export interface ChatPick {
+  provider: string;
+  model: string;
+}
+
+export interface ChatProviderRow {
+  name: string;
+  kind?: string;
+  model?: string;
+  models?: string[];
+}
+
 interface ChatConsoleProps {
   instance: KlankerInstance;
   speakerName?: string;
@@ -27,9 +40,11 @@ interface ChatConsoleProps {
   sendHold: boolean;
   streamStatus?: string | null;
   sessionLabel?: string;
-  modelOptions?: string[];
-  model?: string;
-  onModel?: (id: string) => void;
+  providers?: ChatProviderRow[];
+  pick?: ChatPick;
+  onPick?: (p: ChatPick) => void;
+  /** Extra model candidates (settings favorites + recent for the mapped kind). */
+  modelRecent?: string[];
   pending: PendingApproval | null;
   deciding: boolean;
   decideError: string | null;
@@ -50,9 +65,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   sendHold,
   streamStatus,
   sessionLabel,
-  modelOptions = [],
-  model = "",
-  onModel,
+  providers = [],
+  pick,
+  onPick,
+  modelRecent = [],
   pending,
   deciding,
   decideError,
@@ -205,21 +221,13 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               <option value="json">.json</option>
             </select>
           )}
-          {modelOptions.length > 0 && onModel && (
-            <select
-              value={model}
-              onChange={(e) => onModel(e.target.value)}
-              title="Model for this chat"
-              style={{ colorScheme: "dark" }}
-              className="hidden md:block bg-[#0a0a0a] border border-[#262626] hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] text-[#d4d4d4] focus:text-white focus:border-white outline-none cursor-pointer max-w-[240px] truncate"
-            >
-              <option value="">default model</option>
-              {modelOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
-            </select>
+          {(providers.length > 0 || modelRecent.length > 0) && onPick && (
+            <PickControl
+              providers={providers}
+              pick={pick ?? { provider: "", model: "" }}
+              onPick={onPick}
+              modelRecent={modelRecent}
+            />
           )}
           {isLoading && (
             <button
@@ -387,6 +395,135 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     </div>
   );
 };
+
+function PickControl({
+  providers,
+  pick,
+  onPick,
+  modelRecent,
+}: {
+  providers: ChatProviderRow[];
+  pick: ChatPick;
+  onPick: (p: ChatPick) => void;
+  modelRecent: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(pick.model);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  useEffect(() => setDraft(pick.model), [pick.model, open]);
+
+  const row = providers.find((p) => p.name === pick.provider);
+  const candidates = [...new Set([...(row?.models ?? []), ...modelRecent])].filter(Boolean);
+  const active = !!(pick.provider || pick.model);
+  const label = pick.provider
+    ? `${pick.provider}${pick.model ? `:${pick.model}` : ""}`
+    : pick.model || "auto";
+
+  const commitModel = () => {
+    const model = draft.trim();
+    if (model !== pick.model) onPick({ ...pick, model });
+  };
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Provider + model for this chat"
+        className={`bg-[#0a0a0a] border hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] outline-none cursor-pointer max-w-[170px] truncate ${
+          active ? "border-[#525252] text-white" : "border-[#262626] text-[#a3a3a3] hover:text-white"
+        }`}
+      >
+        {label}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-72 border border-[#262626] bg-[#0a0a0a] rounded-md shadow-lg">
+          <div className="px-2 pt-2 text-[10px] uppercase tracking-wider text-[#737373]">provider</div>
+          <div className="max-h-40 overflow-y-auto">
+            {[{ name: "", kind: "", model: "" }, ...providers].map((p) => {
+              const selected = p.name === pick.provider;
+              return (
+                <button
+                  key={p.name || "__default"}
+                  type="button"
+                  onClick={() => {
+                    // Provider change resets the model — ids are namespaced per provider.
+                    onPick(p.name ? { provider: p.name, model: "" } : { ...pick, provider: "" });
+                    setDraft("");
+                  }}
+                  className={`w-full flex items-baseline gap-2 min-h-9 px-2 py-1.5 text-left truncate ${
+                    selected ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818] hover:text-white"
+                  }`}
+                >
+                  <span className="truncate">{p.name || "instance default"}</span>
+                  {p.kind ? <span className="shrink-0 text-[10px] text-[#525252]">{p.kind}</span> : null}
+                </button>
+              );
+            })}
+          </div>
+          <div className="px-2 pt-1 text-[10px] uppercase tracking-wider text-[#737373]">model</div>
+          <div className="px-2 pb-1">
+            <input
+              value={draft}
+              spellCheck={false}
+              placeholder={row?.model || "provider default"}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commitModel}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  commitModel();
+                }
+              }}
+              className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2 py-1.5 text-white outline-none"
+            />
+          </div>
+          {candidates.length > 0 && (
+            <div className="max-h-36 overflow-y-auto border-t border-[#1f1f1f]">
+              {candidates.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => {
+                    onPick({ ...pick, model: id });
+                    setDraft(id);
+                  }}
+                  className={`w-full min-h-9 truncate px-2 py-1.5 text-left ${
+                    id === pick.model ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818] hover:text-white"
+                  }`}
+                >
+                  {id}
+                </button>
+              ))}
+            </div>
+          )}
+          {active && (
+            <button
+              type="button"
+              onClick={() => {
+                onPick({ provider: "", model: "" });
+                setDraft("");
+                setOpen(false);
+              }}
+              className="w-full border-t border-[#1f1f1f] px-2 py-2 text-left text-[#a3a3a3] hover:text-white"
+            >
+              clear — inherit instance config
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const MessageBubble = React.memo(function MessageBubble({
   message,

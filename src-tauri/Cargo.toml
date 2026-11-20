@@ -9,6 +9,12 @@ edition = "2021"
 name = "klanker_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# Debug exe = Klanker.exe too (matches mainBinaryName) — Windows firewall
+# prompts show the file name when no version info exists.
+[[bin]]
+name = "Klanker"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

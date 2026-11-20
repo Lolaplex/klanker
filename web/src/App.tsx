@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
-import { ChatConsole } from "./components/ChatConsole";
+import { ChatConsole, type ChatPick, type ChatProviderRow } from "./components/ChatConsole";
 import { InstanceSheet } from "./components/InstanceSheet";
 import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -73,8 +73,9 @@ export function App() {
   const [modelNote, setModelNote] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
   const [selWs, setSelWs] = useState("");
-  // Per-chat model override, keyed by "<inst> <ws> <persona>"; absent = instance default.
-  const [chatModels, setChatModels] = useState<Record<string, string>>({});
+  // Per-chat provider+model override, keyed by "<inst> <ws> <persona>"; absent = instance default.
+  const [chatPicks, setChatPicks] = useState<Record<string, ChatPick>>({});
+  const [chatProviders, setChatProviders] = useState<ChatProviderRow[]>([]);
   const [selPersona, setSelPersona] = useState("");
   const [wsNote, setWsNote] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -353,6 +354,19 @@ export function App() {
     ensureModels();
   };
 
+  // Real provider rows (incl. acp.* agents + their model lists) for the chat picker.
+  useEffect(() => {
+    setChatProviders([]);
+    if (!activeInstance) return;
+    let live = true;
+    void api.listProviders(activeInstance).then((rows) => {
+      if (live) setChatProviders(rows);
+    });
+    return () => {
+      live = false;
+    };
+  }, [activeInstance?.id]);
+
   const handleSaveSettings = async (next: DesktopSettings) => {
     const provider: ModelProvider | "echo" =
       next.provider === "lmstudio" || next.provider === "openrouter" ? next.provider : "echo";
@@ -505,8 +519,16 @@ export function App() {
       // scripted.tool) map to "inherit" in the UI taxonomy and were silently
       // dropped before reaching the relay.
       const instProvider = inst0.provider.trim();
-      const provider = instProvider && instProvider !== "inherit" ? instProvider : "";
-      const model = (chatModels[selKey] ?? (choice === "inherit" ? inst0.model.trim() || settingsRef.current.model : inst0.model)).trim();
+      const baseProvider = instProvider && instProvider !== "inherit" ? instProvider : "";
+      const pick = chatPicks[selKey];
+      const provider = pick?.provider.trim() || baseProvider;
+      // A chat pick wins outright: pick.provider set + model "" = provider default.
+      const model = (pick && (pick.provider || pick.model)
+        ? pick.model
+        : choice === "inherit"
+          ? inst0.model.trim() || settingsRef.current.model
+          : inst0.model
+      ).trim();
       const stream = api.streamChat(inst0, {
         text,
         run: busy.run,
@@ -787,21 +809,22 @@ export function App() {
                 streamStatus={streamStatus}
                 sessionLabel={`${selWs || "default"} · ${selPersona || "default"} · ${openChat?.session || "new"}`}
                 sendHold={sendHold}
-                modelOptions={(() => {
+                providers={chatProviders}
+                pick={chatPicks[selKey]}
+                onPick={(p) =>
+                  setChatPicks((prev) => {
+                    const next = { ...prev };
+                    if (p.provider || p.model) next[selKey] = p;
+                    else delete next[selKey];
+                    return next;
+                  })
+                }
+                modelRecent={(() => {
                   const kind = choiceOf(activeInstance) === "inherit" ? windowKind(settings) : choiceOf(activeInstance);
                   return kind === "openrouter" || kind === "lmstudio"
                     ? [...new Set([...settings.favorites[kind], ...settings.recent_models[kind]])].filter(Boolean)
                     : [];
                 })()}
-                model={chatModels[selKey] ?? ""}
-                onModel={(id) =>
-                  setChatModels((prev) => {
-                    const next = { ...prev };
-                    if (id) next[selKey] = id;
-                    else delete next[selKey];
-                    return next;
-                  })
-                }
                 pending={approvals.pending}
                 deciding={approvals.deciding}
                 decideError={approvals.decideError}

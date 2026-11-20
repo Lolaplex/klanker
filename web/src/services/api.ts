@@ -467,7 +467,7 @@ export const api = {
   /** Provider manifests known to the host loop (relay#14). */
   async listProviders(
     inst: KlankerInstance
-  ): Promise<{ name: string; kind?: string; model?: string; when?: string }[]> {
+  ): Promise<{ name: string; kind?: string; model?: string; when?: string; models?: string[] }[]> {
     try {
       const r = await req<{ providers?: any[] }>(inst, "/v1/providers", { headers: headers(inst) });
       return (r.providers || []).map((p) => ({
@@ -475,6 +475,9 @@ export const api = {
         kind: p.kind,
         model: p.model,
         when: p.when,
+        models: Array.isArray(p.models)
+          ? p.models.filter((m: unknown) => typeof m === "string" && m)
+          : undefined,
       })).filter((p) => p.name);
     } catch {
       return [];
