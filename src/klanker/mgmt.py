@@ -69,10 +69,27 @@ def _routine_rows() -> list[dict[str, Any]]:
     return rows
 
 
+def _load_config(ws) -> dict[str, Any]:
+    path = Path(ws.config)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _get(h: Any, path: str, q: dict[str, str]) -> None:
     if path == f"{_PREFIX}/skills":
         ws = _resolve_ws(q.get("workspace", ""))
         h._write_json({"ok": True, "skills": _skills_rows(ws)}, 200)
+        return
+    if path == f"{_PREFIX}/recall":
+        ws = _resolve_ws(q.get("workspace", ""))
+        cfg = _load_config(ws)
+        recall = cfg.get("recall") if isinstance(cfg.get("recall"), dict) else {}
+        h._write_json({"ok": True, "recall": {"enabled": bool(recall.get("enabled"))}}, 200)
         return
     if path == f"{_PREFIX}/routines":
         h._write_json({"ok": True, "routines": _routine_rows()}, 200)
@@ -96,6 +113,17 @@ def _get(h: Any, path: str, q: dict[str, str]) -> None:
 def _post(h: Any, path: str, q: dict[str, str]) -> None:
     body = h._read_json()
     if body is None:
+        return
+    if path == f"{_PREFIX}/recall":
+        ws = _resolve_ws(q.get("workspace", "") or str(body.get("workspace") or ""))
+        cfg = _load_config(ws)
+        recall = cfg.get("recall") if isinstance(cfg.get("recall"), dict) else {}
+        recall["enabled"] = bool(body.get("enabled"))
+        cfg["recall"] = recall
+        target = Path(ws.config)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+        h._write_json({"ok": True, "recall": {"enabled": recall["enabled"]}}, 200)
         return
     if path == f"{_PREFIX}/routines":
         from .routine import add_routine

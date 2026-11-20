@@ -41,7 +41,29 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [keyDraft, setKeyDraft] = useState("");
   const [pushBusy, setPushBusy] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
+  const [recallOn, setRecallOn] = useState<boolean | null>(null);
+  const [recallNote, setRecallNote] = useState<string | null>(null);
   const desktop = typeof window !== "undefined" && "__TAURI__" in window;
+
+  // Auto-recall is a workspace flag on the serving relay — fetch once per open.
+  useEffect(() => {
+    if (!instance) return;
+    api.getRecall(instance, workspace || "").then(setRecallOn).catch(() => setRecallOn(null));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleRecall = (on: boolean) => {
+    if (!instance) return;
+    setRecallOn(on);
+    setRecallNote(null);
+    api
+      .setRecall(instance, workspace || "", on)
+      .then((applied) => setRecallOn(applied))
+      .catch((e) => {
+        setRecallOn(!on);
+        setRecallNote(`recall off: ${e instanceof Error ? e.message : e}`);
+      });
+  };
 
   // Desktop truth wins over the stored flag (user may have toggled the OS
   // setting outside the app). Hydrate once per open.
@@ -213,6 +235,23 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 />
                 Launch klanker on login
               </label>
+            </div>
+          )}
+
+          {instance && (
+            <div>
+              <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Context</div>
+              <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!recallOn}
+                  disabled={recallOn === null}
+                  onChange={(e) => toggleRecall(e.target.checked)}
+                  className="accent-white"
+                />
+                Auto-recall memory + repo before each turn
+              </label>
+              {recallNote && <p className="text-[10px] text-[#525252] mt-1">{recallNote}</p>}
             </div>
           )}
 

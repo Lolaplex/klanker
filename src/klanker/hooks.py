@@ -54,9 +54,39 @@ def register_final_check() -> bool:
     return True
 
 
+def memory_recall_provider(request):
+    """agents-memory search → harness RecallHit-shaped dicts."""
+    from agents_memory.store import search_memory
+
+    rows = search_memory(request.query, project=request.project, limit=request.limit)
+    return [
+        {
+            "source": "memory",
+            "title": str(row.get("file") or ""),
+            "text": str(row.get("text") or ""),
+        }
+        for row in rows
+        if str(row.get("text") or "").strip()
+    ]
+
+
+def register_recall() -> bool:
+    """Register the memory recall provider when both packages import."""
+    try:
+        from runner import register_recall_provider as register
+    except ImportError:
+        return False
+    try:
+        import agents_memory.store  # noqa: F401
+    except ImportError:
+        return False
+    register(memory_recall_provider)
+    return True
+
+
 def register_harness_hooks() -> dict[str, bool]:
     """Install both hooks. Failures are logged and do not raise."""
-    installed = {"content_backend": False, "final_check": False}
+    installed = {"content_backend": False, "final_check": False, "recall": False}
     try:
         installed["content_backend"] = register_content_backend()
     except Exception:
@@ -65,4 +95,8 @@ def register_harness_hooks() -> dict[str, bool]:
         installed["final_check"] = register_final_check()
     except Exception:
         log.warning("final check was not registered", exc_info=True)
+    try:
+        installed["recall"] = register_recall()
+    except Exception:
+        log.warning("recall provider was not registered", exc_info=True)
     return installed

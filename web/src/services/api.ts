@@ -576,6 +576,24 @@ export const api = {
     await jsonReq(inst, `/v1/approvals/${encodeURIComponent(approvalId)}`, { allow });
   },
 
+  // --- auto-recall (workspace config on the serving relay) -----------------
+
+  async getRecall(inst: KlankerInstance, workspace: string): Promise<boolean> {
+    const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+    const r = await req<{ recall?: { enabled?: boolean } }>(inst, `/v1/klanker/recall${q}`, {
+      headers: headers(inst),
+    });
+    return !!r.recall?.enabled;
+  },
+
+  async setRecall(inst: KlankerInstance, workspace: string, enabled: boolean): Promise<boolean> {
+    const r = await jsonReq<{ recall?: { enabled?: boolean } }>(inst, "/v1/klanker/recall", {
+      workspace,
+      enabled,
+    });
+    return !!r.recall?.enabled;
+  },
+
   // --- OS autostart (desktop only; tauri-plugin-autostart) ------------------
 
   async autostartIsEnabled(): Promise<boolean> {

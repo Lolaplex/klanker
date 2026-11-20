@@ -35,7 +35,7 @@ def _fake_ws(tmp: str) -> SimpleNamespace:
     (root / "skills" / "demo" / "SKILL.md").write_text("x", encoding="utf-8")
     (root / "memory" / "notes").mkdir(parents=True)
     (root / "memory" / "notes" / "a.md").write_text("hello", encoding="utf-8")
-    return SimpleNamespace(dir=root, skills=root / "skills", memory=root / "memory")
+    return SimpleNamespace(dir=root, skills=root / "skills", memory=root / "memory", config=root / "config.json")
 
 
 class MgmtGetTests(unittest.TestCase):
@@ -95,6 +95,38 @@ class MgmtRoutineTests(unittest.TestCase):
         h = FakeHandler("/v1/klanker/routines/n1", {"action": "explode"})
         mgmt._dispatch(h, "POST")
         self.assertEqual(h.status, 400)
+
+
+class MgmtRecallTests(unittest.TestCase):
+    def test_recall_get_default_off(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _fake_ws(tmp)
+            with patch("klanker.mgmt._resolve_ws", return_value=ws):
+                h = FakeHandler("/v1/klanker/recall")
+                mgmt._dispatch(h, "GET")
+        self.assertEqual(h.status, 200)
+        self.assertFalse(h.written["recall"]["enabled"])
+
+    def test_recall_post_roundtrip_and_preserves_keys(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _fake_ws(tmp)
+            cfg_path = Path(ws.dir) / "config.json"
+            cfg_path.write_text(json.dumps({"other": {"k": 1}}), encoding="utf-8")
+            ws.config = cfg_path
+            with patch("klanker.mgmt._resolve_ws", return_value=ws):
+                h = FakeHandler("/v1/klanker/recall", {"enabled": True})
+                mgmt._dispatch(h, "POST")
+                self.assertEqual(h.status, 200)
+                self.assertTrue(h.written["recall"]["enabled"])
+                h = FakeHandler("/v1/klanker/recall")
+                mgmt._dispatch(h, "GET")
+                self.assertTrue(h.written["recall"]["enabled"])
+                data = json.loads(cfg_path.read_text(encoding="utf-8"))
+                self.assertEqual(data["other"], {"k": 1})
+                self.assertTrue(data["recall"]["enabled"])
+                h = FakeHandler("/v1/klanker/recall", {"enabled": False})
+                mgmt._dispatch(h, "POST")
+                self.assertFalse(h.written["recall"]["enabled"])
 
 
 if __name__ == "__main__":

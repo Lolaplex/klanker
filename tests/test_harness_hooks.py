@@ -108,6 +108,7 @@ def test_clipped_trace_is_recovered_via_read_content(monkeypatch, tmp_path):
         installed = register_harness_hooks()
         assert installed["content_backend"] is True
         assert installed["final_check"] is True
+        assert installed["recall"] is True
         page = read_content(session, digest, offset=0, limit=-1)
         assert page["available"] is True
         assert marker in page["text"]
