@@ -5,6 +5,7 @@ import { ChatConsole } from "./components/ChatConsole";
 import { InstanceSheet } from "./components/InstanceSheet";
 import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { ManagePanel } from "./components/ManagePanel";
 import {
   DesktopSettings,
   KlankerInstance,
@@ -146,6 +147,7 @@ export function App() {
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [settings, setSettings] = useState<DesktopSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
   const [instanceSheetInst, setInstanceSheetInst] = useState<KlankerInstance | null>(null);
   const [rankedIds, setRankedIds] = useState<string[]>([]);
   const [modelNote, setModelNote] = useState<string | null>(null);
@@ -1375,7 +1377,7 @@ export function App() {
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <Header activeInstance={activeInstance} selWs={selWs} onOpenSettings={openSettings} onOpenNav={() => setNavOpen(true)} />
+        <Header activeInstance={activeInstance} selWs={selWs} onOpenSettings={openSettings} onOpenManage={() => setManageOpen(true)} onOpenNav={() => setNavOpen(true)} />
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activeInstance ? (
@@ -1486,6 +1488,13 @@ export function App() {
           onStar={(provider, id) => {
             void updateSettings((current) => toggleFavorite(current, provider, id));
           }}
+        />
+      )}
+      {manageOpen && activeInstance && (
+        <ManagePanel
+          instance={activeInstance}
+          workspace={selWs}
+          onClose={() => setManageOpen(false)}
         />
       )}
       <DialogHost />

@@ -631,6 +631,52 @@ export const api = {
     return r.job || {};
   },
 
+  // --- klanker management (/v1/klanker/*, klanker serve hosts only) ----------
+
+  async listSkills(inst: KlankerInstance, workspace: string): Promise<{ name: string; files: number; bytes: number }[]> {
+    const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+    const r = await req<{ skills?: any[] }>(inst, `/v1/klanker/skills${q}`, { headers: headers(inst) });
+    return r.skills || [];
+  },
+
+  async deleteSkill(inst: KlankerInstance, workspace: string, name: string): Promise<void> {
+    const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+    await req(inst, `/v1/klanker/skills/${encodeURIComponent(name)}${q}`, { method: "DELETE", headers: headers(inst) });
+  },
+
+  async listRoutines(inst: KlankerInstance): Promise<any[]> {
+    const r = await req<{ routines?: any[] }>(inst, "/v1/klanker/routines", { headers: headers(inst) });
+    return r.routines || [];
+  },
+
+  async createRoutine(
+    inst: KlankerInstance,
+    body: { name: string; prompt: string; at?: string; cron?: string; timezone?: string; workspace?: string; user?: string }
+  ): Promise<void> {
+    await jsonReq(inst, "/v1/klanker/routines", body);
+  },
+
+  async routineAction(inst: KlankerInstance, name: string, action: "pause" | "resume" | "run" | "remove"): Promise<any> {
+    return jsonReq(inst, `/v1/klanker/routines/${encodeURIComponent(name)}`, { action });
+  },
+
+  async listMemory(inst: KlankerInstance, workspace: string, q = ""): Promise<{ path: string; bytes: number }[]> {
+    const wq = workspace ? `workspace=${encodeURIComponent(workspace)}&` : "";
+    const r = await req<{ files?: any[] }>(inst, `/v1/klanker/memory?${wq}q=${encodeURIComponent(q)}`, { headers: headers(inst) });
+    return r.files || [];
+  },
+
+  async readMemory(inst: KlankerInstance, workspace: string, path: string): Promise<string> {
+    const wq = workspace ? `&workspace=${encodeURIComponent(workspace)}` : "";
+    const r = await req<{ content?: string }>(inst, `/v1/klanker/memory/file?path=${encodeURIComponent(path)}${wq}`, { headers: headers(inst) });
+    return r.content || "";
+  },
+
+  async deleteMemory(inst: KlankerInstance, workspace: string, path: string): Promise<void> {
+    const wq = workspace ? `&workspace=${encodeURIComponent(workspace)}` : "";
+    await req(inst, `/v1/klanker/memory/file?path=${encodeURIComponent(path)}${wq}`, { method: "DELETE", headers: headers(inst) });
+  },
+
   // --- not available in the browser -----------------------------------------
   /** Signed presence offers from the serving relay's registry —
    *  PWA hits same-origin, desktop the managed local relay. */

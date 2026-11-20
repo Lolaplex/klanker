@@ -525,6 +525,11 @@ def main(argv: list[str] | None = None) -> int:
             if web_dir is not None:
                 os.environ["AGENTS_RELAY_WEB_DIR"] = str(web_dir)
 
+        from . import mgmt as _mgmt
+
+        if not _mgmt.install():
+            log.warning("management routes unavailable: agents-relay not importable")
+
         from agents_relay.__main__ import main as relay_main
         sub_argv = ["serve"]
         if getattr(args, "no_telegram", False):
