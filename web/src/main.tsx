@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { kbDebugEnabled } from "./kbDebug";
 import "./index.css";
 
 if (
@@ -19,3 +20,13 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <App />
   </React.StrictMode>
 );
+
+// ?kbdebug=1 keyboard forensics overlay — dynamic import keeps it out of the
+// default bundle path entirely; it mounts its own root so the app is untouched.
+if (kbDebugEnabled(window.location.search)) {
+  void import("./KbDebugOverlay").then(({ KbDebugOverlay }) => {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    ReactDOM.createRoot(host).render(<KbDebugOverlay />);
+  });
+}
