@@ -113,6 +113,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Data workspace id (AGENTS_WORKSPACE)",
     )
 
+    # 1b2. Health check
+    doctor_p = sub.add_parser("doctor", help="Check config, keys, MCP health, tokens, disk and suite versions")
+    doctor_p.add_argument("--json", action="store_true", help="Output JSON format")
+
     # 1c. Audit trace integrity & replay
     audit_p = sub.add_parser("audit", help="Audit trace integrity and replay verification via agents-traces")
     audit_p.add_argument("target", type=str, nargs="?", default="", help="Session ID, trace file path, or empty for all")
@@ -265,6 +269,7 @@ KNOWN_SUBCOMMANDS = {
     "chat",
     "remind",
     "audit",
+    "doctor",
     "routine",
     "evidence",
     "persona",
@@ -419,6 +424,11 @@ def main(argv: list[str] | None = None) -> int:
             iso = getattr(w, "isolation", "") or "local"
             print(f"{w.id}  {w.label or ''}  isolation={iso}")
         return 0
+
+    elif args.command == "doctor":
+        from .doctor import run as doctor_run
+
+        return doctor_run(as_json=bool(getattr(args, "json", False)))
 
     elif args.command == "audit":
         if not nucleus.caps.has_traces:
