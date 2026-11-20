@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Prompt evidence rules: the system prompt now forbids asserting git state (clean tree, empty diff, committed, merged) or file contents without a successful read in the same turn, and requires reporting the failure + re-reading actual state when an edit's `old` text misses or a run is denied — 'verworfen'/'diff leer'/'committed' without a matching tool result is a fabricated claim.
 - Shell `/usage` (alias `:usage`): per-session token, cost, tool and error stats sourced from agents-traces — uses the live gateway session when one is active, today's aggregate otherwise.
 - Shell `/insights [days]` (alias `:insights`): sessions, turns, tool calls, costs and error rates aggregated over the last N days (default 7) from agents-traces.
 - `klanker doctor`: one-shot health check — python/suite versions, runtimes, workspace writability, mcp.json validity + per-server probes, provider keys, agent keys, disk space, relay secret — with pass/warn/fail per row, a fix hint on problems, `--json`, and exit 1 on any failure.
