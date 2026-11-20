@@ -26,6 +26,10 @@ REGISTRY="${KLANKER_REGISTRY:-127.0.0.1:9500}"
 LOCAL="${IMAGE}:selfbuild"
 
 echo "self-deploy: fetching $REF in $SRC"
+# /src is a host-owned checkout — the container user needs the safe.directory
+# exception once per boot (git config lives in $HOME=/data, persists on the
+# volume, but this is cheap and idempotent).
+git config --global --add safe.directory "$SRC" 2>/dev/null || true
 git -C "$SRC" fetch origin "$REF"
 git -C "$SRC" checkout --detach "origin/$REF"
 
