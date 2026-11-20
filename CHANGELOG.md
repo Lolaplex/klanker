@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Shell `/usage` (alias `:usage`): per-session token, cost, tool and error stats sourced from agents-traces — uses the live gateway session when one is active, today's aggregate otherwise.
 - The add-instance modal lists signed presence offers from the serving relay (`/v1/presence/offers`) — valid roads are one-click picks, forged/expired entries show their refusal reason. A "publish this host" form signs a `road-declaration/1` via `agents_keys` through `POST /v1/presence/publish`.
 - Sent attachments echo back as filename chips on the user bubble instead of disappearing into a bare `[attach]` path.
 - The system prompt tells the agent that a `<page .../>` line marks only the first page of tool output and to continue it with `read_content` before counting or summarizing.

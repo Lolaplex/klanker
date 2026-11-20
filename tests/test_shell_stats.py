@@ -1,0 +1,81 @@
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from klanker.shell.dispatch import process_line
+from klanker.shell.resolve import resolve_line
+from klanker.shell.state import ShellState
+
+
+def _store_with_events(tmp: str):
+    from agents_traces.models import TraceEvent
+    from agents_traces.store import TraceStore
+
+    store = TraceStore(Path(tmp))
+    store.append(TraceEvent(session="s1", type="llm_call", tokens_in=100, tokens_out=50, cost_usd=0.01))
+    store.append(TraceEvent(session="s1", type="tool_call", tool="read", status="ok"))
+    store.append(TraceEvent(session="s2", type="llm_call", tokens_in=999, tokens_out=999, cost_usd=9.0))
+    return store
+
+
+class UsageResolveTests(unittest.TestCase):
+    def test_slash_usage_is_builtin(self):
+        r = resolve_line("/usage", env=os.environ.copy())
+        self.assertEqual((r.route, r.intent), ("builtin", "usage"))
+
+    def test_colon_usage_is_builtin(self):
+        r = resolve_line(":usage", env=os.environ.copy())
+        self.assertEqual((r.route, r.intent), ("builtin", "usage"))
+
+    def test_unknown_slash_goes_to_agent(self):
+        r = resolve_line("/frobnicate stuff", env=os.environ.copy())
+        self.assertEqual(r.route, "agent")
+
+    def test_absolute_path_not_hijacked(self):
+        env = os.environ.copy()
+        with patch("klanker.shell.resolve.shutil.which", return_value=None):
+            r = resolve_line("/tmp/x", env=env)
+        self.assertNotEqual(r.intent, "usage")
+
+
+class UsageOutputTests(unittest.TestCase):
+    def test_session_usage_filters_events(self):
+        from klanker.stats import usage_lines
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _store_with_events(tmp)
+            lines = usage_lines("s1", store=store)
+            text = "\n".join(lines)
+            self.assertIn("session s1", text)
+            self.assertIn("150", text)
+            self.assertIn("$0.0100", text)
+            self.assertNotIn("1,998", text)
+
+    def test_empty_session_uses_today(self):
+        from klanker.stats import usage_lines
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _store_with_events(tmp)
+            lines = usage_lines("", store=store)
+            self.assertIn("today", lines[0])
+
+    def test_unknown_session_reports_empty(self):
+        from klanker.stats import usage_lines
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _store_with_events(tmp)
+            self.assertIn("no trace events", usage_lines("nope", store=store)[0])
+
+    def test_dispatch_usage(self):
+        state = ShellState.from_os()
+        with tempfile.TemporaryDirectory() as tmp:
+            store = _store_with_events(tmp)
+            with patch("klanker.stats._store", return_value=store):
+                _, lines = process_line(state, "/usage")
+        self.assertTrue(any("tokens" in line for line in lines))
+
+
+if __name__ == "__main__":
+    unittest.main()

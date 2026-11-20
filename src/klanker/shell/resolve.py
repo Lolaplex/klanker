@@ -40,9 +40,13 @@ def resolve_line(line: str, *, env: dict[str, str]) -> ResolveResult:
     if not text:
         return ResolveResult(route="empty")
 
-    # Klanker meta commands (colon namespace)
+    # Klanker meta commands (colon namespace; slash alias for known names)
     if text.startswith(":"):
         return _resolve_meta(text)
+    if text.startswith("/"):
+        head, _, rest = text[1:].partition(" ")
+        if head in SLASH_COMMANDS:
+            return _resolve_meta(":" + head + (" " + rest if rest else ""))
 
     try:
         parsed = parse_line(text)
@@ -73,6 +77,25 @@ def resolve_line(line: str, *, env: dict[str, str]) -> ResolveResult:
     return ResolveResult(route="agent", payload=text)
 
 
+SLASH_COMMANDS = frozenset({
+    "usage",
+    "insights",
+    "plan",
+    "persona",
+    "session",
+    "new-session",
+    "provider",
+    "health",
+    "modules",
+    "providers",
+    "tools",
+    "turn",
+    "help",
+    "quit",
+    "q",
+})
+
+
 def _resolve_meta(text: str) -> ResolveResult:
     if text in (":quit", ":q", "exit"):
         return ResolveResult(route="builtin", intent="exit")
@@ -92,6 +115,8 @@ def _resolve_meta(text: str) -> ResolveResult:
         return ResolveResult(route="builtin", intent="providers")
     if text == ":tools":
         return ResolveResult(route="builtin", intent="tools")
+    if text == ":usage":
+        return ResolveResult(route="builtin", intent="usage")
     if text.startswith(":turn "):
         return ResolveResult(route="agent", payload=text.split(" ", 1)[1].strip())
     if text.startswith(":"):

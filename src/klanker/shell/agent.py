@@ -57,6 +57,7 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
             "cd <dir>  pwd  exit  |  external commands on PATH",
             ":session :new-session :health :provider <name>",
             ":modules :providers :tools  (harness)",
+            ":usage  (traces; alias /usage)",
             ":turn <msg> | bare text → agent (needs gateway)",
         ]
         return rows
@@ -94,4 +95,9 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
         return [harness_flag("--list-providers")]
     if intent == "tools":
         return [harness_flag("--list-tools")]
+    if intent == "usage":
+        from ..stats import usage_lines
+
+        session = gw.session if gw is not None else ""
+        return usage_lines(session)
     return []
