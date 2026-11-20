@@ -2,7 +2,7 @@
 # self-deploy.sh — rebuild and push the klanker image from inside the
 # klanker container. Requires the compose mounts that make this possible:
 #   /var/run/docker.sock  (docker API; group_add <docker-sock gid>)
-#   <repo checkout>:/src  (this git clone, kept on SUITE_REF)
+#   <repo checkout>:/src  (this git clone, kept on KLANKER_REF)
 #
 # The container does NOT recreate itself — that is the host's job.
 # /volume1/docker/pull-latest.sh (host cron, ~5min) runs

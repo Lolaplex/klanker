@@ -30,6 +30,7 @@ RUN if [ -n "$GITHUB_TOKEN" ]; then \
 # set AGENTS_BROWSER_BIN when a browser binary is required.
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY scripts/dev-suite.py ./scripts/dev-suite.py
 # Vendored dashboard: klanker serve picks src/klanker/_web up automatically
 # (RELAY_WEB_TOKEN still gates the web surface; unset = API-only).
 COPY --from=web /web/dist ./src/klanker/_web
@@ -52,24 +53,13 @@ ARG SYNC_REF=${SUITE_REF}
 ARG KEYS_REF=${SUITE_REF}
 ARG VOICE_REF=${SUITE_REF}
 ARG STORE_REF=${SUITE_REF}
-# Install the workspace contract first: every suite package depends on it and
-# it is not on PyPI yet.
-RUN pip install --no-cache-dir \
-    "agents-workspace @ git+https://github.com/Lolaplex/agents-workspace.git@${WORKSPACE_REF}"
-
+# The suite dep list is generated from pyproject.toml — adding an agents-*
+# dep there reaches the image automatically; the *_REF ARGs stay the
+# per-package override surface. One resolver pass also orders the
+# workspace contract before its dependents.
 RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
-    pip install --no-cache-dir \
-        "agents-harness[mcp] @ git+https://github.com/Lolaplex/agents-harness.git@${HARNESS_REF}" \
-        "agents-relay @ git+https://github.com/Lolaplex/agents-relay.git@${RELAY_REF}" \
-        "agents-memory @ git+https://github.com/Lolaplex/agents-memory.git@${MEMORY_REF}" \
-        "agents-sync @ git+https://github.com/Lolaplex/agents-sync.git@${SYNC_REF}" \
-        "agents-traces @ git+https://github.com/Lolaplex/agents-traces.git@${TRACES_REF}" \
-        "agents-terminal @ git+https://github.com/Lolaplex/agents-terminal.git@${TERMINAL_REF}" \
-        "agents-calendar @ git+https://github.com/Lolaplex/agents-calendar.git@${CALENDAR_REF}" \
-        "agents-browser @ git+https://github.com/Lolaplex/agents-browser.git@${BROWSER_REF}" \
-        "agents-keys @ git+https://github.com/Lolaplex/agents-keys.git@${KEYS_REF}" \
-        "agents-voice @ git+https://github.com/Lolaplex/agents-voice.git@${VOICE_REF}" \
-        "agents-store @ git+https://github.com/Lolaplex/agents-store.git@${STORE_REF}" && \
+    python scripts/dev-suite.py --emit > /tmp/suite-reqs.txt && \
+    pip install --no-cache-dir -r /tmp/suite-reqs.txt && \
     pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
