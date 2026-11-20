@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { Terminal, Trash2, ArrowUp, Bot, User, Square, Paperclip, X } from "lucide-react";
 import { shouldSubmitOnEnter, focusWithoutScroll } from "../chatUi";
+import { chatToJson, chatToMarkdown, downloadText, exportStem } from "../chatExport";
 import { ChatMessage, KlankerInstance, PendingApproval } from "../types/klanker";
 import { CopyButton } from "./CopyButton";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -178,6 +179,32 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         </div>
 
         <div className="flex items-center space-x-2">
+          {messages.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => {
+                const fmt = e.target.value;
+                e.target.value = "";
+                if (fmt !== "md" && fmt !== "json") return;
+                const doc = {
+                  agent: instance.name,
+                  speaker: displaySpeaker,
+                  session: sessionLabel || "new",
+                  messages,
+                };
+                const stem = exportStem(sessionLabel || "chat");
+                if (fmt === "md") downloadText(`${stem}.md`, chatToMarkdown(doc), "text/markdown");
+                else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
+              }}
+              title="Export this chat"
+              style={{ colorScheme: "dark" }}
+              className="bg-[#0a0a0a] border border-[#262626] hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] text-[#d4d4d4] focus:text-white focus:border-white outline-none cursor-pointer"
+            >
+              <option value="">export</option>
+              <option value="md">.md</option>
+              <option value="json">.json</option>
+            </select>
+          )}
           {modelOptions.length > 0 && onModel && (
             <select
               value={model}
