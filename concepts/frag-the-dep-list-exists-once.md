@@ -14,8 +14,13 @@ have pulled the PyPI release instead of the git ref — the exact failure
 the *_REF build-args exist to prevent). `scripts/dev-suite.py` generates
 the requirement lines; the Dockerfile and local installs both consume it.
 
-The dev switch is one name everywhere: `SUITE_REF` (default `dev`), with
-per-package `<NAME>_REF` overrides (dashes → underscores). Local installs
-prefer sibling checkouts over git refs — editable installs put uncommitted
-dev work in the loop, which is what "lock-step" means. Missing siblings
-fall back to `git+…@$SUITE_REF`, never to PyPI.
+The dev switch is one name everywhere: `SUITE_REF`, with per-package
+`<NAME>_REF` overrides (dashes → underscores). **Defaults differ by
+surface on purpose**: the Dockerfile defaults `main` — an image is a
+release artifact, and a bare `docker build` must not silently build dev —
+while `dev-suite.py` defaults `dev`, because running it IS the explicit
+dev act. `self-deploy.sh` always forwards `KLANKER_REF` explicitly, so it
+inherits neither default. Local installs prefer sibling checkouts over
+git refs — editable installs put uncommitted dev work in the loop, which
+is what "lock-step" means. Missing siblings fall back to
+`git+…@$SUITE_REF`, never to PyPI.

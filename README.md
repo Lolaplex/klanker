@@ -51,6 +51,8 @@ pip install "klanker[all]"       # All optional extensions
 > **🤖 Agent-Driven Setup:**
 > Give your coding agent **this repo** (clone or URL), then tell it to **"install klanker, sense host capabilities, and run your personal assistant."**
 
+Dev lock-step, Docker builds, and NAS self-deploy: see [INSTALL.md](INSTALL.md).
+
 ---
 
 ## Architecture

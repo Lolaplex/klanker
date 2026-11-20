@@ -34,12 +34,14 @@ COPY scripts/dev-suite.py ./scripts/dev-suite.py
 # Vendored dashboard: klanker serve picks src/klanker/_web up automatically
 # (RELAY_WEB_TOKEN still gates the web surface; unset = API-only).
 COPY --from=web /web/dist ./src/klanker/_web
-# SUITE_REF is the default git ref for every suite package (main = latest
-# release; override per package with *_REF). CACHE_BUST
+# SUITE_REF is the default git ref for every suite package. Default is
+# `main` (latest release); pass --build-arg SUITE_REF=dev for lock-step
+# dev builds — self-deploy.sh already forwards KLANKER_REF here.
+# Per-package override: *_REF (e.g. RELAY_REF=main). CACHE_BUST
 # invalidates this layer when the branch tip moved but the ref name did not.
 # On your build platform, rebuild with --no-cache or bump CACHE_BUST, then confirm
 # `pip freeze | grep agents-` shows the git commits you expect.
-ARG SUITE_REF=dev
+ARG SUITE_REF=main
 ARG CACHE_BUST=6
 ARG WORKSPACE_REF=${SUITE_REF}
 ARG HARNESS_REF=${SUITE_REF}
