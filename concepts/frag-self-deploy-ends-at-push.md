@@ -30,5 +30,14 @@ runtime env (`AGENTS_ACP_API_KEY`), never a layer. The registry stays
 localhost-bound — remote pushes keep the docker-save/scp flow, so no TLS
 termination is needed on `sigmanas.local`.
 
+**Overlay mode builds base first.** An overlay `FROM` the registry's last
+published image is a trap: layering devin on yesterday's base ships a
+stale suite and the whole loop below the overlay becomes a no-op
+(measured 2026-11-20 — the pushed overlay carried pre-ACP relay while
+dev had it). With `KLANKER_DOCKERFILE` set, self-deploy builds the public
+`Dockerfile` against `$KLANKER_REF` first, then layers the overlay onto
+that fresh base via `BASE_IMAGE`. The overlay pins its FROM to the build
+output, never to the registry tag.
+
 Open: whether self-deploy should be a harness schedule (`klanker cron`)
 or an on-demand agent verb — currently on-demand (`scripts/self-deploy.sh`).
