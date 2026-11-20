@@ -117,6 +117,10 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_p = sub.add_parser("doctor", help="Check config, keys, MCP health, tokens, disk and suite versions")
     doctor_p.add_argument("--json", action="store_true", help="Output JSON format")
 
+    # 1b3. Pull suite packages to latest refs/releases
+    update_p = sub.add_parser("update", help="Update all suite packages (git checkouts pull, installs upgrade)")
+    update_p.add_argument("--check", action="store_true", help="Show the update plan without running it")
+
     # 1c. Audit trace integrity & replay
     audit_p = sub.add_parser("audit", help="Audit trace integrity and replay verification via agents-traces")
     audit_p.add_argument("target", type=str, nargs="?", default="", help="Session ID, trace file path, or empty for all")
@@ -270,6 +274,7 @@ KNOWN_SUBCOMMANDS = {
     "remind",
     "audit",
     "doctor",
+    "update",
     "routine",
     "evidence",
     "persona",
@@ -429,6 +434,11 @@ def main(argv: list[str] | None = None) -> int:
         from .doctor import run as doctor_run
 
         return doctor_run(as_json=bool(getattr(args, "json", False)))
+
+    elif args.command == "update":
+        from .suite_update import run as update_run
+
+        return update_run(check=bool(getattr(args, "check", False)))
 
     elif args.command == "audit":
         if not nucleus.caps.has_traces:
