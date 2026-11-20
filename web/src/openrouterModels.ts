@@ -14,6 +14,7 @@ export const DEFAULT_SETTINGS: DesktopSettings = {
   recent_models: { openrouter: [], lmstudio: [] },
   favorites: { openrouter: [], lmstudio: [] },
   auto_start_local_serve: true,
+  autostart: false,
 };
 
 export interface OpenRouterModel {

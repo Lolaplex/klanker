@@ -1,3 +1,4 @@
+pub mod autostart;
 pub mod discovery;
 pub mod migrate;
 pub mod provision;
@@ -34,6 +35,10 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_updater::Builder::new().build());
     // Dev builds only: MCP bridge for agent automation of the webview.
     // Never linked into release artifacts.
@@ -64,6 +69,8 @@ pub fn run() {
             secret_get,
             secret_set,
             secret_delete,
+            autostart::autostart_is_enabled,
+            autostart::autostart_set,
             migrate::legacy_state,
             registry::instances_list,
             registry::instance_save,

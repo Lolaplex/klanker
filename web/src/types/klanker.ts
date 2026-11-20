@@ -25,6 +25,8 @@ export interface DesktopSettings {
   recent_models: ProviderModelLists;
   favorites: ProviderModelLists;
   auto_start_local_serve: boolean;
+  /** Launch the desktop app on OS login (tauri-plugin-autostart). */
+  autostart: boolean;
 }
 
 export interface KlankerInstance {

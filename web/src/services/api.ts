@@ -576,6 +576,22 @@ export const api = {
     await jsonReq(inst, `/v1/approvals/${encodeURIComponent(approvalId)}`, { allow });
   },
 
+  // --- OS autostart (desktop only; tauri-plugin-autostart) ------------------
+
+  async autostartIsEnabled(): Promise<boolean> {
+    if (!caps.spawn) return false;
+    try {
+      return !!(await invoke<boolean>("autostart_is_enabled"));
+    } catch {
+      return false;
+    }
+  },
+
+  async autostartSet(enabled: boolean): Promise<void> {
+    if (!caps.spawn) return;
+    await invoke("autostart_set", { enabled });
+  },
+
   // --- traces (agents-relay#12) ---------------------------------------------
 
   async readRecentTraces(inst: KlankerInstance, limit = 40): Promise<TracePage> {

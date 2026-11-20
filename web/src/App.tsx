@@ -1086,8 +1086,16 @@ export function App() {
           openrouter_api_key: next.openrouter_api_key.trim(),
           openrouter_key_set: Boolean(next.openrouter_api_key.trim()) || current.openrouter_key_set,
         };
+        merged.autostart = next.autostart;
         return provider === "echo" ? merged : rememberModel(merged, provider, merged.model);
       });
+      if (caps.spawn) {
+        try {
+          await api.autostartSet(next.autostart);
+        } catch (e) {
+          console.error("autostart toggle failed", e);
+        }
+      }
       setSettingsOpen(false);
     } catch (e) {
       console.error("Failed to save settings", e);

@@ -1,7 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { FolderOpen, X } from "lucide-react";
 import { DesktopSettings, KlankerInstance } from "../types/klanker";
 import { pushSupported, subscribePush } from "../push";
+import { api } from "../services/api";
 import { LM_URL, ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
 import { ModelControl } from "./ModelControl";
 import { SecretField } from "./SecretField";
@@ -41,6 +42,16 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [pushBusy, setPushBusy] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
   const desktop = typeof window !== "undefined" && "__TAURI__" in window;
+
+  // Desktop truth wins over the stored flag (user may have toggled the OS
+  // setting outside the app). Hydrate once per open.
+  useEffect(() => {
+    if (!desktop) return;
+    void api.autostartIsEnabled().then((on) => {
+      setDraft((d) => (d.autostart === on ? d : { ...d, autostart: on }));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const enablePush = async () => {
     if (!instance) return;
@@ -188,6 +199,21 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               onCommit={(id) => setDraft({ ...draft, model: id.trim() })}
               onToggleStar={star}
             />
+          )}
+
+          {desktop && (
+            <div>
+              <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Desktop</div>
+              <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={draft.autostart}
+                  onChange={(e) => setDraft({ ...draft, autostart: e.target.checked })}
+                  className="accent-white"
+                />
+                Launch klanker on login
+              </label>
+            </div>
           )}
 
           {instance && pushSupported() && (
