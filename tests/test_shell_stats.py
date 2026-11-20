@@ -108,5 +108,46 @@ class InsightsOutputTests(unittest.TestCase):
         self.assertIn("invalid days", lines[0])
 
 
+class PlanModeTests(unittest.TestCase):
+    def test_slash_plan_resolves(self):
+        r = resolve_line("/plan ship the thing", env=os.environ.copy())
+        self.assertEqual((r.route, r.intent, r.payload), ("builtin", "plan", "ship the thing"))
+
+    def test_plan_toggle(self):
+        state = ShellState.from_os()
+        _, lines = process_line(state, ":plan")
+        self.assertTrue(state.plan_mode)
+        self.assertIn("on", lines[0])
+        self.assertIn("plan", state.status_line())
+        process_line(state, ":plan")
+        self.assertFalse(state.plan_mode)
+
+    def test_plan_wraps_agent_message(self):
+        from klanker.shell import agent as agent_mod
+
+        state = ShellState.from_os()
+        state.plan_mode = True
+        seen: list[str] = []
+
+        class FakeGw:
+            session = ""
+
+            def turn(self, text, *, new_session=False):
+                seen.append(text)
+                return {"reply": "ok"}
+
+        state.gateway = FakeGw()
+        agent_mod.agent_turn(state, "build feature x")
+        self.assertTrue(seen[0].startswith("PLAN MODE"))
+        self.assertIn("build feature x", seen[0])
+        self.assertIn("plans/<slug>.md", seen[0])
+
+    def test_one_shot_plan_does_not_toggle(self):
+        state = ShellState.from_os()
+        _, lines = process_line(state, ":plan do it")
+        self.assertFalse(state.plan_mode)
+        self.assertIn("agent tier unavailable", lines[0])
+
+
 if __name__ == "__main__":
     unittest.main()

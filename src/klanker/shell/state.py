@@ -19,6 +19,7 @@ class ShellState:
     gateway: GatewayClient | None = None
     stream: bool = False
     pending_new_session: bool = False
+    plan_mode: bool = False
     last_status: int = 0
 
     @classmethod
@@ -51,6 +52,8 @@ class ShellState:
             parts.append(f"project={self.gateway.project}")
             if self.pending_new_session:
                 parts.append("fork")
+        if self.plan_mode:
+            parts.append("plan")
         parts.append(f"status={self.last_status}")
         return "  ".join(parts)
 

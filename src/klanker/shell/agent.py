@@ -24,10 +24,20 @@ def harness_flag(flag: str) -> str:
     return (proc.stdout or "").strip()
 
 
+PLAN_INSTRUCTION = (
+    "PLAN MODE — inspect the context read-only: no file edits, no mutating "
+    "commands. Write a markdown implementation plan to plans/<slug>.md "
+    "(create the directory if needed) and reply with the plan path plus a "
+    "short summary.\n\n"
+)
+
+
 def agent_turn(state: ShellState, message: str) -> list[str]:
     gw = state.gateway
     if gw is None:
         return ["agent tier unavailable (install agents-relay and pass --url)"]
+    if state.plan_mode and not message.startswith(PLAN_INSTRUCTION):
+        message = PLAN_INSTRUCTION + message
     new_session = state.pending_new_session
     state.pending_new_session = False
     if state.stream:
@@ -58,6 +68,7 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
             ":session :new-session :health :provider <name>",
             ":modules :providers :tools  (harness)",
             ":usage :insights [days]  (traces; /usage /insights)",
+            ":plan [goal]  plan-mode toggle or one-shot plan (/plan)",
             ":turn <msg> | bare text → agent (needs gateway)",
         ]
         return rows
@@ -108,4 +119,11 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
         except ValueError:
             return [f"insights: invalid days: {payload!r}"]
         return insights_lines(days)
+    if intent == "plan":
+        if not payload:
+            state.plan_mode = not state.plan_mode
+            return [f"plan mode {'on' if state.plan_mode else 'off'}"]
+        if state.plan_mode:
+            return agent_turn(state, payload)
+        return agent_turn(state, PLAN_INSTRUCTION + payload)
     return []
