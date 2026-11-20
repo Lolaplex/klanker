@@ -34,7 +34,10 @@ echo "self-deploy: fetching $REF in $SRC"
 # volume, but this is cheap and idempotent).
 git config --global --add safe.directory "$SRC" 2>/dev/null || true
 git -C "$SRC" fetch origin "$REF"
-git -C "$SRC" checkout --detach "origin/$REF"
+# /src is build-only: reset hard, then clear drift — but keep untracked
+# overlay files (Dockerfile.nas, compose.nas.*) that live only on the host.
+git -C "$SRC" reset --hard "origin/$REF"
+git -C "$SRC" clean -fd -e 'Dockerfile.nas' -e 'compose.nas.*'
 
 BUST="$(date +%Y%m%d%H%M%S)"
 BUILD_ARGS="--build-arg SUITE_REF=$REF --build-arg CACHE_BUST=$BUST"
