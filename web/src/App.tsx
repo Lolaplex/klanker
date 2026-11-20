@@ -181,6 +181,7 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [remoteActive, setRemoteActive] = useState(false);
+  const remoteActiveRef = useRef(false);
   const [kbBox, setKbBox] = useState<{ height: number; top: number } | null>(null);
   const [idleH, setIdleH] = useState<number>(() =>
     typeof window !== "undefined"
@@ -889,6 +890,7 @@ export function App() {
     const chatId = chat.id;
     const session = chat.session;
     const ck = `${inst.id} ${ws} ${persona} ${session}`;
+    remoteActiveRef.current = false;
     setRemoteActive(false);
     const apply = (restored: ChatMessage[]) => {
       if (restored.length === 0) return;
@@ -916,7 +918,9 @@ export function App() {
       const lastTs = lastEv ? Date.parse(String(lastEv.ts || "")) : NaN;
       const settled =
         !lastEv || (lastEv.type === "message" && lastEv.metadata?.role === "assistant");
-      setRemoteActive(!settled && Number.isFinite(lastTs) && Date.now() - lastTs < 120_000);
+      const active = !settled && Number.isFinite(lastTs) && Date.now() - lastTs < 120_000;
+      remoteActiveRef.current = active;
+      setRemoteActive(active);
       const restored = eventsToMessages(events);
       evCache.current.set(ck, restored);
       apply(restored);
@@ -928,26 +932,41 @@ export function App() {
     document.addEventListener("visibilitychange", onVisible);
     // Cheap sync: one raw JSONL line per tick; the heavy events pull only runs
     // when the session's newest trace ts actually moved (turns from other
-    // devices/channels land without a reload).
+    // devices/channels land without a reload). While a foreign turn is live
+    // the tick tightens to 2s: tool_call + user/assistant message records are
+    // appended to the trace as the turn runs, so watching devices see its
+    // progress and the reply ~2s after it lands instead of up to 12s late.
     let lastTs = "";
-    const poll = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      if (turnBusyRef.current?.chatId === chatId) return;
-      void api.sessionTailTs(inst, ws, session).then((ts) => {
-        if (!ts) return;
-        if (!lastTs) {
-          lastTs = ts;
-          return;
-        }
-        if (ts !== lastTs) {
-          lastTs = ts;
-          void run();
-        }
-      });
-    }, 12_000);
+    let pollTimer = 0;
+    const tickPoll = () => {
+      pollTimer = window.setTimeout(
+        () => {
+          const rearm = () => tickPoll();
+          if (document.visibilityState !== "visible" || turnBusyRef.current?.chatId === chatId) {
+            rearm();
+            return;
+          }
+          void api
+            .sessionTailTs(inst, ws, session)
+            .then((ts) => {
+              if (ts) {
+                if (!lastTs) lastTs = ts;
+                else if (ts !== lastTs) {
+                  lastTs = ts;
+                  void run();
+                }
+              }
+            })
+            .finally(rearm);
+        },
+        remoteActiveRef.current ? 2_000 : 12_000
+      );
+    };
+    tickPoll();
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
-      window.clearInterval(poll);
+      window.clearTimeout(pollTimer);
+      remoteActiveRef.current = false;
       setRemoteActive(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
