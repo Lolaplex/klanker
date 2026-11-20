@@ -18,6 +18,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - name: Hook dispatchers must be executable in git index (100755)
+        run: bash scripts/check_hook_dispatchers.sh
       - name: Validate every commit message in the PR range
         shell: bash
         run: |

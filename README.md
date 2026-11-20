@@ -219,6 +219,20 @@ The entrypoint does not `chmod 666` the Docker socket. As root it adds `klanker`
 
 ---
 
+## Git hooks (commit discipline)
+
+Run once per clone (contributors and coding agents):
+
+```bash
+bash hooks/install.sh
+```
+
+This sets `core.hooksPath=hooks` and seeds `concepts/`, `signals/`, and
+`scripts/git_wall_allowlist.txt` when missing. Do **not** set
+`core.hooksPath=/dev/null` — that disables discipline without
+`--no-verify`. See [AGENTS.md](AGENTS.md) for the three-section commit
+template (`## World Model`, `## Membrane`, `## Gates`).
+
 ## Tests
 
 ```bash

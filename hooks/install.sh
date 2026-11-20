@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Install the membrane + signal discipline into klanker-desktop (or any repo).
-# Ported from koru-os/hooks/install.sh: same self-contained-corpus default,
-# same seed-signals step; post-commit writes a local .git/signal-cards.jsonl
-# ledger. Gates wall here is UNIVERSAL (AGENTS.md: every authored commit
-# answers all three sections).
+# Install the membrane + signal discipline into klanker (or any repo that vendors hooks/).
+# Sets core.hooksPath=hooks (idempotent) so git runs the in-repo dispatchers; refuses
+# core.hooksPath=/dev/null, which disables hooks silently.
 #
 #   hooks/install.sh                 # install into THIS repo (self corpus)
 #   hooks/install.sh /path/to/repo   # install into another repo
@@ -12,20 +10,30 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 CORPUS_ROOT="$(cd "$HERE/.." && pwd)"
 TARGET="$(cd "${1:-$CORPUS_ROOT}" && pwd)"
 
-HOOKS="$(git -C "$TARGET" rev-parse --absolute-git-dir)/hooks"
-mkdir -p "$HOOKS" "$TARGET/concepts" "$TARGET/signals"
+CURRENT="$(git -C "$TARGET" config --get core.hooksPath 2>/dev/null || true)"
+case "$CURRENT" in
+  /dev/null|dev/null)
+    echo "refusing: core.hooksPath=$CURRENT disables hooks — run: git config --unset core.hooksPath" >&2
+    exit 1
+    ;;
+esac
+git -C "$TARGET" config core.hooksPath hooks
+
+mkdir -p "$TARGET/hooks" "$TARGET/concepts" "$TARGET/signals"
 [ -e "$TARGET/concepts/.gitkeep" ] || : > "$TARGET/concepts/.gitkeep"
-for h in commit-msg commit-msg.cjs post-commit post-commit.cjs pre-commit; do
-  cp "$HERE/$h" "$HOOKS/$h"; chmod +x "$HOOKS/$h"
+for h in commit-msg commit-msg.cjs post-commit post-commit.cjs pre-commit install.sh; do
+  if [ ! -f "$TARGET/hooks/$h" ] && [ -f "$HERE/$h" ]; then
+    cp "$HERE/$h" "$TARGET/hooks/$h"
+  fi
+  if [ -f "$TARGET/hooks/$h" ]; then
+    chmod +x "$TARGET/hooks/$h"
+  fi
 done
 
-echo "installed commit-msg + post-commit + pre-commit -> $HOOKS"
+echo "core.hooksPath=hooks (idempotent) -> $(git -C "$TARGET" config --get core.hooksPath)"
 echo "topology: self-contained (this repo is its own corpus — no .membrane pointer)"
 
 # --- pre-commit's oracle rides along: git_wall.sh + an empty allowlist -----
-# A foreign target has no scripts/git_wall.sh, and the hook refuses LOUDLY by
-# design — so the wall must be installed beside the hooks, or install.sh would
-# hand a foreign repo a pre-commit that can only ever fail missing-script.
 mkdir -p "$TARGET/scripts"
 if [ -f "$HERE/../scripts/git_wall.sh" ]; then
   [ -f "$TARGET/scripts/git_wall.sh" ] || cp "$HERE/../scripts/git_wall.sh" "$TARGET/scripts/git_wall.sh"
@@ -57,3 +65,5 @@ echo "Beliefs live in concepts/frag-<id>.md (frontmatter: type/id/provenance/ts)
 echo "Signals grow by declaration — declare one and its interface file is minted"
 echo "(edit-distance-1 near-misses refuse, so typos can't fork the ontology)."
 echo "Telemetry: .git/signal-cards.jsonl (append-only, untracked)."
+echo ""
+echo "Never set core.hooksPath=/dev/null — that bypasses discipline without --no-verify."
