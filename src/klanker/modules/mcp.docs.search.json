@@ -1,0 +1,21 @@
+{
+  "name": "mcp.docs.search",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_docs search",
+  "rests_on": "agents-docs BM25 search over local docsets; exit 0 = results",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "mutates": false,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": {"type": "string", "description": "Search keywords or question", "x-cli": "positional"},
+      "docset": {"type": "string", "description": "Target docset (default: all)", "x-cli": "--docset"},
+      "top": {"type": "string", "description": "Number of results", "x-cli": "--top"}
+    },
+    "required": ["query"]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "mcp.gateway.send",
+  "kind": "mcp",
+  "when": "on_request",
+  "cadence": "on_request",
+  "verb": "python -m agents_relay send",
+  "rests_on": "agents-relay plain notification to a user/chat; exit 0 = delivered",
+  "expected_exit": 0,
+  "timeout_sec": 30,
+  "as_tool": true,
+  "mutates": true,
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "user": {"type": "string", "description": "Target user/chat id", "x-cli": "--user"},
+      "text": {"type": "string", "description": "Message body", "x-cli": "--text"}
+    },
+    "required": ["user", "text"]
+  }
+}
