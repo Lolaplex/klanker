@@ -13,7 +13,7 @@ import {
   ChatMessage,
   PendingApproval,
 } from "./types/klanker";
-import { api, caps, localInstance, rememberSecret, secretAccount } from "./services/api";
+import { api, caps, localInstance, notify, rememberSecret, secretAccount } from "./services/api";
 import { dialogs } from "./services/dialogs";
 import { DialogHost } from "./components/DialogHost";
 import { focusWithoutScroll } from "./chatUi";
@@ -438,6 +438,7 @@ export function App() {
   const modelsFetched = useRef(false);
   const saveGen = useRef(0);
   const pollSeq = useRef(0);
+  const lastNotifiedApprovalRef = useRef<string>("");
   // Buffered SSE deltas: one setChats per frame instead of one per token.
   const deltaFlush = useRef<() => void>(() => undefined);
   // Last persisted bucket snapshot — dirty-scoped localStorage writes only.
@@ -981,7 +982,17 @@ export function App() {
       const mine = ++pollSeq.current;
       try {
         const next = await api.pendingApproval(inst);
-        if (!stop && mine === pollSeq.current) setPending(next);
+        if (!stop && mine === pollSeq.current) {
+          if (
+            next &&
+            next.id !== lastNotifiedApprovalRef.current &&
+            (document.hidden || !document.hasFocus())
+          ) {
+            lastNotifiedApprovalRef.current = next.id;
+            void notify("Klanker needs approval", next.summary || next.tool || "Pending tool approval");
+          }
+          setPending(next);
+        }
       } catch {
         if (!stop && mine === pollSeq.current) setPending(null);
       }
@@ -1285,6 +1296,9 @@ export function App() {
       }
       setTurnBusy((b) => (b?.instanceId === id && b.chatId === chatId ? null : b));
       setStreamStatus(null);
+      if (document.hidden || !document.hasFocus()) {
+        void notify("Klanker turn finished", inst.name || inst.id);
+      }
       // A dead client stream (iOS "Load failed", suspend, reload) does not
       // mean the turn failed: the server may still be writing the reply into
       // the session. Reconcile so the bubbles converge to server truth.
