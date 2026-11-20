@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sent attachments echo back as filename chips on the user bubble instead of disappearing into a bare `[attach]` path.
 - The system prompt tells the agent that a `<page .../>` line marks only the first page of tool output and to continue it with `read_content` before counting or summarizing.
 - `klanker bg "<task>"`: detached background runner — spawns the turn as a fire-and-forget hidden child under `<ws>/bg-sessions/` (`bg_<ts>.json` meta + `.log`), `klanker ps` lists live/exited sessions, `klanker logs <id> [-f]` prints or tails the log, `klanker kill <id>` stops the process tree and marks the session `killed`.
+- `klanker chat --resume <session-id>` continues an existing thread; adding `--fork` branches it: the session's trace events are re-appended under a fresh `ses_fork_*` id (append-only, parent history untouched) and the turn runs `--detached-session`, so the exploratory branch never steals the user's active session.
 
 ### Fixed
 - Web UI touch targets: on devices where the primary input cannot hover, interactive elements (buttons, selects, inputs) now enforce 44px minimum hit area via a base CSS rule — previously icon buttons like code-fence copy, attachment remove, the sidebar `auth` chip and panel refresh sat well under 44px. Message text stays selectable and replies render as Markdown with copy buttons (already in place).

@@ -179,6 +179,16 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Persona id for this turn (<ws>/personas/<id> or package; default: AGENTS_PERSONA or ws default_persona)",
     )
+    chat_p.add_argument(
+        "--resume",
+        default="",
+        help="Resume an existing session id (ses_…)",
+    )
+    chat_p.add_argument(
+        "--fork",
+        action="store_true",
+        help="With --resume: branch that session's history into a new session instead of continuing it",
+    )
 
     # 3. Serve gateway
     serve_p = sub.add_parser("serve", help="Start I/O Gateway (HTTP /v1/turn & Telegram)")
@@ -662,10 +672,30 @@ def main(argv: list[str] | None = None) -> int:
 
             ensure_default_overlay()
             cli_workdir = os.environ.get("AGENTS_WORKDIR", "") or os.getcwd()
+            session = getattr(args, "resume", "") or ""
+            detached = False
+            if getattr(args, "fork", False):
+                if not session:
+                    print("Error: --fork needs --resume <session-id>", file=sys.stderr)
+                    return 2
+                if not nucleus.caps.has_traces:
+                    print("Error: agents-traces is required for --fork", file=sys.stderr)
+                    return 1
+                try:
+                    from .fork import fork_session
+
+                    session = fork_session(session)
+                except ValueError as exc:
+                    print(f"Error: {exc}", file=sys.stderr)
+                    return 2
+                print(f"forked session -> {session}")
+                detached = True
             return nucleus.run_turn(
                 message=msg, user=user, provider=provider, seal=seal,
                 workdir=cli_workdir,
                 persona=getattr(args, "persona", "") or "",
+                session=session or None,
+                detached=detached,
             )
 
         # If piped input via stdin (e.g. echo "hi" | klanker)

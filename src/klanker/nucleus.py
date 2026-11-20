@@ -40,6 +40,7 @@ class Nucleus:
         workspace: "Workspace | None" = None,
         workdir: str = "",
         persona: str = "",
+        detached: bool = False,
     ) -> int:
         """Execute one conversational turn using available runner or fallback."""
         from agents_workspace import Workspace
@@ -77,6 +78,8 @@ class Nucleus:
             ]
             if session:
                 cmd.extend(["--session", session])
+            if detached:
+                cmd.append("--detached-session")
             if persona:
                 cmd.extend(["--persona", persona])
             if seal:
