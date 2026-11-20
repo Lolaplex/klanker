@@ -448,7 +448,10 @@ fn do_ensure(app: &AppHandle, workdir: &str) -> Result<ServeStatus, String> {
     s.klanker_version = version;
 
     let port = pick_port();
-    let token = uuid::Uuid::new_v4().simple().to_string();
+    // Reuse the stored token when present: a manually entered secret stays
+    // fixed across respawns instead of being clobbered by a fresh uuid.
+    let token = crate::secrets::get(&crate::secrets::relay_account("local"))
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
     let log = log_path(app)?;
     let host_dir = instance_host_dir(app)?;
     if !workdir.is_empty() {
