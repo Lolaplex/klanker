@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 180" role="img" aria-label="Klanker — adaptive agent shell">
+  <rect width="800" height="180" rx="12" fill="#050505"/>
+  <rect x="0.5" y="0.5" width="799" height="179" rx="11.5" fill="none" stroke="#262626"/>
+  <g transform="translate(56 45) scale(3.75)">
+    <rect width="24" height="24" rx="5" fill="#ffffff"/>
+    <g transform="rotate(45 12 12)">
+      <rect x="7.150" y="5.900" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="7.854" cy="6.824" r="0.176" fill="#ffffff"/>
+      <circle cx="8.646" cy="6.824" r="0.176" fill="#ffffff"/>
+      <rect x="7.150" y="8.400" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="7.854" cy="9.324" r="0.176" fill="#ffffff"/>
+      <circle cx="8.646" cy="9.324" r="0.176" fill="#ffffff"/>
+      <rect x="7.150" y="10.900" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="7.854" cy="11.824" r="0.176" fill="#ffffff"/>
+      <circle cx="8.646" cy="11.824" r="0.176" fill="#ffffff"/>
+      <rect x="7.150" y="13.400" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="7.854" cy="14.324" r="0.176" fill="#ffffff"/>
+      <circle cx="8.646" cy="14.324" r="0.176" fill="#ffffff"/>
+      <rect x="7.150" y="15.900" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="7.854" cy="16.824" r="0.176" fill="#ffffff"/>
+      <circle cx="8.646" cy="16.824" r="0.176" fill="#ffffff"/>
+      <rect x="9.650" y="10.900" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="10.354" cy="11.824" r="0.176" fill="#ffffff"/>
+      <circle cx="11.146" cy="11.824" r="0.176" fill="#ffffff"/>
+      <rect x="12.150" y="8.400" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="12.854" cy="9.324" r="0.176" fill="#ffffff"/>
+      <circle cx="13.646" cy="9.324" r="0.176" fill="#ffffff"/>
+      <rect x="12.150" y="13.400" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="12.854" cy="14.324" r="0.176" fill="#ffffff"/>
+      <circle cx="13.646" cy="14.324" r="0.176" fill="#ffffff"/>
+      <rect x="14.650" y="5.900" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="15.354" cy="6.824" r="0.176" fill="#ffffff"/>
+      <circle cx="16.146" cy="6.824" r="0.176" fill="#ffffff"/>
+      <rect x="14.650" y="15.900" width="2.2" height="2.2" rx="0.66" fill="#000000"/>
+      <circle cx="15.354" cy="16.824" r="0.176" fill="#ffffff"/>
+      <circle cx="16.146" cy="16.824" r="0.176" fill="#ffffff"/>
+    </g>
+  </g>
+  <text x="176" y="92" font-family="ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="40" font-weight="700" letter-spacing="8" fill="#ffffff">KLANKER</text>
+  <text x="178" y="126" font-family="ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="13" letter-spacing="0.5" fill="#737373">adaptive agent distribution — brain/mouth/feelers on the lolaplex suite</text>
+</svg>
