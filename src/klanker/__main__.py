@@ -27,18 +27,41 @@ def note_custom_loop_cmd() -> None:
 
 
 def _maybe_generate_web_token(no_auth: bool) -> str:
-    """Secure-by-default web token: generate + print once, else "".
+    """Secure-by-default web token: mint once per host, print URL, else "".
 
     An explicit ``RELAY_WEB_TOKEN`` always wins. ``--no-auth`` or
-    ``RELAY_NO_AUTH=1`` is the only way to serve unprotected.
+    ``RELAY_NO_AUTH=1`` is the only way to serve unprotected. The minted
+    token is persisted to ``<host>/secrets.json`` so a serve restart keeps
+    the same cookie secret — desktop/keyring links survive.
     """
     no_auth = no_auth or os.environ.get("RELAY_NO_AUTH", "").strip().lower() in (
         "1", "true", "yes")
     if os.environ.get("RELAY_WEB_TOKEN") or no_auth:
         return ""
+    import json
     import secrets
 
-    token = secrets.token_urlsafe(24)
+    token = ""
+    try:
+        from agents_workspace import Host, resolve_secret
+
+        token = resolve_secret("RELAY_WEB_TOKEN")
+        if not token:
+            token = secrets.token_urlsafe(24)
+            try:
+                path = Host.from_env().secrets
+                data = json.loads(path.read_text("utf-8")) if path.exists() else {}
+                data["RELAY_WEB_TOKEN"] = token
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_name(path.name + ".tmp")
+                tmp.write_text(json.dumps(data, indent=2) + "\n", "utf-8")
+                os.replace(tmp, path)
+            except Exception:
+                pass
+    except ImportError:
+        pass
+    if not token:
+        token = secrets.token_urlsafe(24)
     os.environ["RELAY_WEB_TOKEN"] = token
     host = os.environ.get("RELAY_HOST", "127.0.0.1")
     port = os.environ.get("RELAY_PORT", "8787")
