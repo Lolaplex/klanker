@@ -195,6 +195,12 @@ def build_parser() -> argparse.ArgumentParser:
     persona_hand.add_argument("--note", default="", help="Handoff note")
     persona_hand.add_argument("--workspace", default="", help="Data workspace id")
 
+    # 3d2. Import agent assets from other CLIs
+    import_p = sub.add_parser("import", help="Import ~/.claude, ~/.codex, ~/.cursor rules/skills/mcp into a workspace")
+    import_p.add_argument("--from", dest="source", choices=["all", "claude", "codex", "cursor"], default="all")
+    import_p.add_argument("--workspace", default="", help="Data workspace id")
+    import_p.add_argument("--apply", action="store_true", help="Write the import (default: preview only)")
+
     # 3e. Workspaces
     ws_p = sub.add_parser("workspace", help="Create or list workspaces")
     ws_sub = ws_p.add_subparsers(dest="ws_cmd")
@@ -279,6 +285,7 @@ KNOWN_SUBCOMMANDS = {
     "evidence",
     "persona",
     "workspace",
+    "import",
     "-h",
     "--help",
 }
@@ -402,6 +409,15 @@ def main(argv: list[str] | None = None) -> int:
             suffix = f" — {role}" if role else ""
             print(f"{rid}{suffix}")
         return 0
+
+    elif args.command == "import":
+        from .importer import run as import_run
+
+        return import_run(
+            source=getattr(args, "source", "all") or "all",
+            workspace=getattr(args, "workspace", "") or "",
+            apply=bool(getattr(args, "apply", False)),
+        )
 
     elif args.command == "workspace":
         from agents_workspace import Host
