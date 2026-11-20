@@ -221,7 +221,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               <option value="json">.json</option>
             </select>
           )}
-          {(providers.length > 0 || modelRecent.length > 0) && onPick && (
+          {onPick && (
             <PickControl
               providers={providers}
               pick={pick ?? { provider: "", model: "" }}
