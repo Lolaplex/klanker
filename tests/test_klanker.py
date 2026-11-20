@@ -45,6 +45,36 @@ class TestKlanker(unittest.TestCase):
         self.assertIsNone(args.command)
         self.assertEqual(direct_prompt, "")
 
+    def test_serve_no_auth_flag_and_token_autogen(self):
+        import os
+        from unittest.mock import patch
+
+        from klanker.__main__ import _maybe_generate_web_token, parse_cli_args
+
+        args, _ = parse_cli_args(["serve", "--no-auth"])
+        self.assertTrue(args.no_auth)
+        args, _ = parse_cli_args(["serve"])
+        self.assertFalse(args.no_auth)
+
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")}
+        with patch.dict(os.environ, env, clear=True):
+            url = _maybe_generate_web_token(False)
+            self.assertTrue(url.startswith("http://127.0.0.1:8787/?token="))
+            self.assertTrue(os.environ["RELAY_WEB_TOKEN"])
+            # second call: token already set, nothing new
+            self.assertEqual(_maybe_generate_web_token(False), "")
+            # explicit token respected
+            os.environ["RELAY_WEB_TOKEN"] = "mine"
+            self.assertEqual(_maybe_generate_web_token(False), "")
+            # opt-out
+            del os.environ["RELAY_WEB_TOKEN"]
+            self.assertEqual(_maybe_generate_web_token(True), "")
+            self.assertNotIn("RELAY_WEB_TOKEN", os.environ)
+            os.environ["RELAY_NO_AUTH"] = "1"
+            self.assertEqual(_maybe_generate_web_token(False), "")
+            self.assertNotIn("RELAY_WEB_TOKEN", os.environ)
+
     def test_send_verb_quotes_text(self):
         from klanker.remind import build_send_verb
 

@@ -18,7 +18,8 @@ klanker chat "…"                    # one harness turn
 klanker chat "…" --workdir PATH     # one turn with cwd = PATH
 klanker chat "…" --workspace ID     # one turn inside data workspace ID
 klanker --workspace ID              # REPL inside data workspace ID
-klanker serve                       # HTTP + Telegram gateway
+klanker serve                       # HTTP + Telegram gateway (auto-mints RELAY_WEB_TOKEN, prints ?token= URL once)
+klanker serve --no-auth             # only way to run the web surface unprotected (or RELAY_NO_AUTH=1)
 klanker cron                        # scheduled care flows
 ```
 

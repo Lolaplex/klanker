@@ -26,6 +26,25 @@ def note_custom_loop_cmd() -> None:
     )
 
 
+def _maybe_generate_web_token(no_auth: bool) -> str:
+    """Secure-by-default web token: generate + print once, else "".
+
+    An explicit ``RELAY_WEB_TOKEN`` always wins. ``--no-auth`` or
+    ``RELAY_NO_AUTH=1`` is the only way to serve unprotected.
+    """
+    no_auth = no_auth or os.environ.get("RELAY_NO_AUTH", "").strip().lower() in (
+        "1", "true", "yes")
+    if os.environ.get("RELAY_WEB_TOKEN") or no_auth:
+        return ""
+    import secrets
+
+    token = secrets.token_urlsafe(24)
+    os.environ["RELAY_WEB_TOKEN"] = token
+    host = os.environ.get("RELAY_HOST", "127.0.0.1")
+    port = os.environ.get("RELAY_PORT", "8787")
+    return f"http://{host}:{port}/?token={token}"
+
+
 def apply_workdir(raw: str | None) -> int | None:
     """Point this process and its spawned turns at a working directory.
 
@@ -151,6 +170,11 @@ def build_parser() -> argparse.ArgumentParser:
     # 3. Serve gateway
     serve_p = sub.add_parser("serve", help="Start I/O Gateway (HTTP /v1/turn & Telegram)")
     serve_p.add_argument("--no-telegram", action="store_true", help="Disable Telegram polling")
+    serve_p.add_argument(
+        "--no-auth",
+        action="store_true",
+        help="Run the web surface without a token (explicit opt-out; RELAY_NO_AUTH=1 works too)",
+    )
 
     # 3b. Interactive agent shell (client of a running relay)
     shell_p = sub.add_parser("shell", help="Interactive shell — builtins, exec, agent tier via relay")
@@ -529,6 +553,14 @@ def main(argv: list[str] | None = None) -> int:
 
         if not _mgmt.install():
             log.warning("management routes unavailable: agents-relay not importable")
+
+        # Secure by default: no explicit token means an ephemeral one per serve,
+        # printed once Jupyter-style. --no-auth / RELAY_NO_AUTH=1 opts out.
+        url = _maybe_generate_web_token(getattr(args, "no_auth", False))
+        if url:
+            print(f"klanker serve -> {url}", flush=True)
+        elif not os.environ.get("RELAY_WEB_TOKEN"):
+            print("klanker serve: warning — web auth disabled (--no-auth)", flush=True)
 
         from agents_relay.__main__ import main as relay_main
         sub_argv = ["serve"]
