@@ -3,15 +3,21 @@ import type { Components, Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { safeUrl, visibleImageSrc } from "./chatUi.ts";
 
+let cachedOptions: Pick<Options, "remarkPlugins" | "urlTransform"> | null = null;
+
 export function assistantMarkdownOptions(): Pick<Options, "remarkPlugins" | "urlTransform"> {
-  return {
+  // One allocation per app, not per render: the objects are static.
+  cachedOptions ??= {
     remarkPlugins: [remarkGfm],
     urlTransform: (url) => safeUrl(url),
   };
+  return cachedOptions;
 }
 
+let cachedComponents: Components | null = null;
+
 export function assistantMarkdownComponents(): Components {
-  return {
+  cachedComponents ??= {
     a(props) {
       const url = safeUrl(typeof props.href === "string" ? props.href : "");
       if (!url) return React.createElement("span", null, props.children);
@@ -32,4 +38,5 @@ export function assistantMarkdownComponents(): Components {
       });
     },
   };
+  return cachedComponents;
 }

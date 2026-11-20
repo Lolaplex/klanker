@@ -361,7 +361,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   );
 };
 
-function MessageBubble({
+const MessageBubble = React.memo(function MessageBubble({
   message,
   name,
   thinking,
@@ -434,7 +434,7 @@ function MessageBubble({
       </div>
     </div>
   );
-}
+});
 
 function useCoarsePointer(): boolean {
   const [coarse, setCoarse] = useState(() =>

@@ -17,6 +17,7 @@ import { api, caps, localInstance, rememberSecret, secretAccount } from "./servi
 import { dialogs } from "./services/dialogs";
 import { DialogHost } from "./components/DialogHost";
 import { focusWithoutScroll } from "./chatUi";
+import { createDeltaQueue, diffChatBuckets } from "./chatPersist";
 import type { PersonaRow, SessionRow } from "./components/KlankerList";
 import {
   choiceOf,
@@ -436,6 +437,11 @@ export function App() {
   const modelsFetched = useRef(false);
   const saveGen = useRef(0);
   const pollSeq = useRef(0);
+  // Buffered SSE deltas: one setChats per frame instead of one per token.
+  const deltaFlush = useRef<() => void>(() => undefined);
+  // Last persisted bucket snapshot — dirty-scoped localStorage writes only.
+  const savedBuckets = useRef<Record<string, ChatBucket>>({});
+  const persistTimer = useRef(0);
   // Restored messages per session + in-flight title fetches (no refetch spam).
   const evCache = useRef(new Map<string, ChatMessage[]>());
   const titleFetches = useRef(new Set<string>());
@@ -455,6 +461,7 @@ export function App() {
   );
 
   const selectInstance = useCallback((inst: KlankerInstance | null) => {
+    deltaFlush.current();
     activeIdRef.current = inst?.id ?? null;
     api.saveActiveId(inst?.id ?? null);
     setActiveInstance(inst);
@@ -483,6 +490,7 @@ export function App() {
 
   const selectChat = (ws: string, persona: string, chatId: string) => {
     if (!activeInstance) return;
+    deltaFlush.current();
     const key = `${activeInstance.id} ${ws} ${persona}`;
     setSelWs(ws);
     setSelPersona(persona);
@@ -528,6 +536,7 @@ export function App() {
 
   const newChat = (ws: string, persona: string) => {
     if (!activeInstance) return;
+    deltaFlush.current();
     const key = `${activeInstance.id} ${ws} ${persona}`;
     setSelWs(ws);
     setSelPersona(persona);
@@ -617,10 +626,45 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist chats per instance (localStorage)
+  // Persist chats per instance (localStorage). Serializing every bucket on
+  // every token froze iOS mid-stream, so writes are dirty-scoped (identity
+  // diff against the last snapshot) and debounced; synchronous flushes happen
+  // on turn completion, pagehide, and a hidden visibilitychange.
+  const flushPersist = useCallback(() => {
+    window.clearTimeout(persistTimer.current);
+    persistTimer.current = 0;
+    const next = chatsRef.current;
+    const { write, remove } = diffChatBuckets(savedBuckets.current, next);
+    for (const key of write) saveBucket(key, next[key]);
+    for (const key of remove) {
+      try {
+        localStorage.removeItem(chatsKey(key));
+      } catch {}
+    }
+    savedBuckets.current = next;
+  }, []);
+
   useEffect(() => {
-    for (const [id, bucket] of Object.entries(chats)) saveBucket(id, bucket);
-  }, [chats]);
+    if (chats === savedBuckets.current) return;
+    if (!persistTimer.current) {
+      persistTimer.current = window.setTimeout(flushPersist, 800);
+    }
+  }, [chats, flushPersist]);
+
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flushPersist();
+    };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flushPersist);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", flushPersist);
+      window.clearTimeout(persistTimer.current);
+      persistTimer.current = 0;
+      flushPersist();
+    };
+  }, [flushPersist]);
 
   // Persist session titles (sidebar name cache across reloads)
   useEffect(() => {
@@ -1123,6 +1167,19 @@ export function App() {
 
     setStreamStatus(null);
 
+    // SSE deltas land per token; merge them into one setChats per frame.
+    const deltas = createDeltaQueue((text) => {
+      setChats((prev) =>
+        mapChat(prev, selKey, chatId, (item) => ({
+          ...item,
+          messages: item.messages.map((m) =>
+            m.id === assistantId ? { ...m, content: m.content + text } : m
+          ),
+        }))
+      );
+    });
+    deltaFlush.current = () => deltas.flush();
+
     try {
       const choice = choiceOf(inst);
       // Provider = raw host manifest name; ""/"inherit" = host default (env).
@@ -1158,18 +1215,14 @@ export function App() {
         if (next.done) break;
         const ev = next.value;
         if (ev.type === "delta" && ev.text) {
-          const piece = ev.text;
-          setChats((prev) =>
-            mapChat(prev, selKey, chatId, (item) => ({
-              ...item,
-              messages: item.messages.map((m) => (m.id === assistantId ? { ...m, content: m.content + piece } : m)),
-            }))
-          );
+          deltas.push(ev.text);
         } else if (ev.type === "status" && ev.text) {
           setStreamStatus(ev.text);
         } else if (ev.type === "error") {
+          deltas.flush();
           throw new Error(ev.text || "turn failed");
         } else if (ev.type === "trailer") {
+          deltas.flush();
           sawTrailer = true;
           setChats((prev) =>
             mapChat(prev, selKey, chatId, (item) => ({
@@ -1185,6 +1238,7 @@ export function App() {
           }
         }
       }
+      deltas.flush();
       setChats((prev) =>
         mapChat(prev, selKey, chatId, (item) => ({
           ...item,
@@ -1194,6 +1248,7 @@ export function App() {
         }))
       );
     } catch (e: unknown) {
+      deltas.flush();
       const message = e instanceof Error ? e.message : String(e);
       setChats((prev) =>
         mapChat(prev, selKey, chatId, (item) => ({
@@ -1204,6 +1259,8 @@ export function App() {
         }))
       );
     } finally {
+      deltaFlush.current = () => undefined;
+      flushPersist();
       if (turnBusyRef.current?.instanceId === id && turnBusyRef.current.chatId === chatId) {
         turnBusyRef.current = null;
       }

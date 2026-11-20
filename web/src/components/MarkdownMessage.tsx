@@ -1,5 +1,6 @@
 import React from "react";
 import Markdown from "react-markdown";
+import type { Options } from "react-markdown";
 import { assistantMarkdownComponents, assistantMarkdownOptions } from "../assistantMarkdown";
 import { codeFenceText } from "../chatUi";
 import { CopyButton } from "./CopyButton";
@@ -42,19 +43,21 @@ function CodeFence({ children }: { children?: React.ReactNode }) {
   );
 }
 
-export function MarkdownMessage({ text }: { text: string }) {
+// Static Markdown config hoisted to module scope: identical for every bubble,
+// so per-chunk renders no longer rebuild plugins/closures.
+const MD_PROPS: Options = {
+  ...assistantMarkdownOptions(),
+  components: {
+    ...assistantMarkdownComponents(),
+    pre: CodeFence,
+  },
+};
+
+export const MarkdownMessage = React.memo(function MarkdownMessage({ text }: { text: string }) {
   return (
     <div className="klanker-md select-text min-w-0 break-words">
       {/* Raw HTML is escaped by react-markdown. Do not add rehype-raw. */}
-      <Markdown
-        {...assistantMarkdownOptions()}
-        components={{
-          ...assistantMarkdownComponents(),
-          pre: CodeFence,
-        }}
-      >
-        {text}
-      </Markdown>
+      <Markdown {...MD_PROPS}>{text}</Markdown>
     </div>
   );
-}
+});
