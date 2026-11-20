@@ -262,7 +262,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
+    cron_p.add_argument("op", nargs="?", default="", help="'add' synthesises a new flow manifest")
     cron_p.add_argument("--flow", type=str, default="", help="Run specific flow name")
+    cron_p.add_argument("--name", default="", help="Flow name/slug")
+    cron_p.add_argument("--verb", default="", help="Direct command to execute (e.g. 'python -m agents_traces audit')")
+    cron_p.add_argument("--text", default="", help="Reminder text (turns into a runner.loop verb with --sched-user/--channel)")
+    cron_p.add_argument("--prompt", default="", help="Routine prompt (full LLM turn) instead of a fixed verb")
+    cron_p.add_argument("--channel", default="", help="Target channel for --text")
+    cron_p.add_argument("--sched-user", dest="sched_user", default="", help="Target user for --text/--prompt")
+    cron_p.add_argument("--at", default="", help="Due time ISO or relative (+10m)")
+    cron_p.add_argument("--cron", default="", help="5-part cron expression")
+    cron_p.add_argument("--natural", default="", help="Natural-language schedule ('every morning 8', 'weekdays 9', 'in 30 minutes')")
+    cron_p.add_argument("--cadence", default="", help="Cadence name (hourly, daily, …)")
+    cron_p.add_argument("--timezone", default="", dest="timezone_name")
+    cron_p.add_argument("--timeout", type=int, default=None, dest="timeout_sec")
+    cron_p.add_argument("--grace", type=int, default=None, dest="grace_min")
+    cron_p.add_argument("--session", default="", help="Routine session id")
+    cron_p.add_argument("--one-shot", action="store_true", help="Delete manifest after execution")
+    cron_p.add_argument("--apply", action="store_true", help="Register the manifest live (default: dry-run validation only)")
 
     # 5. LLM routines (scheduled turns)
     routine_p = sub.add_parser("routine", help="Manage LLM routines (scheduled full turns)")
@@ -655,6 +672,13 @@ def main(argv: list[str] | None = None) -> int:
         if not nucleus.caps.has_harness:
             print("Error: agents-harness is not installed. Install via pip install agents-harness", file=sys.stderr)
             return 1
+        if getattr(args, "op", "") == "add":
+            from . import flows
+
+            return flows.dispatch(args)
+        if args.op:
+            print(f"Error: unknown cron op: {args.op}", file=sys.stderr)
+            return 2
         from runner.executor import main as executor_main
         if args.flow:
             return executor_main(["--run", args.flow])
