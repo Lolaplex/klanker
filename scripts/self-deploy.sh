@@ -15,6 +15,8 @@
 #   KLANKER_IMAGE    image name without registry (default klanker)
 #   KLANKER_TAGS     space-separated tags (default "latest")
 #   KLANKER_REGISTRY push target reachable from the NAS (default 127.0.0.1:9500)
+#   KLANKER_DOCKERFILE Dockerfile path relative to $SRC (default Dockerfile;
+#                      e.g. Dockerfile.nas for a deployment-specific overlay)
 #   GITHUB_TOKEN     needed while any suite repo is private (build arg only)
 set -eu
 
@@ -23,6 +25,7 @@ REF="${KLANKER_REF:-dev}"
 IMAGE="${KLANKER_IMAGE:-klanker}"
 TAGS="${KLANKER_TAGS:-latest}"
 REGISTRY="${KLANKER_REGISTRY:-127.0.0.1:9500}"
+DOCKERFILE="${KLANKER_DOCKERFILE:-Dockerfile}"
 LOCAL="${IMAGE}:selfbuild"
 
 echo "self-deploy: fetching $REF in $SRC"
@@ -41,9 +44,9 @@ else
     echo "self-deploy: GITHUB_TOKEN unset — build fails if any suite repo is private" >&2
 fi
 
-echo "self-deploy: building $LOCAL (ref=$REF)"
+echo "self-deploy: building $LOCAL (ref=$REF, dockerfile=$DOCKERFILE)"
 # shellcheck disable=SC2086
-docker build $BUILD_ARGS -t "$LOCAL" "$SRC"
+docker build $BUILD_ARGS -f "$SRC/$DOCKERFILE" -t "$LOCAL" "$SRC"
 
 for tag in $TAGS; do
     target="$REGISTRY/$IMAGE:$tag"

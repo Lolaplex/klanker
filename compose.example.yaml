@@ -37,8 +37,6 @@ services:
       # the recreate. Needs the docker API (proxy BUILD=1, or raw socket)
       # plus a git checkout of this repo mounted at /src.
       # - DOCKER_HOST=tcp://docker-socket:2375
-      # - AGENTS_ACP_CMD=devin acp            # klanker drives devin via ACP
-      # - AGENTS_ACP_API_KEY=<devin api key>  # devin acp ignores local creds
       # - GITHUB_TOKEN=<pat>                # self-deploy build arg
     volumes:
       - <host-data-dir>:/data

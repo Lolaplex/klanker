@@ -18,16 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-cer
     && apt-get install -y --no-install-recommends docker-ce-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# devin-cli (ACP agent klanker can drive via agents-relay acp-run).
-# The installer writes $HOME/.local/{bin,share}/devin — HOME is pointed at a
-# shared dir so the klanker user (not root) can execute it; /usr/local/bin
-# symlink keeps it on PATH. ACP auth is runtime env (AGENTS_ACP_API_KEY),
-# never baked into the image.
-RUN export HOME=/opt/devin-home \
-    && mkdir -p "$HOME" && chmod 755 "$HOME" \
-    && curl -fsSL https://cli.devin.ai/install.sh | bash \
-    && ln -sf /opt/devin-home/.local/bin/devin /usr/local/bin/devin
-
 WORKDIR /app
 
 ARG GITHUB_TOKEN

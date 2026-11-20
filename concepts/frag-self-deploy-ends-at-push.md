@@ -22,10 +22,13 @@ klanker can change what it runs, but cannot control *when* the old self
 stops running.
 
 Concretely: `entrypoint.sh` already self-wires the docker-socket gid at
-boot (no `group_add` needed). devin-cli is installed into `/opt/devin-home`
-at image build; ACP auth is runtime env (`AGENTS_ACP_API_KEY`), never a
-layer. The registry stays localhost-bound — remote pushes keep the
-docker-save/scp flow, so no TLS termination is needed on `sigmanas.local`.
+boot (no `group_add` needed). The public image stays generic — a
+deployment's extras (devin-cli on sigmanas, ACP env) live in an overlay
+`Dockerfile.nas` + the host's `compose.yml`, both outside the repo;
+`KLANKER_DOCKERFILE` names the Dockerfile self-deploy builds. ACP auth is
+runtime env (`AGENTS_ACP_API_KEY`), never a layer. The registry stays
+localhost-bound — remote pushes keep the docker-save/scp flow, so no TLS
+termination is needed on `sigmanas.local`.
 
 Open: whether self-deploy should be a harness schedule (`klanker cron`)
 or an on-demand agent verb — currently on-demand (`scripts/self-deploy.sh`).
