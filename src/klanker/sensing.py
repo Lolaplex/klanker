@@ -13,7 +13,7 @@ from pathlib import Path
 from agents_workspace import Host, Workspace
 
 
-COMMON_RUNTIMES = ["git", "docker", "curl", "node", "npm", "uv", "sqlite3"]
+COMMON_RUNTIMES = ["git", "gh", "docker", "curl", "node", "npm", "uv", "sqlite3"]
 SUITE_MODULES = {
     "harness": "runner.loop",
     "relay": "agents_relay",
@@ -42,6 +42,10 @@ class HostCapabilities:
     @property
     def has_git(self) -> bool:
         return self.runtimes.get("git", False)
+
+    @property
+    def has_gh(self) -> bool:
+        return self.runtimes.get("gh", False)
 
     @property
     def has_docker(self) -> bool:

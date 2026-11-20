@@ -46,6 +46,23 @@ class DoctorCheckTests(unittest.TestCase):
         tok = next(c for c in report.checks if c.name == "tokens")
         self.assertEqual(tok.status, "warn")
 
+    def test_github_capability(self):
+        caps = _caps(runtimes={"git": True, "gh": True})
+        gh = next(c for c in collect_checks(caps=caps, env={"GH_TOKEN": "t"}).checks if c.name == "github")
+        self.assertEqual(gh.status, "pass")
+        self.assertNotIn("t", gh.detail + gh.hint)
+        gh = next(c for c in collect_checks(caps=caps, env={}).checks if c.name == "github")
+        self.assertEqual(gh.status, "warn")
+        self.assertIn("GH_TOKEN", gh.hint)
+        gh = next(c for c in collect_checks(caps=_caps(runtimes={"gh": False}), env={"GH_TOKEN": "t"}).checks if c.name == "github")
+        self.assertEqual(gh.status, "warn")
+        self.assertIn("gh", gh.hint)
+
+    def test_gh_runtime_probed(self):
+        from klanker.sensing import COMMON_RUNTIMES
+
+        self.assertIn("gh", COMMON_RUNTIMES)
+
     def test_broken_mcp_json_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             bad = Path(tmp) / "mcp.json"

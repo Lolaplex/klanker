@@ -137,6 +137,18 @@ def _check_provider_keys(env: Mapping[str, str]) -> Check:
     return Check("tokens", "warn", "no provider API key in env", f"set one of {', '.join(PROVIDER_KEYS)}")
 
 
+def _check_github(caps: HostCapabilities, env: Mapping[str, str]) -> Check:
+    """GH capability: `gh` CLI plus a token the turn env passes through."""
+    token = env.get("GH_TOKEN", "").strip() or env.get("GITHUB_TOKEN", "").strip()
+    if caps.has_gh and token:
+        return Check("github", "pass", "gh CLI + GH_TOKEN/GITHUB_TOKEN in env")
+    if caps.has_gh:
+        return Check("github", "warn", "gh CLI present, no GH_TOKEN/GITHUB_TOKEN", "set GH_TOKEN for PR/CI work")
+    if token:
+        return Check("github", "warn", "token set but no gh CLI", "install gh (https://cli.github.com)")
+    return Check("github", "warn", "no gh CLI, no GH_TOKEN/GITHUB_TOKEN", "install gh + set GH_TOKEN for PR/CI work")
+
+
 def _check_agent_keys() -> Check:
     try:
         from agents_workspace import Host
@@ -182,6 +194,7 @@ def collect_checks(caps: HostCapabilities | None = None, env: Mapping[str, str] 
     report.checks.append(_check_workspace())
     report.checks.extend(_check_mcp())
     report.checks.append(_check_provider_keys(env))
+    report.checks.append(_check_github(caps, env))
     report.checks.append(_check_agent_keys())
     report.checks.append(_check_disk())
     report.checks.append(_check_relay_secret(env))

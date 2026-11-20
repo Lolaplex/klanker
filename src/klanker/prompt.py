@@ -22,7 +22,8 @@ def coding_block(workspace: Path) -> list[str]:
         f"   - Repo: `{workspace.as_posix()}`. Read `AGENTS.md` in the repo root before you change anything.",
         "   - Change an existing file with `mcp.terminal.edit` (exact `old` to `new`). Create a new file with `mcp.terminal.write`. Do not use `mcp.terminal.run` for a file edit.",
         "   - Flow: read the file (`mcp.terminal.read`), edit it, then run the project's tests through `mcp.terminal.run`.",
-        "   - Never `git push`. Leave commits and remotes to the user.",
+        "   - GitHub PR path (only when the task asks for a PR): branch off `dev` -> commit -> push the feature branch -> `gh pr create --base dev` -> report the PR URL -> `gh pr checks` for CI -> squash-merge only after explicit user approval. `GH_TOKEN`/`GITHUB_TOKEN` pass through env — never write tokens into workspace or repo files.",
+        "   - NEVER push to `main` and never open a PR against `main`. Without an explicit PR request, leave commits, pushes and remotes to the user.",
     ]
 
 

@@ -36,7 +36,24 @@ def test_git_workspace_adds_coding_block(tmp_path, monkeypatch):
     assert "Coding workspace" in text
     assert repo.as_posix() in text
     assert "AGENTS.md" in text
-    assert "git push" in text
+    assert "NEVER push to `main`" in text
+    assert "gh pr create --base dev" in text
+    assert "GH_TOKEN" in text
+
+
+def test_turn_env_passes_gh_token(tmp_path, monkeypatch):
+    """GH_TOKEN/GITHUB_TOKEN reach turn children via env, never ws files."""
+    from agents_workspace import Workspace
+
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    monkeypatch.setenv("GH_TOKEN", "secret-tok")
+    ws = Workspace.from_env()
+    env = ws.env()
+    assert env["GH_TOKEN"] == "secret-tok"
+    # the token value is not written anywhere under the workspace dir
+    for p in ws.dir.rglob("*"):
+        if p.is_file() and p.stat().st_size < 1_000_000:
+            assert "secret-tok" not in p.read_bytes().decode("utf-8", "replace")
 
 
 def test_non_git_workspace_has_no_coding_block(tmp_path, monkeypatch):
