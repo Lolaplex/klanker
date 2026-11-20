@@ -69,6 +69,7 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
             ":modules :providers :tools  (harness)",
             ":usage :insights [days]  (traces; /usage /insights)",
             ":plan [goal]  plan-mode toggle or one-shot plan (/plan)",
+            ":persona [id]  show or switch persona (saved per channel)",
             ":turn <msg> | bare text → agent (needs gateway)",
         ]
         return rows
@@ -126,4 +127,23 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
         if state.plan_mode:
             return agent_turn(state, payload)
         return agent_turn(state, PLAN_INSTRUCTION + payload)
+    if intent == "persona":
+        if gw is None:
+            return ["no gateway session"]
+        if not payload:
+            rows = [f"persona={gw.persona or '(default)'}"]
+            try:
+                from agents_relay.workspaces import list_personas
+                from agents_workspace import Workspace
+
+                for row in list_personas(Workspace.from_env()):
+                    rid = row.get("id", "?")
+                    role = row.get("role") or ""
+                    rows.append(f"  {rid}{f' — {role}' if role else ''}")
+            except Exception:
+                pass
+            return rows
+        gw.persona = payload
+        gw._save_prefs()
+        return [f"persona={gw.persona} (channel default saved)"]
     return []

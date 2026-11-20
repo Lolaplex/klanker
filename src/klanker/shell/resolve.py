@@ -121,6 +121,8 @@ def _resolve_meta(text: str) -> ResolveResult:
         return ResolveResult(route="builtin", intent="insights", payload=text.split(" ", 1)[1].strip() if " " in text else "")
     if text == ":plan" or text.startswith(":plan "):
         return ResolveResult(route="builtin", intent="plan", payload=text.split(" ", 1)[1].strip() if " " in text else "")
+    if text == ":persona" or text.startswith(":persona "):
+        return ResolveResult(route="builtin", intent="persona", payload=text.split(" ", 1)[1].strip() if " " in text else "")
     if text.startswith(":turn "):
         return ResolveResult(route="agent", payload=text.split(" ", 1)[1].strip())
     if text.startswith(":"):

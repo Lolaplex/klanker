@@ -149,5 +149,42 @@ class PlanModeTests(unittest.TestCase):
         self.assertIn("agent tier unavailable", lines[0])
 
 
+class PersonaSwitchTests(unittest.TestCase):
+    def test_slash_persona_resolves(self):
+        r = resolve_line("/persona scout", env=os.environ.copy())
+        self.assertEqual((r.route, r.intent, r.payload), ("builtin", "persona", "scout"))
+
+    def test_persona_switch_saves_prefs(self):
+        saved: list[bool] = []
+
+        class FakeGw:
+            session = ""
+            persona = "default"
+            channel = "repl"
+
+            def _save_prefs(self):
+                saved.append(True)
+
+        state = ShellState.from_os(gateway=FakeGw())
+        _, lines = process_line(state, ":persona scout")
+        self.assertEqual(state.gateway.persona, "scout")
+        self.assertTrue(saved)
+        self.assertIn("scout", lines[0])
+
+    def test_persona_show_current(self):
+        class FakeGw:
+            session = ""
+            persona = "builder"
+
+        state = ShellState.from_os(gateway=FakeGw())
+        _, lines = process_line(state, ":persona")
+        self.assertIn("builder", lines[0])
+
+    def test_persona_no_gateway(self):
+        state = ShellState.from_os()
+        _, lines = process_line(state, ":persona x")
+        self.assertIn("no gateway", lines[0])
+
+
 if __name__ == "__main__":
     unittest.main()
