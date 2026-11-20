@@ -922,12 +922,74 @@ export function App() {
       const active = !settled && Number.isFinite(lastTs) && Date.now() - lastTs < 120_000;
       remoteActiveRef.current = active;
       setRemoteActive(active);
+      maybeAttach();
       const restored = eventsToMessages(events);
       evCache.current.set(ck, restored);
       apply(restored);
     };
     const onVisible = () => {
       if (document.visibilityState === "visible") void run();
+    };
+    // klanker#92: while a foreign turn runs on this relay, attach its SSE fan-out
+    // and stream deltas into a transient bubble; the trailer drops it and the
+    // trace reconcile converges to server truth. A 404 (old relay, or the run
+    // belongs to another channel's turn store) just falls back to the poll.
+    let attachLive = false;
+    const remoteBubbleId = `remote_${chatId}`;
+    const dropRemoteBubble = () => {
+      setChats((prev) =>
+        mapChat(prev, key, chatId, (item) => ({
+          ...item,
+          messages: item.messages.filter((m) => m.id !== remoteBubbleId),
+        }))
+      );
+    };
+    const maybeAttach = () => {
+      if (!remoteActiveRef.current || attachLive) return;
+      attachLive = true;
+      let ended = false;
+      (async () => {
+        try {
+          for await (const ev of api.attachRun(inst, { workspace: ws, persona, session })) {
+            if (!remoteActiveRef.current) break;
+            if (ev.type === "delta" && ev.text) {
+              const text = ev.text;
+              setChats((prev) =>
+                mapChat(prev, key, chatId, (item) => {
+                  const idx = item.messages.findIndex((m) => m.id === remoteBubbleId);
+                  if (idx >= 0) {
+                    const ms = [...item.messages];
+                    ms[idx] = { ...ms[idx], content: ms[idx].content + text };
+                    return { ...item, messages: ms };
+                  }
+                  return {
+                    ...item,
+                    messages: [
+                      ...item.messages,
+                      {
+                        id: remoteBubbleId,
+                        role: "klanker",
+                        content: text,
+                        timestamp: new Date().toISOString(),
+                      },
+                    ],
+                  };
+                })
+              );
+            } else if (ev.type === "status" && ev.text) {
+              setStreamStatus(ev.text);
+            } else if (ev.type === "trailer" || ev.type === "error") {
+              ended = true;
+              break;
+            }
+          }
+        } catch {
+          // old relay without /v1/runs/stream, or run ended between poll + attach
+        }
+        dropRemoteBubble();
+        setStreamStatus(null);
+        if (ended || remoteActiveRef.current) void run();
+      })();
     };
     void run();
     document.addEventListener("visibilitychange", onVisible);

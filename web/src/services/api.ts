@@ -557,6 +557,45 @@ export const api = {
     await jsonReq(inst, "/v1/chat/stop", { run });
   },
 
+  /**
+   * GET /v1/runs/stream — attach to a running turn on this relay (klanker#92).
+   * Yields {"attach",run,meta} then buffered+live start/status/delta/trailer.
+   * 404 when no matching run is active.
+   */
+  async *attachRun(
+    inst: KlankerInstance,
+    q: { run?: string; session?: string; workspace?: string; persona?: string }
+  ): AsyncGenerator<{ type: string; text?: string; run?: string; session?: string; meta?: Record<string, string> }> {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(q)) if (v) qs.set(k, v);
+    const res = await authedFetch(inst, `${base(inst)}/v1/runs/stream?${qs}`, {
+      headers: { ...headers(inst), Accept: "text/event-stream" },
+    });
+    if (!res.ok || !res.body) {
+      const msg = await res.text().catch(() => "");
+      throw new Error(`${res.status}${msg ? `: ${msg.slice(0, 200)}` : ""}`);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i: number;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        for (const line of chunk.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          try {
+            yield JSON.parse(line.slice(5).trim());
+          } catch {}
+        }
+      }
+    }
+  },
+
   // --- approvals (agents-relay#12) -----------------------------------------
 
   async pendingApproval(inst: KlankerInstance): Promise<PendingApproval | null> {
