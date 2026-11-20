@@ -1556,6 +1556,9 @@ export function App() {
       {settingsOpen && (
         <SettingsPanel
           settings={settings}
+          instance={activeInstance}
+          workspace={selWs}
+          persona={selPersona}
           rankedIds={rankedIds}
           modelNote={modelNote}
           loadingModels={loadingModels}

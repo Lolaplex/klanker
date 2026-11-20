@@ -51,3 +51,46 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+// Web Push (VAPID). Payload contract with the relay: JSON
+// { title, body, tag?, url? } — url defaults to the app root so taps land on
+// the open chat list. A push with no showable content is dropped silently;
+// an empty notification is worse than none.
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    try {
+      data = { body: event.data.text() };
+    } catch {}
+  }
+  const title = data.title || "Klanker";
+  const body = typeof data.body === "string" ? data.body : "";
+  if (!body && !data.title) return;
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      tag: data.tag || "klanker",
+      icon: "/klanker.svg",
+      data: { url: typeof data.url === "string" ? data.url : "/" },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || "/";
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        const open = clients.find((c) => "focus" in c);
+        if (open) {
+          if (target !== "/" && "navigate" in open) void open.navigate(target);
+          return open.focus();
+        }
+        return self.clients.openWindow(target);
+      })
+  );
+});

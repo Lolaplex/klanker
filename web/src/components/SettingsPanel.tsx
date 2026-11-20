@@ -1,12 +1,16 @@
 import React, { useState } from "react";
 import { FolderOpen, X } from "lucide-react";
-import { DesktopSettings } from "../types/klanker";
+import { DesktopSettings, KlankerInstance } from "../types/klanker";
+import { pushSupported, subscribePush } from "../push";
 import { LM_URL, ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
 import { ModelControl } from "./ModelControl";
 import { SecretField } from "./SecretField";
 
 interface SettingsPanelProps {
   settings: DesktopSettings;
+  instance?: KlankerInstance | null;
+  workspace?: string;
+  persona?: string;
   rankedIds: string[];
   modelNote: string | null;
   loadingModels: boolean;
@@ -22,6 +26,9 @@ const choices: ProviderKind[] = ["echo", "lmstudio", "openrouter"];
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   settings,
+  instance,
+  workspace,
+  persona,
   rankedIds,
   modelNote,
   loadingModels,
@@ -31,7 +38,27 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 }) => {
   const [draft, setDraft] = useState<DesktopSettings>({ ...settings, openrouter_api_key: "" });
   const [keyDraft, setKeyDraft] = useState("");
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushNote, setPushNote] = useState<string | null>(null);
   const desktop = typeof window !== "undefined" && "__TAURI__" in window;
+
+  const enablePush = async () => {
+    if (!instance) return;
+    setPushBusy(true);
+    setPushNote(null);
+    try {
+      const r = await subscribePush(instance, workspace, persona);
+      setPushNote(
+        r.ok
+          ? "Push enabled — reminders and approvals reach this device while the app is closed."
+          : `Push off: ${r.reason}`
+      );
+    } catch (e) {
+      setPushNote(`Push failed: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   const pickWorkdir = async () => {
     const dir = await (window as unknown as { __TAURI__: { core: { invoke: (c: string, a?: Record<string, unknown>) => Promise<string | null> } } })
@@ -161,6 +188,21 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               onCommit={(id) => setDraft({ ...draft, model: id.trim() })}
               onToggleStar={star}
             />
+          )}
+
+          {instance && pushSupported() && (
+            <div>
+              <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Notifications</div>
+              <button
+                type="button"
+                disabled={pushBusy}
+                onClick={() => void enablePush()}
+                className="inline-flex min-h-9 items-center px-3 py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white disabled:opacity-50"
+              >
+                {pushBusy ? "enabling…" : "Enable push on this relay"}
+              </button>
+              {pushNote && <p className="text-[10px] text-[#525252] mt-1">{pushNote}</p>}
+            </div>
           )}
 
           <div className="flex items-center justify-end space-x-2">

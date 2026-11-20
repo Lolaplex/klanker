@@ -464,6 +464,26 @@ export const api = {
     }
   },
 
+  /** VAPID public key for web push; null when the relay predates push. */
+  async pushVapidKey(inst: KlankerInstance): Promise<string | null> {
+    try {
+      const r = await req<{ key?: string; publicKey?: string }>(inst, "/v1/push/vapid-key", {
+        headers: headers(inst),
+      });
+      return r.key || r.publicKey || null;
+    } catch {
+      return null;
+    }
+  },
+
+  /** Register a Web Push subscription for this ws/persona (relay#push). */
+  async pushSubscribe(
+    inst: KlankerInstance,
+    body: { workspace?: string; persona?: string; subscription: unknown }
+  ): Promise<void> {
+    await jsonReq(inst, "/v1/push/subscribe", body);
+  },
+
   /** Session record + trace events; null when unknown. */
   async sessionEvents(
     inst: KlankerInstance,

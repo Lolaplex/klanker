@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test src/chatUi.test.ts src/markdownSafety.test.ts src/chatPersist.test.ts src/chatExport.test.ts",
+    "test": "node --experimental-strip-types --test src/chatUi.test.ts src/markdownSafety.test.ts src/chatPersist.test.ts src/chatExport.test.ts src/push.test.ts",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
