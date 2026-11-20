@@ -32,12 +32,23 @@ services:
       # GitHub access for coding jobs/turns: fine-grained PAT, forwarded into
       # ws containers via env passthrough (never written to ws files).
       # - GH_TOKEN=<fine-grained-pat>
+      # Self-deploy (scripts/self-deploy.sh): klanker rebuilds its own
+      # image and pushes to the registry; the host pull-latest cron does
+      # the recreate. Needs the docker API (proxy BUILD=1, or raw socket)
+      # plus a git checkout of this repo mounted at /src.
+      # - DOCKER_HOST=tcp://docker-socket:2375
+      # - GITHUB_TOKEN=<pat>                # self-deploy build arg
     volumes:
       - <host-data-dir>:/data
+      # Self-deploy build context: a git checkout of this repo on the host.
+      # - <host-klanker-src>:/src
       # Workspace isolation=container: turns run inside a per-workspace
       # sibling container. Prefer the socket proxy (below) over mounting
-      # docker.sock directly — the raw socket equals host root.
+      # docker.sock directly — the raw socket equals host root. (The raw
+      # socket also works for self-deploy if you accept that.)
       # - docker-socket:/var/run/docker.sock
+      # Raw-socket alternative needs the daemon's group for the klanker user:
+      # group_add: ["<docker-sock gid>"]  # NAS: stat -c %g /var/run/docker.sock
     # environment for isolation:
     #   - AGENTS_WS_ISOLATION=container
     #   - DOCKER_HOST=tcp://docker-socket:2375   (when using the proxy)
@@ -61,6 +72,7 @@ services:
   #     - EXEC=1
   #     - IMAGES=1
   #     - POST=1
+  #     - BUILD=1            # self-deploy: docker build through the proxy
   #   volumes:
   #     - /var/run/docker.sock:/var/run/docker.sock:ro
 
