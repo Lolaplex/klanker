@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `web/src/App.tsx` split (1667 → ~830 LOC) along existing seams — zero behavior change: `chatBuckets.ts` (bucket types + localStorage helpers), `chatSync.ts` (event merge + reconcile), `hooks/useKeyboardViewport.ts` (iOS keyboard geometry), `components/AuthGate.tsx` (token gate), `hooks/useInstances.ts` (boot/auth + health poll), `hooks/usePersistChats.ts` (dirty-scoped persistence), `hooks/useSidebarTree.ts` (ws/persona/session tree), `hooks/useChatSync.ts` (reconcile + foreign-run SSE attach), `hooks/useApprovals.ts` (approval poll + decide).
+
 ### Added
 - `Dockerfile` `INSTALL_DEVIN` build arg: `=1` bakes `devin-cli` into the image (`/opt/devin-home`, symlinked to `PATH`) so `agents-relay acp-run` can spawn `devin acp` as the turn agent — the route for hosts that build a single Dockerfile (Coolify on the VPS; the NAS keeps its untracked overlay). Off by default; release images unchanged.
 - `klanker serve` secure-by-default web auth: when `RELAY_WEB_TOKEN` is unset an ephemeral token is generated per serve and printed once (`klanker serve -> http://host:port/?token=…`, Jupyter-style). `GET /?token=…` on the relay mints the HttpOnly cookie and redirects to `/`, so the pasted URL is the whole login flow. `--no-auth` (or `RELAY_NO_AUTH=1`) is the explicit opt-out.

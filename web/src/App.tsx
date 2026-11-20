@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole } from "./components/ChatConsole";
@@ -9,16 +9,13 @@ import { ManagePanel } from "./components/ManagePanel";
 import {
   DesktopSettings,
   KlankerInstance,
-  ProcessStatus,
   ChatMessage,
-  PendingApproval,
 } from "./types/klanker";
-import { api, caps, localInstance, notify, rememberSecret, secretAccount } from "./services/api";
+import { api, caps, notify } from "./services/api";
 import { dialogs } from "./services/dialogs";
 import { DialogHost } from "./components/DialogHost";
-import { focusWithoutScroll } from "./chatUi";
-import { createDeltaQueue, diffChatBuckets } from "./chatPersist";
-import type { PersonaRow, SessionRow } from "./components/KlankerList";
+import { createDeltaQueue } from "./chatPersist";
+import type { SessionRow } from "./components/KlankerList";
 import {
   choiceOf,
   DEFAULT_SETTINGS,
@@ -29,6 +26,25 @@ import {
   toggleFavorite,
   windowKind,
 } from "./openrouterModels";
+import {
+  ChatBucket,
+  TurnBusy,
+  EMPTY_BUCKET,
+  STANDALONE,
+  loadBucket,
+  mapChat,
+  mintSessionId,
+  normBucket,
+  selStoreKey,
+} from "./chatBuckets";
+import { reconcileChat } from "./chatSync";
+import { AuthGate } from "./components/AuthGate";
+import { useKeyboardViewport } from "./hooks/useKeyboardViewport";
+import { useInstances } from "./hooks/useInstances";
+import { usePersistChats } from "./hooks/usePersistChats";
+import { useSidebarTree } from "./hooks/useSidebarTree";
+import { useChatSync } from "./hooks/useChatSync";
+import { useApprovals } from "./hooks/useApprovals";
 
 function loadedSettings(loaded: DesktopSettings): DesktopSettings {
   return {
@@ -41,107 +57,8 @@ function loadedSettings(loaded: DesktopSettings): DesktopSettings {
   };
 }
 
-interface DeskChat {
-  id: string;
-  session: string;
-  messages: ChatMessage[];
-  /** Unsent "new chat": no session, no sidebar row, at most one per bucket. */
-  draft?: boolean;
-  /** Persisted composer text (survives chat switches and reloads). */
-  input?: string;
-}
-
-interface ChatBucket {
-  openId: string;
-  items: DeskChat[];
-}
-
-interface TurnBusy {
-  instanceId: string;
-  chatId: string;
-  run: string;
-}
-
-function mintSessionId(): string {
-  return `ses_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
-}
-
-function clipTitle(text: string): string {
-  const t = text.trim();
-  return t.length > 22 ? `${t.slice(0, 22)}…` : t;
-}
-
-const EMPTY_BUCKET: ChatBucket = { openId: "", items: [] };
-
-// Installed iOS PWA: the layout viewport stops 47px above the screen bottom
-// (see index.css). The idle shell then lives in document flow at 100vh.
-const STANDALONE =
-  typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches;
-
-/** Merge legacy/dup drafts into one, drop draft flags off real chats. */
-function normBucket(b: ChatBucket): ChatBucket {
-  const items: DeskChat[] = [];
-  let draft: DeskChat | null = null;
-  for (const i of b.items) {
-    if (!i.draft && i.session) {
-      items.push({ ...i, draft: false });
-      continue;
-    }
-    const d: DeskChat = { ...i, session: "", draft: true };
-    draft = draft === null ? d : { ...(draft as DeskChat), input: draft.input || d.input };
-  }
-  const all = draft ? [...items, draft] : items;
-  const openId = all.some((i) => i.id === b.openId) ? b.openId : (all[all.length - 1]?.id ?? "");
-  return { openId, items: all };
-}
-
-const chatsKey = (sel: string) => `klanker.chats.${sel}`;
-const selStoreKey = (instId: string) => `klanker.sel.${instId}`;
-const LS_TITLES = "klanker.titles";
-
-function loadBucket(sel: string): ChatBucket | null {
-  try {
-    const raw = localStorage.getItem(chatsKey(sel));
-    if (!raw) return null;
-    const b = JSON.parse(raw) as ChatBucket;
-    if (!Array.isArray(b?.items) || b.items.length === 0) return null;
-    return normBucket(b);
-  } catch {
-    return null;
-  }
-}
-
-function saveBucket(sel: string, bucket: ChatBucket): void {
-  try {
-    const items = bucket.items.slice(-30).map((i) => ({ ...i, messages: i.messages.slice(-300) }));
-    localStorage.setItem(chatsKey(sel), JSON.stringify({ ...bucket, items }));
-  } catch {}
-}
-
-function mapChat(
-  prev: Record<string, ChatBucket>,
-  instanceId: string,
-  chatId: string,
-  fn: (chat: DeskChat) => DeskChat
-): Record<string, ChatBucket> {
-  const bucket = prev[instanceId];
-  if (!bucket) return prev;
-  return {
-    ...prev,
-    [instanceId]: {
-      ...bucket,
-      items: bucket.items.map((item) => (item.id === chatId ? fn(item) : item)),
-    },
-  };
-}
-
 export function App() {
-  const [instances, setInstances] = useState<KlankerInstance[]>([]);
-  // The one relay this app spawned/attached — sidebar shows it as the single
-  // local instance; every other instance is a remote or a legacy local.
-  const [managedId, setManagedId] = useState<string | null>(null);
   const [activeInstance, setActiveInstance] = useState<KlankerInstance | null>(null);
-  const [herd, setHerd] = useState<Record<string, ProcessStatus>>({});
   const [chats, setChats] = useState<Record<string, ChatBucket>>({});
   const [turnBusy, setTurnBusy] = useState<TurnBusy | null>(null);
   const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set());
@@ -153,281 +70,16 @@ export function App() {
   const [rankedIds, setRankedIds] = useState<string[]>([]);
   const [modelNote, setModelNote] = useState<string | null>(null);
   const [loadingModels, setLoadingModels] = useState(false);
-  const [pending, setPending] = useState<PendingApproval | null>(null);
-  const [deciding, setDeciding] = useState(false);
-  const [decideError, setDecideError] = useState<string | null>(null);
-  const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
   const [selWs, setSelWs] = useState("");
   // Per-chat model override, keyed by "<inst> <ws> <persona>"; absent = instance default.
   const [chatModels, setChatModels] = useState<Record<string, string>>({});
   const [selPersona, setSelPersona] = useState("");
-  const [treePersonas, setTreePersonas] = useState<Record<string, PersonaRow[]>>({});
-  const [serverSessions, setServerSessions] = useState<Record<string, { id: string; goal?: string }[]>>({});
   const [wsNote, setWsNote] = useState<string | null>(null);
-  // Session titles keyed "inst ws persona session": prefetched eagerly, cached in localStorage.
-  const [sessionTitles, setSessionTitles] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(LS_TITLES) || "{}") as Record<string, string>;
-    } catch {
-      return {};
-    }
-  });
-  // Same-origin relay auth gate: "checking" until /v1/auth/status answers,
-  // "needed" shows the token prompt, "ok" runs the dashboard.
-  const [auth, setAuth] = useState<"checking" | "needed" | "ok">("checking");
-  const [loginToken, setLoginToken] = useState("");
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [loginBusy, setLoginBusy] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
-  const [remoteActive, setRemoteActive] = useState(false);
-  const remoteActiveRef = useRef(false);
-  const [kbBox, setKbBox] = useState<{ height: number; top: number } | null>(null);
-  const [idleH, setIdleH] = useState<number>(() =>
-    typeof window !== "undefined"
-      ? STANDALONE
-        ? window.screen.height || window.innerHeight
-        : window.innerHeight
-      : 844
-  );
 
-  useEffect(() => {
-    const vv = window.visualViewport;
-    if (!vv) return;
+  const { kbBox, idleH } = useKeyboardViewport();
 
-    const TEXT_INPUT_TYPES = new Set([
-      "text",
-      "search",
-      "email",
-      "url",
-      "tel",
-      "password",
-      "number",
-    ]);
-
-    const isTextEditable = (el: EventTarget | null): el is HTMLElement => {
-      if (!(el instanceof HTMLElement)) return false;
-      if (el instanceof HTMLTextAreaElement) return !el.readOnly && !el.disabled;
-      if (el instanceof HTMLInputElement) {
-        return TEXT_INPUT_TYPES.has(el.type) && !el.readOnly && !el.disabled;
-      }
-      return el.isContentEditable;
-    };
-
-    const editableFocused = () => isTextEditable(document.activeElement);
-
-    // Installed iOS PWAs lie about heights: window.innerHeight shrinks on the
-    // first keyboard open and never restores, and vv.height under-reports by
-    // the safe-area insets. Probe the real full height via a hidden 100vh el.
-    const probeFullHeight = () => {
-      const probe = document.createElement("div");
-      probe.style.cssText =
-        "position:fixed;top:0;left:0;height:100vh;visibility:hidden;pointer-events:none";
-      document.documentElement.appendChild(probe);
-      const h = probe.offsetHeight;
-      probe.remove();
-      return h || window.innerHeight;
-    };
-
-    let fullHeight = STANDALONE ? probeFullHeight() : window.innerHeight;
-    setIdleH(fullHeight);
-    let lastWidth = window.innerWidth;
-    let settle = 0;
-    let unlockTimer = 0;
-    let focusInAt = -10000;
-
-    const kbStoreKey = (baseH: number) =>
-      `klanker.kbh.${STANDALONE ? "pwa" : "web"}.${Math.round(baseH)}`;
-    const readLastKbH = (baseH: number) => {
-      try {
-        const raw = window.localStorage.getItem(kbStoreKey(baseH));
-        const n = raw ? Number(raw) : 0;
-        if (n >= 160 && n < baseH - 100) return n;
-      } catch {
-        /* private mode */
-      }
-      return Math.max(180, Math.round(baseH - (STANDALONE ? (baseH < 500 ? 200 : 376) : 290)));
-    };
-    const saveLastKbH = (baseH: number, h: number) => {
-      try {
-        window.localStorage.setItem(kbStoreKey(baseH), String(Math.round(h)));
-      } catch {
-        /* private mode */
-      }
-    };
-    let lastKbH = readLastKbH(fullHeight);
-
-    const setStandaloneLock = (lock: boolean) => {
-      if (!STANDALONE) return;
-      const root = document.documentElement;
-      if (lock) {
-        window.clearTimeout(unlockTimer);
-        if (root.dataset.kbLock !== "1") root.dataset.kbLock = "1";
-      } else if (root.dataset.kbLock) {
-        delete root.dataset.kbLock;
-      }
-    };
-
-    const clampScroll = () => {
-      if (window.scrollX !== 0 || window.scrollY !== 0) {
-        window.scrollTo(0, 0);
-      }
-    };
-
-    const sync = () => {
-      clampScroll();
-      if (vv.scale > 1.01) return;
-      // --vvh feeds modal/sheet max-height (dvh does not shrink for the iOS keyboard).
-      document.documentElement.style.setProperty("--vvh", `${vv.height}px`);
-      if (window.innerWidth !== lastWidth) {
-        lastWidth = window.innerWidth;
-        fullHeight = STANDALONE ? probeFullHeight() : window.innerHeight;
-        setIdleH(fullHeight);
-        lastKbH = readLastKbH(fullHeight);
-      }
-      const focused = editableFocused();
-      const covered = fullHeight - (vv.height + vv.offsetTop);
-      const vvShrunk = covered > 100 || vv.offsetTop > 100;
-      if (!STANDALONE && (!focused || !vvShrunk) && Math.abs(vv.height - window.innerHeight) < 20) {
-        fullHeight = window.innerHeight;
-        setIdleH(fullHeight);
-      }
-      if (focused && vvShrunk && vv.height >= 160) {
-        lastKbH = Math.round(vv.height);
-        saveLastKbH(fullHeight, lastKbH);
-      }
-      const touchLayout =
-        window.innerWidth < 768 || window.matchMedia("(pointer: coarse)").matches;
-      const openingWindow =
-        focused &&
-        touchLayout &&
-        performance.now() - focusInAt < 450;
-      const keyboardOpen = focused && (vvShrunk || openingWindow);
-      const targetH = vvShrunk ? Math.round(vv.height) : lastKbH;
-      const settledTop =
-        !STANDALONE &&
-        vv.offsetTop > 4 &&
-        performance.now() - focusInAt >= 360
-          ? Math.round(vv.offsetTop)
-          : 0;
-      if (focused || keyboardOpen) {
-        setStandaloneLock(true);
-      }
-      setKbBox((prev) => {
-        const next = keyboardOpen ? { height: targetH, top: settledTop } : null;
-        if (prev === next) return prev;
-        if (prev && next && prev.height === next.height && prev.top === next.top)
-          return prev;
-        return next;
-      });
-    };
-
-    let tap: { el: HTMLElement; id: number; x: number; y: number } | null = null;
-
-    const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) {
-        tap = null;
-        return;
-      }
-      const target = e.target;
-      if (isTextEditable(target) && document.activeElement !== target) {
-        const t = e.touches[0];
-        tap = { el: target, id: t.identifier, x: t.clientX, y: t.clientY };
-        if (STANDALONE) setStandaloneLock(true);
-      } else {
-        tap = null;
-      }
-    };
-
-    const onTouchCancel = () => {
-      tap = null;
-    };
-
-    // Intercept qualified first-taps on unfocused mobile inputs (react-aria /
-    // futo-notes / tweb pattern): prevent native touch-focus scroll & pan, then
-    // lift off-screen for focus({ preventScroll: true }) + double-rAF restore.
-    const onTouchEnd = (e: TouchEvent) => {
-      const cur = tap;
-      tap = null;
-      if (!cur || e.touches.length > 0 || !cur.el.isConnected) return;
-      if (document.activeElement === cur.el) return;
-      let match: Touch | null = null;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const t = e.changedTouches[i];
-        if (t.identifier === cur.id) {
-          match = t;
-          break;
-        }
-      }
-      if (!match) return;
-      if (Math.hypot(match.clientX - cur.x, match.clientY - cur.y) >= 12) {
-        if (STANDALONE && !editableFocused()) {
-          window.clearTimeout(unlockTimer);
-          unlockTimer = window.setTimeout(() => {
-            if (!editableFocused()) setStandaloneLock(false);
-          }, 120);
-        }
-        return;
-      }
-      e.preventDefault();
-      if (STANDALONE) setStandaloneLock(true);
-      focusWithoutScroll(cur.el);
-    };
-
-    const onFocusIn = (e: FocusEvent) => {
-      if (isTextEditable(e.target)) {
-        focusInAt = performance.now();
-        if (STANDALONE) setStandaloneLock(true);
-      }
-      sync();
-      window.clearTimeout(settle);
-      settle = window.setTimeout(sync, 460);
-    };
-
-    const onFocusOut = (e: FocusEvent) => {
-      if (isTextEditable(e.relatedTarget)) return;
-      // Trigger the CSS height transition back to idleH immediately at t=0ms
-      // so the shell glides down in lockstep with the iOS keyboard, then
-      // release kbLock once the slide finishes.
-      focusInAt = -10000;
-      sync();
-      window.clearTimeout(settle);
-      settle = window.setTimeout(sync, 460);
-      window.clearTimeout(unlockTimer);
-      unlockTimer = window.setTimeout(() => {
-        if (!editableFocused()) {
-          setStandaloneLock(false);
-          sync();
-        }
-      }, STANDALONE ? 340 : 460);
-    };
-
-    sync();
-    document.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
-    document.addEventListener("touchend", onTouchEnd, { capture: true, passive: false });
-    document.addEventListener("touchcancel", onTouchCancel, true);
-    document.addEventListener("focusin", onFocusIn, true);
-    document.addEventListener("focusout", onFocusOut, true);
-    vv.addEventListener("resize", sync);
-    vv.addEventListener("scroll", sync);
-    window.addEventListener("resize", sync);
-    window.addEventListener("scroll", clampScroll, { passive: true });
-    return () => {
-      window.clearTimeout(settle);
-      window.clearTimeout(unlockTimer);
-      document.removeEventListener("touchstart", onTouchStart, true);
-      document.removeEventListener("touchend", onTouchEnd, true);
-      document.removeEventListener("touchcancel", onTouchCancel, true);
-      document.removeEventListener("focusin", onFocusIn, true);
-      document.removeEventListener("focusout", onFocusOut, true);
-      vv.removeEventListener("resize", sync);
-      vv.removeEventListener("scroll", sync);
-      window.removeEventListener("resize", sync);
-      window.removeEventListener("scroll", clampScroll);
-    };
-  }, []);
-  const instancesRef = useRef(instances);
-  instancesRef.current = instances;
   const activeIdRef = useRef<string | null>(null);
   const chatsRef = useRef(chats);
   chatsRef.current = chats;
@@ -437,30 +89,12 @@ export function App() {
   const settingsWrite = useRef(Promise.resolve());
   const modelsFetched = useRef(false);
   const saveGen = useRef(0);
-  const pollSeq = useRef(0);
-  const lastNotifiedApprovalRef = useRef<string>("");
   // Buffered SSE deltas: one setChats per frame instead of one per token.
   const deltaFlush = useRef<() => void>(() => undefined);
-  // Last persisted bucket snapshot — dirty-scoped localStorage writes only.
-  const savedBuckets = useRef<Record<string, ChatBucket>>({});
-  const persistTimer = useRef(0);
   // Restored messages per session + in-flight title fetches (no refetch spam).
   const evCache = useRef(new Map<string, ChatMessage[]>());
-  const titleFetches = useRef(new Set<string>());
-  const herdKey = instances
-    .map((inst) => `${inst.id}|${inst.updated_at}|${inst.endpoint?.base_url ?? inst.base_url ?? ""}|${inst.secret ? 1 : 0}`)
-    .join("\n");
-  const status = activeInstance ? herd[activeInstance.id] ?? null : null;
+
   const selKey = activeInstance ? `${activeInstance.id} ${selWs} ${selPersona}` : "";
-  const bucket = selKey ? chats[selKey] : undefined;
-  const openChat = bucket?.items.find((item) => item.id === bucket.openId) ?? bucket?.items[0] ?? null;
-  const messages = openChat?.messages ?? [];
-  const isLoadingTurn = Boolean(
-    turnBusy && openChat && turnBusy.instanceId === activeInstance?.id && turnBusy.chatId === openChat.id
-  );
-  const sendHold = Boolean(
-    turnBusy && activeInstance && turnBusy.instanceId === activeInstance.id && turnBusy.chatId !== openChat?.id
-  );
 
   const selectInstance = useCallback((inst: KlankerInstance | null) => {
     deltaFlush.current();
@@ -468,8 +102,8 @@ export function App() {
     api.saveActiveId(inst?.id ?? null);
     setActiveInstance(inst);
     if (!inst) return;
-    setTreePersonas({});
-    setServerSessions({});
+    tree.setTreePersonas({});
+    tree.setServerSessions({});
     setUnread((prev) => {
       if (!prev.has(inst.id)) return prev;
       const next = new Set(prev);
@@ -488,7 +122,88 @@ export function App() {
     } catch {}
     setSelWs(savedWs);
     setSelPersona(savedPersona);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadSettings = useCallback(async () => {
+    const run = settingsWrite.current.then(async () => {
+      try {
+        const loaded = await api.loadSettings();
+        settingsRef.current = loadedSettings(loaded);
+        setSettings(settingsRef.current);
+      } catch (e) {
+        console.error("Failed to load settings", e);
+      }
+    });
+    settingsWrite.current = run.then(() => undefined, () => undefined);
+  }, []);
+
+  const inst = useInstances({
+    onSelectInstance: selectInstance,
+    loadSettings,
+    setWsNote,
+  });
+
+  const herdStatus = activeInstance ? inst.herd[activeInstance.id] ?? null : null;
+
+  const approvals = useApprovals({ activeInstance, status: herdStatus });
+
+  const tree = useSidebarTree({
+    activeInstance,
+    status: herdStatus,
+    chats,
+    setSelWs,
+    setWsNote,
+    evCache,
+    onResetApprovals: approvals.reset,
+  });
+
+  const { flushPersist } = usePersistChats({
+    chats,
+    chatsRef,
+    setChats,
+    sessionTitles: tree.sessionTitles,
+    activeInstance,
+    selWs,
+    selPersona,
+    selKey,
+  });
+
+  const bucket = selKey ? chats[selKey] : undefined;
+  const openChat = bucket?.items.find((item) => item.id === bucket.openId) ?? bucket?.items[0] ?? null;
+  const messages = openChat?.messages ?? [];
+  const isLoadingTurn = Boolean(
+    turnBusy && openChat && turnBusy.instanceId === activeInstance?.id && turnBusy.chatId === openChat.id
+  );
+  const sendHold = Boolean(
+    turnBusy && activeInstance && turnBusy.instanceId === activeInstance.id && turnBusy.chatId !== openChat?.id
+  );
+
+  const applyToChat = useCallback(
+    (key: string, chatId: string, fn: (messages: ChatMessage[]) => ChatMessage[]) => {
+      setChats((prev) =>
+        mapChat(prev, key, chatId, (item) => {
+          if (turnBusyRef.current?.chatId === chatId) return item;
+          const next = fn(item.messages);
+          return next === item.messages ? item : { ...item, messages: next };
+        })
+      );
+    },
+    []
+  );
+
+  const { remoteActive } = useChatSync({
+    activeInstance,
+    openChat,
+    selKey,
+    selWs,
+    selPersona,
+    setChats,
+    turnBusyRef,
+    evCache,
+    setSessionTitles: tree.setSessionTitles,
+    setStreamStatus,
+  });
 
   const selectChat = (ws: string, persona: string, chatId: string) => {
     if (!activeInstance) return;
@@ -511,12 +226,12 @@ export function App() {
   };
 
   const deleteChat = async (ws: string, persona: string, row: SessionRow) => {
-    const inst = activeInstance;
-    if (!inst) return;
+    const inst0 = activeInstance;
+    if (!inst0) return;
     if (!(await dialogs.confirm(`Delete chat "${row.label || row.session}"? This cannot be undone.`, { danger: true }))) return;
-    const key = `${inst.id} ${ws} ${persona}`;
+    const key = `${inst0.id} ${ws} ${persona}`;
     // Optimistic: drop the row from both stores before the server answers.
-    setServerSessions((prev) => ({
+    tree.setServerSessions((prev) => ({
       ...prev,
       [`${ws} ${persona}`]: (prev[`${ws} ${persona}`] || []).filter((s) => s.id !== row.session),
     }));
@@ -529,9 +244,9 @@ export function App() {
       return { ...prev, [key]: { openId, items } };
     });
     if (!row.pending) {
-      void api.deleteSession(inst, ws, persona, row.session).catch((e) => {
+      void api.deleteSession(inst0, ws, persona, row.session).catch((e) => {
         setWsNote(`delete: ${e instanceof Error ? e.message : e}`);
-        expandPersona(ws, persona);
+        tree.expandPersona(ws, persona);
       });
     }
   };
@@ -569,531 +284,14 @@ export function App() {
     return run;
   }, []);
 
-  // Boot: desktop spawns/attaches its local relay (token never asked); web
-  // does the same-origin auth check, then instances + settings.
-  useEffect(() => {
-    void (async () => {
-      if (caps.spawn) {
-        // Desktop: never gate the UI on the local serve. The dashboard
-        // renders immediately (registry/remotes still usable); the managed
-        // serve spawns in the background and the health poll picks it up.
-        setAuth("ok");
-        void (async () => {
-          try {
-            const boot = await api.desktopBootstrap();
-            boot.instance.secret = boot.secret;
-            rememberSecret(secretAccount(boot.instance), boot.secret);
-            setManagedId(boot.instance.id);
-          } catch (e) {
-            setWsNote(
-              `local relay unavailable: ${e instanceof Error ? e.message : String(e)}`
-            );
-          }
-        })();
-      } else {
-        try {
-          const st = await api.authStatus(localInstance());
-          if (st.enabled && !st.authenticated) {
-            setAuth("needed");
-            return;
-          }
-        } catch {
-          // Relay unreachable or older relay without /v1/auth/*: proceed anyway.
-        }
-        setAuth("ok");
-      }
-      try {
-        const list = await api.listKlankers();
-        setInstances(list);
-        const remembered = api.loadActiveId();
-        const initial =
-          list.find((i) => i.id === remembered) ??
-          list[0] ??
-          null;
-        if (initial) selectInstance(initial);
-      } catch (e) {
-        console.error("Failed to load instances:", e);
-      }
-      const run = settingsWrite.current.then(async () => {
-        try {
-          const loaded = await api.loadSettings();
-          settingsRef.current = loadedSettings(loaded);
-          setSettings(settingsRef.current);
-        } catch (e) {
-          console.error("Failed to load settings", e);
-        }
-      });
-      settingsWrite.current = run.then(() => undefined, () => undefined);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Persist chats per instance (localStorage). Serializing every bucket on
-  // every token froze iOS mid-stream, so writes are dirty-scoped (identity
-  // diff against the last snapshot) and debounced; synchronous flushes happen
-  // on turn completion, pagehide, and a hidden visibilitychange.
-  const flushPersist = useCallback(() => {
-    window.clearTimeout(persistTimer.current);
-    persistTimer.current = 0;
-    const next = chatsRef.current;
-    const { write, remove } = diffChatBuckets(savedBuckets.current, next);
-    for (const key of write) saveBucket(key, next[key]);
-    for (const key of remove) {
-      try {
-        localStorage.removeItem(chatsKey(key));
-      } catch {}
-    }
-    savedBuckets.current = next;
-  }, []);
-
-  useEffect(() => {
-    if (chats === savedBuckets.current) return;
-    if (!persistTimer.current) {
-      persistTimer.current = window.setTimeout(flushPersist, 800);
-    }
-  }, [chats, flushPersist]);
-
-  useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === "hidden") flushPersist();
-    };
-    document.addEventListener("visibilitychange", onHide);
-    window.addEventListener("pagehide", flushPersist);
-    return () => {
-      document.removeEventListener("visibilitychange", onHide);
-      window.removeEventListener("pagehide", flushPersist);
-      window.clearTimeout(persistTimer.current);
-      persistTimer.current = 0;
-      flushPersist();
-    };
-  }, [flushPersist]);
-
-  // Persist session titles (sidebar name cache across reloads)
-  useEffect(() => {
-    try {
-      localStorage.setItem(LS_TITLES, JSON.stringify(sessionTitles));
-    } catch {}
-  }, [sessionTitles]);
-
-  // Remember last ws/persona selection per instance
-  useEffect(() => {
-    if (!activeInstance || !selWs) return;
-    try {
-      localStorage.setItem(selStoreKey(activeInstance.id), JSON.stringify({ ws: selWs, persona: selPersona }));
-    } catch {}
-  }, [activeInstance?.id, selWs, selPersona]);
-
-  // Hydrate the active bucket from localStorage so the last open chat
-  // (and the open draft with its composer text) is restored on reload.
-  useEffect(() => {
-    if (!selKey) return;
-    setChats((prev) =>
-      prev[selKey] ? prev : { ...prev, [selKey]: normBucket(loadBucket(selKey) ?? EMPTY_BUCKET) }
-    );
-  }, [selKey]);
-
-  // Health poll every 8s
-  useEffect(() => {
-    let stop = false;
-    const tick = async () => {
-      for (const inst of instancesRef.current) {
-        const st = await api.getGatewayStatus(inst);
-        if (stop) return;
-        setHerd((prev) => ({ ...prev, [inst.id]: st }));
-      }
-    };
-    void tick();
-    const timer = window.setInterval(() => void tick(), 8_000);
-    return () => {
-      stop = true;
-      window.clearInterval(timer);
-    };
-  }, [herdKey]);
-
-  // Workspace list for the active instance
-  useEffect(() => {
-    setPending(null);
-    setDecideError(null);
-    setDeciding(false);
-    setWorkspaces([]);
-    setWsNote(null);
-    const inst = activeInstance;
-    if (!inst || status?.state !== "running") return;
-    let stop = false;
-    void (async () => {
-      try {
-        const rows = await api.listWorkspaces(inst);
-        if (stop) return;
-        setWorkspaces(rows);
-        setSelWs((cur) => cur || rows[0]?.id || "");
-        rows.forEach((w) => expandWs(w.id));
-      } catch (e) {
-        if (!stop) setWsNote(`workspaces: ${e instanceof Error ? e.message : e}`);
-      }
-    })();
-    return () => {
-      stop = true;
-    };
-  }, [activeInstance?.id, status?.state]);
-
-  // Tree lazy loaders
-  const expandWs = (ws: string) => {
-    const inst = activeInstance;
-    if (!inst || treePersonas[ws]) return;
-    void api
-      .listPersonas(inst, ws)
-      .then((rows) => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: rows })))
-      .catch(() => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: [] })));
-  };
-
-  const eventsToMessages = (events: any[]): ChatMessage[] =>
-    events
-      .filter((e) => e?.type === "message" && e?.metadata?.content)
-      .map((e) => ({
-        id: crypto.randomUUID(),
-        role: e.metadata.role === "user" ? "user" : "klanker",
-        content: String(e.metadata.content),
-        timestamp: e.ts || new Date().toISOString(),
-      }));
-
-  /**
-   * Merge server-restored messages over the local copy. localStorage is
-   * per-device: a dead stream (iOS suspends the SSE fetch) leaves stranded
-   * empty bubbles or "Error executing turn" text while the server completed
-   * the turn. Server messages win; local messages only survive when they are
-   * newer than the last server event (unsent/failed) or an error annotation
-   * the server genuinely never answered.
-   */
-  const mergeMessages = (local: ChatMessage[], server: ChatMessage[]): ChatMessage[] => {
-    if (!server.length) return local;
-    const lastTs = server[server.length - 1].timestamp;
-    const seen = new Set(server.map((m) => `${m.role}\n${m.content}`));
-    const lastUserTs = server.reduce((acc, m) => (m.role === "user" ? m.timestamp : acc), "");
-    const serverReplied = !lastUserTs || server.some((m) => m.role === "klanker" && m.timestamp >= lastUserTs);
-    const extra = local.filter((m) => {
-      if (!m.content) return false;
-      if (seen.has(`${m.role}\n${m.content}`)) return false;
-      if (m.timestamp > lastTs) return true;
-      return m.role === "klanker" && m.content.startsWith("Error") && !serverReplied;
-    });
-    return [...server, ...extra];
-  };
-
-  /** Pull session events and merge them into a chat. With `awaitReply` it
-   *  retries briefly: after a client-side stream death the server turn may
-   *  still be running, so the reply lands in the next poll. */
-  const reconcileChat = async (
-    inst: KlankerInstance,
-    key: string,
-    chatId: string,
-    ws: string,
-    persona: string,
-    session: string,
-    awaitReply = false
-  ) => {
-    const deadline = Date.now() + 90_000;
-    for (;;) {
-      const events = await api.sessionEvents(inst, ws, persona, session);
-      if (events) {
-        const serverMsgs = eventsToMessages(events);
-        evCache.current.set(`${inst.id} ${ws} ${persona} ${session}`, serverMsgs);
-        setChats((prev) =>
-          mapChat(prev, key, chatId, (item) => {
-            if (turnBusyRef.current?.chatId === chatId) return item;
-            const next = mergeMessages(item.messages, serverMsgs);
-            return next === item.messages ? item : { ...item, messages: next };
-          })
-        );
-        const lastUser = serverMsgs.reduce((acc, m, i) => (m.role === "user" ? i : acc), -1);
-        const replied = lastUser < 0 || serverMsgs.some((m, i) => i > lastUser && m.role === "klanker");
-        if (replied || !awaitReply || Date.now() > deadline) return;
-      } else if (!awaitReply || Date.now() > deadline) {
-        return;
-      }
-      await new Promise((r) => setTimeout(r, 4000));
-    }
-  };
-
-  const expandPersona = (ws: string, persona: string) => {
-    const inst = activeInstance;
-    if (!inst) return;
-    const key = `${ws} ${persona}`;
-    void api
-      .listSessions(inst, ws, persona)
-      .then((rows) => {
-        const list = rows.filter((s) => s.id);
-        setServerSessions((prev) => ({ ...prev, [key]: list }));
-        // Prefetch each session's events once: sidebar title + open-time restore cache.
-        for (const s of list) {
-          const ck = `${inst.id} ${ws} ${persona} ${s.id}`;
-          if (sessionTitles[ck] || evCache.current.has(ck) || titleFetches.current.has(ck)) continue;
-          titleFetches.current.add(ck);
-          void api
-            .sessionEvents(inst, ws, persona, s.id)
-            .then((events) => {
-              if (!events) return;
-              const msgs = eventsToMessages(events);
-              evCache.current.set(ck, msgs);
-              const first = msgs.find((m) => m.role === "user")?.content;
-              if (first) setSessionTitles((prev) => (prev[ck] ? prev : { ...prev, [ck]: clipTitle(first) }));
-            })
-            .finally(() => titleFetches.current.delete(ck));
-        }
-      })
-      .catch(() => setServerSessions((prev) => (prev[key] ? prev : { ...prev, [key]: [] })));
-  };
-
-  const personasOf = (ws: string): PersonaRow[] | undefined => treePersonas[ws];
-
-  const sessionRowsOf = (ws: string, persona: string): SessionRow[] | undefined => {
-    const instId = activeInstance?.id;
-    const key = `${instId} ${ws} ${persona}`;
-    const b = chats[key];
-    const server = serverSessions[`${ws} ${persona}`];
-    if (!b && server === undefined) return undefined;
-    const localRows: SessionRow[] = (b?.items ?? [])
-      // Hide drafts (the "new chat" button owns them) and legacy zombies:
-      // minted sessions that were never sent and never reached the server.
-      .filter((i) => !i.draft && (i.messages.length > 0 || Boolean(server?.some((s) => s.id === i.session))))
-      .map((i) => {
-        const first = i.messages.find((m) => m.role === "user")?.content?.trim();
-        return {
-          chatId: i.id,
-          session: i.session,
-          label: first ? clipTitle(first) : sessionTitles[`${instId} ${ws} ${persona} ${i.session}`] || "new chat",
-          pending: !server?.some((s) => s.id === i.session),
-        };
-      });
-    const covered = new Set(localRows.map((r) => r.session));
-    const remoteRows: SessionRow[] = (server ?? [])
-      .filter((s) => !covered.has(s.id))
-      .map((s) => ({
-        chatId: s.id,
-        session: s.id,
-        label: sessionTitles[`${instId} ${ws} ${persona} ${s.id}`] || s.goal || "…",
-        pending: false,
-      }));
-    return [...localRows, ...remoteRows];
-  };
-
-  // Session history: reconcile the open chat with server trace events when it
-  // is opened and whenever the app regains visibility. Stranded optimistic
-  // bubbles (dead mobile streams) heal here; prefetched events (sidebar
-  // titles) serve as the cache; failures stay retryable.
-  useEffect(() => {
-    const inst = activeInstance;
-    const chat = openChat;
-    if (!inst || !chat || !chat.session) return;
-    if (!selWs || !selPersona) return;
-    const ws = selWs;
-    const persona = selPersona;
-    const key = selKey;
-    const chatId = chat.id;
-    const session = chat.session;
-    const ck = `${inst.id} ${ws} ${persona} ${session}`;
-    remoteActiveRef.current = false;
-    setRemoteActive(false);
-    const apply = (restored: ChatMessage[]) => {
-      if (restored.length === 0) return;
-      setChats((prev) =>
-        mapChat(prev, key, chatId, (item) => {
-          if (turnBusyRef.current?.chatId === chatId) return item;
-          const next = mergeMessages(item.messages, restored);
-          return next === item.messages ? item : { ...item, messages: next };
-        })
-      );
-      const first = restored.find((m) => m.role === "user")?.content;
-      if (first) setSessionTitles((prev) => (prev[ck] ? prev : { ...prev, [ck]: clipTitle(first) }));
-    };
-    const run = async () => {
-      const cached = evCache.current.get(ck);
-      if (cached && chat.messages.length === 0) {
-        apply(cached);
-      }
-      const events = await api.sessionEvents(inst, ws, persona, session);
-      if (!events) return;
-      // A foreign turn is in flight when the newest trace event is anything
-      // but an assistant message (user msg awaiting reply, tool_call, …) and
-      // is recent. Stale tails don't pretend a dead turn still runs.
-      const lastEv = events[events.length - 1];
-      const lastTs = lastEv ? Date.parse(String(lastEv.ts || "")) : NaN;
-      const settled =
-        !lastEv || (lastEv.type === "message" && lastEv.metadata?.role === "assistant");
-      const active = !settled && Number.isFinite(lastTs) && Date.now() - lastTs < 120_000;
-      remoteActiveRef.current = active;
-      setRemoteActive(active);
-      maybeAttach();
-      const restored = eventsToMessages(events);
-      evCache.current.set(ck, restored);
-      apply(restored);
-    };
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void run();
-    };
-    // klanker#92: while a foreign turn runs on this relay, attach its SSE fan-out
-    // and stream deltas into a transient bubble; the trailer drops it and the
-    // trace reconcile converges to server truth. A 404 (old relay, or the run
-    // belongs to another channel's turn store) just falls back to the poll.
-    let attachLive = false;
-    const remoteBubbleId = `remote_${chatId}`;
-    const dropRemoteBubble = () => {
-      setChats((prev) =>
-        mapChat(prev, key, chatId, (item) => ({
-          ...item,
-          messages: item.messages.filter((m) => m.id !== remoteBubbleId),
-        }))
-      );
-    };
-    const maybeAttach = () => {
-      if (!remoteActiveRef.current || attachLive) return;
-      attachLive = true;
-      let ended = false;
-      (async () => {
-        try {
-          for await (const ev of api.attachRun(inst, { workspace: ws, persona, session })) {
-            if (!remoteActiveRef.current) break;
-            if (ev.type === "delta" && ev.text) {
-              const text = ev.text;
-              setChats((prev) =>
-                mapChat(prev, key, chatId, (item) => {
-                  const idx = item.messages.findIndex((m) => m.id === remoteBubbleId);
-                  if (idx >= 0) {
-                    const ms = [...item.messages];
-                    ms[idx] = { ...ms[idx], content: ms[idx].content + text };
-                    return { ...item, messages: ms };
-                  }
-                  return {
-                    ...item,
-                    messages: [
-                      ...item.messages,
-                      {
-                        id: remoteBubbleId,
-                        role: "klanker",
-                        content: text,
-                        timestamp: new Date().toISOString(),
-                      },
-                    ],
-                  };
-                })
-              );
-            } else if (ev.type === "status" && ev.text) {
-              setStreamStatus(ev.text);
-            } else if (ev.type === "trailer" || ev.type === "error") {
-              ended = true;
-              break;
-            }
-          }
-        } catch {
-          // old relay without /v1/runs/stream, or run ended between poll + attach
-        }
-        dropRemoteBubble();
-        setStreamStatus(null);
-        if (ended || remoteActiveRef.current) void run();
-      })();
-    };
-    void run();
-    document.addEventListener("visibilitychange", onVisible);
-    // Cheap sync: one raw JSONL line per tick; the heavy events pull only runs
-    // when the session's newest trace ts actually moved (turns from other
-    // devices/channels land without a reload). While a foreign turn is live
-    // the tick tightens to 2s: tool_call + user/assistant message records are
-    // appended to the trace as the turn runs, so watching devices see its
-    // progress and the reply ~2s after it lands instead of up to 12s late.
-    let lastTs = "";
-    let pollTimer = 0;
-    const tickPoll = () => {
-      pollTimer = window.setTimeout(
-        () => {
-          const rearm = () => tickPoll();
-          if (document.visibilityState !== "visible" || turnBusyRef.current?.chatId === chatId) {
-            rearm();
-            return;
-          }
-          void api
-            .sessionTailTs(inst, ws, session)
-            .then((ts) => {
-              if (ts) {
-                if (!lastTs) lastTs = ts;
-                else if (ts !== lastTs) {
-                  lastTs = ts;
-                  void run();
-                }
-              }
-            })
-            .finally(rearm);
-        },
-        remoteActiveRef.current ? 2_000 : 12_000
-      );
-    };
-    tickPoll();
-    return () => {
-      document.removeEventListener("visibilitychange", onVisible);
-      window.clearTimeout(pollTimer);
-      remoteActiveRef.current = false;
-      setRemoteActive(false);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeInstance, openChat?.id, openChat?.session, selWs, selPersona]);
-
-  // Approvals poll
-  useEffect(() => {
-    const inst = activeInstance;
-    if (!inst || status?.state !== "running") return;
-    let stop = false;
-    const tick = async () => {
-      const mine = ++pollSeq.current;
-      try {
-        const next = await api.pendingApproval(inst);
-        if (!stop && mine === pollSeq.current) {
-          if (
-            next &&
-            next.id !== lastNotifiedApprovalRef.current &&
-            (document.hidden || !document.hasFocus())
-          ) {
-            lastNotifiedApprovalRef.current = next.id;
-            void notify("Klanker needs approval", next.summary || next.tool || "Pending tool approval");
-          }
-          setPending(next);
-        }
-      } catch {
-        if (!stop && mine === pollSeq.current) setPending(null);
-      }
-    };
-    void tick();
-    const timer = window.setInterval(() => void tick(), 3_000);
-    return () => {
-      stop = true;
-      window.clearInterval(timer);
-    };
-  }, [activeInstance?.id, status?.state]);
-
-  const handleDecide = async (allow: boolean) => {
-    if (!activeInstance || !pending || deciding) return;
-    const inst = activeInstance;
-    const approvalId = pending.id;
-    setDeciding(true);
-    setDecideError(null);
-    try {
-      await api.resolveApproval(inst, approvalId, allow);
-      pollSeq.current += 1;
-      if (activeIdRef.current === inst.id) setPending(null);
-    } catch (e: unknown) {
-      if (activeIdRef.current === inst.id) {
-        setDecideError(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setDeciding(false);
-    }
-  };
-
-  const handleSaveInstance = async (inst: KlankerInstance) => {
+  const handleSaveInstance = async (instance: KlankerInstance) => {
     const gen = ++saveGen.current;
     try {
-      const saved = await api.saveKlanker(inst);
+      const saved = await api.saveKlanker(instance);
       if (gen !== saveGen.current) return;
       // A name edit may rename the id (folder = slug): replace by the sent id.
-      setInstances((prevList) => {
-        const idx = prevList.findIndex((i) => i.id === inst.id || i.id === saved.id);
+      inst.setInstances((prevList) => {
+        const idx = prevList.findIndex((i) => i.id === instance.id || i.id === saved.id);
         if (idx >= 0) {
           const next = [...prevList];
           next[idx] = saved;
@@ -1101,11 +299,11 @@ export function App() {
         }
         return [...prevList, saved];
       });
-      if (activeIdRef.current === inst.id || activeIdRef.current === saved.id) setActiveInstance(saved);
+      if (activeIdRef.current === instance.id || activeIdRef.current === saved.id) setActiveInstance(saved);
       // Re-probe immediately — a fresh secret should clear `unauthorized`
       // without waiting for the 8s health poll.
       void api.getGatewayStatus(saved).then((st) =>
-        setHerd((prev) => ({ ...prev, [saved.id]: st }))
+        inst.setHerd((prev) => ({ ...prev, [saved.id]: st }))
       );
       const provider = saved.provider.trim().toLowerCase() as ModelProvider;
       const model = provider === "lmstudio" || provider === "openrouter" ? saved.model.trim() : "";
@@ -1164,11 +362,11 @@ export function App() {
     }
   };
 
-  const rememberTurnModel = (inst: KlankerInstance) => {
-    const choice = choiceOf(inst);
+  const rememberTurnModel = (instance: KlankerInstance) => {
+    const choice = choiceOf(instance);
     const kind = choice === "inherit" ? windowKind(settingsRef.current) : choice;
     if (kind !== "lmstudio" && kind !== "openrouter") return;
-    const model = (choice === "inherit" ? inst.model.trim() || settingsRef.current.model : inst.model).trim();
+    const model = (choice === "inherit" ? instance.model.trim() || settingsRef.current.model : instance.model).trim();
     if (!model) return;
     void updateSettings((current) => rememberModel(current, kind, model));
   };
@@ -1181,8 +379,8 @@ export function App() {
   const handleDeleteInstance = async (id: string) => {
     try {
       await api.deleteKlanker(id);
-      const remaining = instances.filter((i) => i.id !== id);
-      setInstances(remaining);
+      const remaining = inst.instances.filter((i) => i.id !== id);
+      inst.setInstances(remaining);
       if (activeInstance?.id === id) {
         selectInstance(remaining[0] ?? null);
       }
@@ -1192,7 +390,7 @@ export function App() {
         next.delete(id);
         return next;
       });
-      setHerd((prev) => {
+      inst.setHerd((prev) => {
         const next = { ...prev };
         delete next[id];
         return next;
@@ -1210,14 +408,14 @@ export function App() {
   const handleStop = () => {
     const busy = turnBusyRef.current;
     if (!busy) return;
-    const inst = instancesRef.current.find((i) => i.id === busy.instanceId);
-    if (inst) void api.stopRun(inst, busy.run).catch(() => undefined);
+    const inst0 = inst.instancesRef.current.find((i) => i.id === busy.instanceId);
+    if (inst0) void api.stopRun(inst0, busy.run).catch(() => undefined);
   };
 
   const handleSendMessage = async (text: string, attachments?: { data: string; mime?: string; name?: string }[]) => {
-    const inst = activeInstance;
-    if (!inst) return;
-    const id = inst.id;
+    const inst0 = activeInstance;
+    if (!inst0) return;
+    const id = inst0.id;
     if (turnBusyRef.current?.instanceId === id) return;
     const current = chatsRef.current[selKey];
     let chat = current?.items.find((item) => item.id === current.openId);
@@ -1234,7 +432,7 @@ export function App() {
     }
     const chatId = chat.id;
     const session = chat.session || mintSessionId();
-    rememberTurnModel(inst);
+    rememberTurnModel(inst0);
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -1281,15 +479,15 @@ export function App() {
     deltaFlush.current = () => deltas.flush();
 
     try {
-      const choice = choiceOf(inst);
+      const choice = choiceOf(inst0);
       // Provider = raw host manifest name; ""/"inherit" = host default (env).
       // Do not gate on `choice` — real manifest names (acp.cursor,
       // scripted.tool) map to "inherit" in the UI taxonomy and were silently
       // dropped before reaching the relay.
-      const instProvider = inst.provider.trim();
+      const instProvider = inst0.provider.trim();
       const provider = instProvider && instProvider !== "inherit" ? instProvider : "";
-      const model = (chatModels[selKey] ?? (choice === "inherit" ? inst.model.trim() || settingsRef.current.model : inst.model)).trim();
-      const stream = api.streamChat(inst, {
+      const model = (chatModels[selKey] ?? (choice === "inherit" ? inst0.model.trim() || settingsRef.current.model : inst0.model)).trim();
+      const stream = api.streamChat(inst0, {
         text,
         run: busy.run,
         session,
@@ -1367,13 +565,16 @@ export function App() {
       setTurnBusy((b) => (b?.instanceId === id && b.chatId === chatId ? null : b));
       setStreamStatus(null);
       if (document.hidden || !document.hasFocus()) {
-        void notify("Klanker turn finished", inst.name || inst.id);
+        void notify("Klanker turn finished", inst0.name || inst0.id);
       }
       // A dead client stream (iOS "Load failed", suspend, reload) does not
       // mean the turn failed: the server may still be writing the reply into
       // the session. Reconcile so the bubbles converge to server truth.
       if (!sawTrailer && session) {
-        void reconcileChat(inst, selKey, chatId, selWs, selPersona, session, true);
+        void reconcileChat(inst0, selKey, chatId, selWs, selPersona, session, {
+          evCache: evCache.current,
+          applyToChat,
+        }, true);
       }
       if (activeIdRef.current !== id) {
         setUnread((prev) => {
@@ -1386,48 +587,8 @@ export function App() {
     }
   };
 
-  const submitLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loginBusy || !loginToken.trim()) return;
-    setLoginBusy(true);
-    setLoginError(null);
-    try {
-      await api.login(localInstance(), loginToken.trim());
-      window.location.reload();
-    } catch (err) {
-      setLoginError(err instanceof Error ? err.message : String(err));
-      setLoginBusy(false);
-    }
-  };
-
-  if (auth !== "ok") {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center bg-[#000000] text-white font-sans">
-        {auth === "needed" ? (
-          <form onSubmit={submitLogin} className="w-72 flex flex-col gap-3 font-mono text-xs">
-            <div className="text-[#a3a3a3] tracking-widest uppercase">KLANKER</div>
-            <input
-              type="password"
-              value={loginToken}
-              onChange={(e) => setLoginToken(e.target.value)}
-              placeholder="relay web token"
-              autoFocus
-              className="bg-[#0a0a0a] border border-[#262626] px-3 py-2 outline-none focus:border-[#525252]"
-            />
-            {loginError && <div className="text-red-500">{loginError}</div>}
-            <button
-              type="submit"
-              disabled={loginBusy}
-              className="border border-[#262626] px-3 py-2 hover:bg-[#171717] disabled:opacity-50"
-            >
-              {loginBusy ? "..." : "unlock"}
-            </button>
-          </form>
-        ) : (
-          <div className="text-[#525252] font-mono text-xs">…</div>
-        )}
-      </div>
-    );
+  if (inst.auth !== "ok") {
+    return <AuthGate auth={inst.auth} />;
   }
 
   return (
@@ -1466,34 +627,34 @@ export function App() {
       >
         <KlankerList
           key={activeInstance?.id ?? "none"}
-          instances={instances}
-          managedId={managedId}
+          instances={inst.instances}
+          managedId={inst.managedId}
           activeId={activeInstance?.id ?? null}
           unread={unread}
-          statuses={herd}
+          statuses={inst.herd}
           selWs={selWs}
           selPersona={selPersona}
           openChatId={openChat?.id ?? null}
-          workspaces={workspaces}
-          personasOf={personasOf}
-          sessionRowsOf={sessionRowsOf}
-          onSelect={(inst) => { selectInstance(inst); setNavOpen(false); }}
-          onExpandWs={expandWs}
-          onExpandPersona={expandPersona}
+          workspaces={tree.workspaces}
+          personasOf={tree.personasOf}
+          sessionRowsOf={tree.sessionRowsOf}
+          onSelect={(i) => { selectInstance(i); setNavOpen(false); }}
+          onExpandWs={tree.expandWs}
+          onExpandPersona={tree.expandPersona}
           onSelectChat={(ws, p, id) => { selectChat(ws, p, id); setNavOpen(false); }}
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
           onNewHost={() => { setIsNewModalOpen(true); setNavOpen(false); }}
-          onInstanceSettings={(inst) => { setInstanceSheetInst(inst); setNavOpen(false); }}
+          onInstanceSettings={(i) => { setInstanceSheetInst(i); setNavOpen(false); }}
           onDeleteWorkspace={async (ws) => {
-            const inst = activeInstance;
-            if (!inst || !(await dialogs.confirm(`Archive workspace "${ws}"? (restorable from trash)`, { danger: true }))) return;
+            const inst0 = activeInstance;
+            if (!inst0 || !(await dialogs.confirm(`Archive workspace "${ws}"? (restorable from trash)`, { danger: true }))) return;
             void api
-              .deleteWorkspace(inst, ws)
-              .then(() => api.listWorkspaces(inst))
+              .deleteWorkspace(inst0, ws)
+              .then(() => api.listWorkspaces(inst0))
               .then((rows) => {
-                setWorkspaces(rows);
-                setTreePersonas((prev) => {
+                tree.setWorkspaces(rows);
+                tree.setTreePersonas((prev) => {
                   const next = { ...prev };
                   delete next[ws];
                   return next;
@@ -1503,22 +664,22 @@ export function App() {
               .catch((e) => setWsNote(`workspace: ${e instanceof Error ? e.message : e}`));
           }}
           onNewPersona={async (ws) => {
-            const inst = activeInstance;
+            const inst0 = activeInstance;
             const id = await dialogs.prompt(`new persona id in ${ws}`);
-            if (!inst || !id?.trim()) return;
+            if (!inst0 || !id?.trim()) return;
             void api
-              .createPersona(inst, ws, id.trim())
-              .then(() => api.listPersonas(inst, ws))
-              .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
+              .createPersona(inst0, ws, id.trim())
+              .then(() => api.listPersonas(inst0, ws))
+              .then((rows) => tree.setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
               .catch((e) => setWsNote(`persona: ${e instanceof Error ? e.message : e}`));
           }}
           onDeletePersona={async (ws, persona) => {
-            const inst = activeInstance;
-            if (!inst || !(await dialogs.confirm(`Archive persona "${persona}"?`, { danger: true }))) return;
+            const inst0 = activeInstance;
+            if (!inst0 || !(await dialogs.confirm(`Archive persona "${persona}"?`, { danger: true }))) return;
             void api
-              .deletePersona(inst, ws, persona)
-              .then(() => api.listPersonas(inst, ws))
-              .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
+              .deletePersona(inst0, ws, persona)
+              .then(() => api.listPersonas(inst0, ws))
+              .then((rows) => tree.setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
               .catch((e) => setWsNote(`persona: ${e instanceof Error ? e.message : e}`));
           }}
           onNewWorkspace={async () => {
@@ -1529,7 +690,7 @@ export function App() {
               .createWorkspace(activeInstance, id.trim())
               .then((wsId) => {
                 setSelWs(wsId);
-                return api.listWorkspaces(activeInstance).then(setWorkspaces);
+                return api.listWorkspaces(activeInstance).then(tree.setWorkspaces);
               })
               .catch((e) => setWsNote(`workspace: ${e instanceof Error ? e.message : e}`));
           }}
@@ -1550,7 +711,7 @@ export function App() {
               <ChatConsole
                 key={`${activeInstance.id}:${openChat?.id ?? ""}`}
                 instance={activeInstance}
-                speakerName={personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || activeInstance.name}
+                speakerName={tree.personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || activeInstance.name}
                 messages={messages}
                 input={openChat?.input ?? ""}
                 onInput={(v) => {
@@ -1598,10 +759,10 @@ export function App() {
                     return next;
                   })
                 }
-                pending={pending}
-                deciding={deciding}
-                decideError={decideError}
-                onDecide={(allow) => void handleDecide(allow)}
+                pending={approvals.pending}
+                deciding={approvals.deciding}
+                decideError={approvals.decideError}
+                onDecide={(allow) => void approvals.handleDecide(allow)}
               />
             </>
           ) : (
@@ -1615,8 +776,8 @@ export function App() {
       <NewKlankerModal isOpen={isNewModalOpen} onClose={() => setIsNewModalOpen(false)} onSave={handleCreate} />
       {instanceSheetInst && (
         <InstanceSheet
-          instance={instances.find((i) => i.id === instanceSheetInst.id) ?? instanceSheetInst}
-          status={herd[instanceSheetInst.id] ?? null}
+          instance={inst.instances.find((i) => i.id === instanceSheetInst.id) ?? instanceSheetInst}
+          status={inst.herd[instanceSheetInst.id] ?? null}
           settings={settings}
           rankedIds={rankedIds}
           modelNote={modelNote}

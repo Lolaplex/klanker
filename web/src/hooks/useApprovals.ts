@@ -1,0 +1,89 @@
+import { useEffect, useRef, useState } from "react";
+import type { KlankerInstance, PendingApproval, ProcessStatus } from "../types/klanker";
+import { api, notify } from "../services/api";
+
+/**
+ * Pending-approval poll (3s) for the active instance + the decide path.
+ * A newly pending approval fires a desktop notification only while the
+ * window is unfocused (klanker#59).
+ */
+export function useApprovals(args: {
+  activeInstance: KlankerInstance | null;
+  status: ProcessStatus | null;
+}): {
+  pending: PendingApproval | null;
+  deciding: boolean;
+  decideError: string | null;
+  handleDecide: (allow: boolean) => Promise<void>;
+  reset: () => void;
+} {
+  const { activeInstance, status } = args;
+  const [pending, setPending] = useState<PendingApproval | null>(null);
+  const [deciding, setDeciding] = useState(false);
+  const [decideError, setDecideError] = useState<string | null>(null);
+  const pollSeq = useRef(0);
+  const lastNotifiedApprovalRef = useRef<string>("");
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeInstance?.id ?? null;
+  const instId = activeInstance?.id;
+
+  const reset = () => {
+    setPending(null);
+    setDecideError(null);
+    setDeciding(false);
+  };
+
+  // Approvals poll
+  useEffect(() => {
+    const inst = activeInstance;
+    if (!inst || status?.state !== "running") return;
+    let stop = false;
+    const tick = async () => {
+      const mine = ++pollSeq.current;
+      try {
+        const next = await api.pendingApproval(inst);
+        if (!stop && mine === pollSeq.current) {
+          if (
+            next &&
+            next.id !== lastNotifiedApprovalRef.current &&
+            (document.hidden || !document.hasFocus())
+          ) {
+            lastNotifiedApprovalRef.current = next.id;
+            void notify("Klanker needs approval", next.summary || next.tool || "Pending tool approval");
+          }
+          setPending(next);
+        }
+      } catch {
+        if (!stop && mine === pollSeq.current) setPending(null);
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 3_000);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instId, status?.state]);
+
+  const handleDecide = async (allow: boolean) => {
+    const inst = activeInstance;
+    if (!inst || !pending || deciding) return;
+    const approvalId = pending.id;
+    setDeciding(true);
+    setDecideError(null);
+    try {
+      await api.resolveApproval(inst, approvalId, allow);
+      pollSeq.current += 1;
+      if (activeIdRef.current === inst.id) setPending(null);
+    } catch (e: unknown) {
+      if (activeIdRef.current === inst.id) {
+        setDecideError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      setDeciding(false);
+    }
+  };
+
+  return { pending, deciding, decideError, handleDecide, reset };
+}
