@@ -140,6 +140,19 @@ def build_parser() -> argparse.ArgumentParser:
     update_p = sub.add_parser("update", help="Update all suite packages (git checkouts pull, installs upgrade)")
     update_p.add_argument("--check", action="store_true", help="Show the update plan without running it")
 
+    # 1b4. Detached background runner
+    bg_p = sub.add_parser("bg", help="Spawn a detached background turn (klanker ps/logs/kill)")
+    bg_p.add_argument("task", type=str, help="Task for the background turn")
+    ps_p = sub.add_parser("ps", help="List background sessions")
+    logs_p = sub.add_parser("logs", help="Print a background session's log")
+    logs_p.add_argument("id", type=str, help="bg_<id> session id")
+    logs_p.add_argument("-f", "--follow", action="store_true", help="Follow the log until the child exits")
+    logs_p.add_argument("-n", "--lines", type=int, default=0, help="Only the last N lines")
+    kill_p = sub.add_parser("kill", help="Kill a running background session")
+    kill_p.add_argument("id", type=str, help="bg_<id> session id")
+    bgrun_p = sub.add_parser("_bg-run", help=argparse.SUPPRESS)
+    bgrun_p.add_argument("id", type=str)
+
     # 1c. Audit trace integrity & replay
     audit_p = sub.add_parser("audit", help="Audit trace integrity and replay verification via agents-traces")
     audit_p.add_argument("target", type=str, nargs="?", default="", help="Session ID, trace file path, or empty for all")
@@ -310,6 +323,10 @@ KNOWN_SUBCOMMANDS = {
     "persona",
     "workspace",
     "import",
+    "bg",
+    "ps",
+    "logs",
+    "kill",
     "-h",
     "--help",
 }
@@ -618,6 +635,11 @@ def main(argv: list[str] | None = None) -> int:
             workspace=getattr(args, "workspace", "") or "",
             no_gateway=bool(getattr(args, "no_gateway", False)),
         )
+
+    elif args.command in ("bg", "ps", "logs", "kill", "_bg-run"):
+        from .bg import dispatch as bg_dispatch
+
+        return bg_dispatch(args)
 
     elif args.command == "cron":
         if not nucleus.caps.has_harness:
