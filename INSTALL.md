@@ -42,11 +42,19 @@ SUITE_REF=main python scripts/dev-suite.py   # dev script, but pin released refs
 docker build -t klanker .                          # suite @ main (release)
 docker build -t klanker --build-arg SUITE_REF=dev .  # suite @ dev (lock-step)
 docker build -t klanker --build-arg RELAY_REF=v0.3 . # per-package override
+docker build -t klanker --build-arg INSTALL_DEVIN=1 .  # + devin-cli (ACP)
 ```
 
 Default is `main`: an image is a release artifact. Dev images are always
 explicit. Bump `--build-arg CACHE_BUST=$(date +%s)` when a branch tip
 moved under the same ref name.
+
+`INSTALL_DEVIN=1` bakes `devin-cli` into the image for `agents-relay
+acp-run` — set `AGENTS_ACP_CMD="devin acp"` (plus `LOOP_CMD="python -m
+agents_relay acp-run"` to route turns to it) and credentials via
+`WINDSURF_API_KEY`/`AGENTS_ACP_API_KEY` env or one `devin auth login`
+into the `/data` volume. Used by the VPS deploy where the platform
+builds a single Dockerfile; the NAS keeps its untracked overlay.
 
 ## Self-deploy (container rebuilds itself)
 

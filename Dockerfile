@@ -65,6 +65,22 @@ RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
     pip install --no-cache-dir . && \
     (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
 
+# Optional ACP agent for agents-relay acp-run: INSTALL_DEVIN=1 bakes
+# devin-cli into the image (AGENTS_ACP_CMD="devin acp"; credentials live
+# on /data or come via WINDSURF_API_KEY/AGENTS_ACP_API_KEY env). Off by
+# default — release images stay generic. The installer's trailing
+# `devin setup` is interactive and fails headless; the binary itself is
+# installed before it, so we verify the binary, not the exit code.
+ARG INSTALL_DEVIN=0
+RUN if [ "$INSTALL_DEVIN" = "1" ]; then \
+        export HOME=/opt/devin-home \
+        && mkdir -p "$HOME" && chmod 755 "$HOME" \
+        && (curl -fsSL https://cli.devin.ai/install.sh | bash || true) \
+        && test -x /opt/devin-home/.local/bin/devin \
+        && ln -sf /opt/devin-home/.local/bin/devin /usr/local/bin/devin \
+        && /usr/local/bin/devin version; \
+    fi
+
 RUN useradd -m -d /data klanker && mkdir -p /data/.agents/workspaces /data/.agents/run /data/.agents/cache /data/.agents/keys /data/.agents/logs && chown -R klanker:klanker /data
 
 COPY entrypoint.sh /entrypoint.sh

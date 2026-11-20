@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Dockerfile` `INSTALL_DEVIN` build arg: `=1` bakes `devin-cli` into the image (`/opt/devin-home`, symlinked to `PATH`) so `agents-relay acp-run` can spawn `devin acp` as the turn agent — the route for hosts that build a single Dockerfile (Coolify on the VPS; the NAS keeps its untracked overlay). Off by default; release images unchanged.
 - `klanker serve` secure-by-default web auth: when `RELAY_WEB_TOKEN` is unset an ephemeral token is generated per serve and printed once (`klanker serve -> http://host:port/?token=…`, Jupyter-style). `GET /?token=…` on the relay mints the HttpOnly cookie and redirects to `/`, so the pasted URL is the whole login flow. `--no-auth` (or `RELAY_NO_AUTH=1`) is the explicit opt-out.
 - Prompt evidence rules: the system prompt now forbids asserting git state (clean tree, empty diff, committed, merged) or file contents without a successful read in the same turn, and requires reporting the failure + re-reading actual state when an edit's `old` text misses or a run is denied — 'verworfen'/'diff leer'/'committed' without a matching tool result is a fabricated claim.
 - Shell `/usage` (alias `:usage`): per-session token, cost, tool and error stats sourced from agents-traces — uses the live gateway session when one is active, today's aggregate otherwise.
