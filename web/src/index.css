@@ -113,6 +113,18 @@
   }
 
 
+  /* 44px minimum touch targets wherever the primary input cannot hover.
+     Inline anchors are unaffected: min-* has no effect on inline boxes. */
+  @media (hover: none) {
+    button,
+    [role="button"],
+    select,
+    input {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+
   textarea, input, select {
     font-size: 16px;
   }
