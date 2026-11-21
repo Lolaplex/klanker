@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Radar, X } from "lucide-react";
-import { DiscoveredPeer, KlankerInstance, PresenceOffer } from "../types/klanker";
+import { DiscoveredPeer, KlankerInstance } from "../types/klanker";
 import { api } from "../services/api";
 
 interface NewKlankerModalProps {
@@ -15,7 +15,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   const [secret, setSecret] = useState("");
   const [discovering, setDiscovering] = useState(false);
   const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
-  const [presence, setPresence] = useState<PresenceOffer[] | null>(null);
 
   // Auto-scan when the modal opens.
   useEffect(() => {
@@ -27,10 +26,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
       .then((peers) => !stop && setOffers(peers))
       .catch(() => !stop && setOffers([]))
       .finally(() => !stop && setDiscovering(false));
-    api
-      .listPresenceOffers()
-      .then((rows) => !stop && setPresence(rows))
-      .catch(() => !stop && setPresence([]));
     return () => {
       stop = true;
     };
@@ -60,11 +55,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     setName(peer.hostname);
     setUrl(peer.endpoint);
     setOffers(null);
-  };
-
-  const pickOffer = (offer: PresenceOffer, endpoint: string) => {
-    setName(offer.label);
-    setUrl(endpoint);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -171,33 +161,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
                 </div>
               ))}
           </div>
-
-          {presence !== null && presence.length > 0 && (
-            <div className="border border-[#262626] rounded p-2 space-y-1">
-              <p className="text-[10px] text-[#525252] uppercase tracking-wider px-1 pb-1">
-                signed offers
-              </p>
-              {presence.map((o) =>
-                o.valid ? (
-                  o.roads.map((r, i) => (
-                    <button
-                      key={`${o.file}:${i}`}
-                      type="button"
-                      onClick={() => pickOffer(o, r.endpoint)}
-                      className="w-full text-left min-h-9 px-2 py-1.5 text-[#a3a3a3] hover:bg-[#141414] hover:text-white rounded"
-                    >
-                      {o.label}
-                      <span className="text-[#525252]"> {r.endpoint.replace(/^https?:\/\//, "")}</span>
-                    </button>
-                  ))
-                ) : (
-                  <p key={o.file} className="px-2 py-1 text-[#525252]">
-                    {o.label} <span className="text-red-400/70">invalid — {o.reason}</span>
-                  </p>
-                )
-              )}
-            </div>
-          )}
 
           <div className="flex items-center justify-end space-x-2">
             <button type="button" onClick={close} className="inline-flex min-h-9 items-center px-3 py-1.5 text-[#737373] hover:text-white transition-colors">

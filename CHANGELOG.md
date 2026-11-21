@@ -338,3 +338,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relay self-publishes a signed road declaration at serve start when
   `AGENTS_PRESENCE_LABEL`/`KEY`/`ADDR` are set (agents-relay dev 2d4d23b).
   Signed-offers discovery stays as the read side.
+
+### Changed
+
+- Discovery scans now run server-side too: on the web surface the rescan
+  button asks the serving relay (`GET /v1/discover`, agents-relay dev
+  656e9db) instead of returning nothing. Desktop keeps the native probe.
+
+### Removed
+
+- Signed presence offers (list, publish UI, types). Remotes mount by URL;
+  same-network hosts come from the health-probe scan. The shared
+  road-declaration registry had no consumer.
