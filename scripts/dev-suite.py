@@ -35,17 +35,53 @@ import os
 import re
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    try:
+        import tomli as tomllib  # type: ignore[no-redef]
+    except ModuleNotFoundError:
+        tomllib = None  # type: ignore[assignment]
 
 REPO = Path(__file__).resolve().parent.parent
 DEP_RE = re.compile(r"^(agents-[\w-]+)(\[[^\]]+\])?")
 GIT_URL = "git+https://github.com/Lolaplex/{name}.git@{ref}"
 
 
+def _read_dependencies(text: str) -> list[str]:
+    if tomllib is not None:
+        return list(tomllib.loads(text)["project"]["dependencies"])
+    in_project = False
+    collecting = False
+    deps: list[str] = []
+    for raw in text.splitlines():
+        line = re.sub(r'#(?=(?:[^"\']*["\'][^"\']*["\'])*[^"\']*$).*$', "", raw).strip()
+        if not line:
+            continue
+        if line.startswith("[") and not collecting:
+            in_project = line == "[project]"
+            continue
+        if not in_project:
+            continue
+        if not collecting:
+            m = re.match(r"dependencies\s*=\s*\[(.*)", line)
+            if m:
+                rest = m.group(1)
+                deps.extend(re.findall(r'["\']([^"\']+)["\']', rest))
+                collecting = "]" not in rest
+        else:
+            deps.extend(re.findall(r'["\']([^"\']+)["\']', line))
+            if "]" in line:
+                collecting = False
+                break
+    return deps
+
+
 def suite_deps() -> list[tuple[str, str]]:
     """(name, extras) for every agents-* dependency in pyproject.toml."""
-    deps = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["dependencies"]
+    deps = _read_dependencies((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     out = []
     for dep in deps:
         m = DEP_RE.match(dep)
@@ -55,8 +91,13 @@ def suite_deps() -> list[tuple[str, str]]:
 
 
 def ref_for(name: str) -> str:
-    env = name.upper().replace("-", "_") + "_REF"
-    return os.environ.get(env, os.environ.get("SUITE_REF", "dev"))
+    full = name.upper().replace("-", "_") + "_REF"
+    short = name.removeprefix("agents-").upper().replace("-", "_") + "_REF"
+    for key in (full, short):
+        val = os.environ.get(key)
+        if val:
+            return val
+    return os.environ.get("SUITE_REF") or "dev"
 
 
 def git_req(name: str, extras: str) -> str:
