@@ -371,15 +371,14 @@ fn pick_port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
-/// Data root for the managed local serve: `~/.klanker/instances/default` —
-/// the instance dir IS the host root (`<inst>/workspaces/<id>`), no
-/// `.agents` nesting, and `~/.agents` stays untouched.
+/// Data root for the managed local serve: the same host root `klanker
+/// serve` uses on the CLI — `AGENTS_HOST_DIR` or `~/.agents`. Sharing one
+/// stem means workspaces, personas, inbox and secrets are identical no
+/// matter who spawned the process.
 fn instance_host_dir(_app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = dirs::home_dir()
-        .ok_or("no home dir")?
-        .join(".klanker")
-        .join("instances")
-        .join("default");
+    let dir = std::env::var_os("AGENTS_HOST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".agents"));
     fs::create_dir_all(&dir).map_err(|e| format!("create host dir: {e}"))?;
     Ok(dir)
 }
