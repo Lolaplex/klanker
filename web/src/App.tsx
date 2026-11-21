@@ -308,6 +308,7 @@ export function App() {
   const handleSaveInstance = async (instance: KlankerInstance) => {
     const gen = ++saveGen.current;
     try {
+      const prevSecret = inst.instances.find((i) => i.id === instance.id)?.secret;
       const saved = await api.saveKlanker(instance);
       if (gen !== saveGen.current) return;
       // A name edit may rename the id (folder = slug): replace by the sent id.
@@ -326,6 +327,16 @@ export function App() {
       void api.getGatewayStatus(saved).then((st) =>
         inst.setHerd((prev) => ({ ...prev, [saved.id]: st }))
       );
+      // New secret on the managed local serve: restart it so the respawn
+      // reads the fresh keyring entry — the running process still validates
+      // against its spawn-time token and would 401 forever otherwise.
+      if (saved.kind === "local" && caps.spawn && saved.secret && saved.secret !== prevSecret) {
+        void api.serveRestart(saved.workspace || undefined).then(() =>
+          api.getGatewayStatus(saved).then((st) =>
+            inst.setHerd((prev) => ({ ...prev, [saved.id]: st }))
+          )
+        );
+      }
       const provider = saved.provider.trim().toLowerCase() as ModelProvider;
       const model = provider === "lmstudio" || provider === "openrouter" ? saved.model.trim() : "";
       if (model) {
