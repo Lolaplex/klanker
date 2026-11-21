@@ -455,10 +455,24 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
     s.klanker_version = version;
 
     let port = pick_port();
-    // Reuse the stored token when present: a manually entered secret stays
-    // fixed across respawns instead of being clobbered by a fresh uuid.
-    let token = crate::secrets::get(&crate::secrets::relay_account("local"))
+    // Machine-wide pin wins over keyring: `klanker serve` (CLI) reads and
+    // writes `~/.klanker/relay-secret`, so every serve on this host shares
+    // one bearer — a foreign process validates the same token we hold.
+    let pin = dirs::home_dir().map(|h| h.join(".klanker").join("relay-secret"));
+    let pinned = pin
+        .as_ref()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let token = pinned
+        .or_else(|| crate::secrets::get(&crate::secrets::relay_account("local")))
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    if let Some(p) = &pin {
+        if fs::read_to_string(p).map(|s| s.trim() != token).unwrap_or(true) {
+            let _ = fs::create_dir_all(p.parent().unwrap_or(p));
+            let _ = fs::write(p, format!("{token}\n"));
+        }
+    }
     let log = log_path(app)?;
     let host_dir = instance_host_dir(app)?;
     if !workdir.is_empty() {
