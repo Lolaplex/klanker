@@ -2,7 +2,7 @@
 
 Each `klanker bg "<task>"` spawns a detached `klanker _bg-run` child that runs
 one non-interactive harness turn. Session bookkeeping is two flat files under
-``~/.agents/bg-sessions/`` — ``<id>.json`` (pid, task, status) and ``<id>.log``
+``<host>/run/bg-sessions/`` — ``<id>.json`` (pid, task, status) and ``<id>.log``
 (merged child output). No daemon, no broker: subprocess + file descriptors.
 """
 
@@ -18,12 +18,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-BG_DIR = Path.home() / ".agents" / "bg-sessions"
-
-
 def _dir() -> Path:
-    BG_DIR.mkdir(parents=True, exist_ok=True)
-    return BG_DIR
+    from agents_workspace import Host
+    d = Host.from_env().run / "bg-sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _meta_path(bid: str) -> Path:

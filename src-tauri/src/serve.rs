@@ -314,10 +314,15 @@ fn spawn_klanker(
         cmd.env("AGENTS_WORKDIR", workdir);
     }
     // `klanker serve` needs an entry workspace and refuses to guess once the
-    // host holds several. Pick `default` when present, else the first ws.
-    if std::env::var_os("AGENTS_WORKSPACE").is_none() {
-        if let Some(ws) = entry_workspace(host_dir) {
+    // host holds several. Always pin it: an ambient AGENTS_WORKSPACE leaked
+    // from a terminal session would silently pick a different entry ws than
+    // a desktop-spawned serve on the same host.
+    match entry_workspace(host_dir) {
+        Some(ws) => {
             cmd.env("AGENTS_WORKSPACE", ws);
+        }
+        None => {
+            cmd.env_remove("AGENTS_WORKSPACE");
         }
     }
     // No DETACHED_PROCESS: the python entry-point shim dies instantly

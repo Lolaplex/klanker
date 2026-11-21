@@ -16,9 +16,17 @@ class TestBg(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.old = bg.BG_DIR
-        bg.BG_DIR = Path(self.tmp.name) / "bg-sessions"
-        self.addCleanup(setattr, bg, "BG_DIR", self.old)
+        self.host = Path(self.tmp.name) / "host"
+        self.old_env = os.environ.get("AGENTS_HOST_DIR")
+        os.environ["AGENTS_HOST_DIR"] = str(self.host)
+        self.addCleanup(self._restore_env)
+        self.bg_dir = self.host / "run" / "bg-sessions"
+
+    def _restore_env(self):
+        if self.old_env is None:
+            os.environ.pop("AGENTS_HOST_DIR", None)
+        else:
+            os.environ["AGENTS_HOST_DIR"] = self.old_env
 
     def test_spawn_writes_meta(self):
         class FakeProc:
@@ -29,7 +37,7 @@ class TestBg(unittest.TestCase):
         self.assertEqual(meta["pid"], 4321)
         self.assertEqual(meta["status"], "spawned")
         self.assertTrue(Path(meta["log"]).exists() or True)  # created by open()
-        row = json.loads((bg.BG_DIR / f"{meta['id']}.json").read_text())
+        row = json.loads((self.bg_dir / f"{meta['id']}.json").read_text())
         self.assertEqual(row["task"], "say hi")
         argv = popen.call_args.args[0]
         self.assertIn("_bg-run", argv)
