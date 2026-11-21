@@ -2,20 +2,21 @@
 //!
 //! The app owns at most one user-visible child: `klanker serve` on
 //! 127.0.0.1. An already-running serve (CLI, Docker, whatever) is
-//! adopted, never killed. A serve spawned by us is PID-tracked and
-//! killed on tray-quit. The web side drives the lifecycle through two
-//! commands: `serve_ensure_local` (spawn if dead, bounded respawn) and
-//! `serve_restart` (manual retry that resets the respawn budget).
+//! adopted, never killed. A serve spawned by us is PID-tracked in
+//! `~/.agents/run/serve.json` and killed on tray-quit. Logs land in
+//! `~/.agents/logs/serve.log`. The web side drives the lifecycle through
+//! two commands: `serve_ensure_local` (spawn if dead, bounded respawn)
+//! and `serve_restart` (manual retry that resets the respawn budget).
 //!
-//! Token bootstrap: every app-spawned serve gets a fresh
-//! `RELAY_WEB_TOKEN` via env — never argv, never logged — stored in the
-//! OS keyring under `relay.local` for the web layer to use as Bearer.
+//! Token bootstrap: every app-spawned serve gets `RELAY_WEB_TOKEN` via
+//! env — never argv, never logged — synced between the OS keyring
+//! (`relay.local`) and `~/.agents/secrets/host.json` (`RELAY_WEB_TOKEN`).
 
 use serde::Serialize;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -87,21 +88,20 @@ pub struct ServeState(pub Mutex<Serve>);
 
 // --- filesystem ---------------------------------------------------------
 
-fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("no app data dir: {e}"))?;
-    fs::create_dir_all(&dir).map_err(|e| format!("create app data dir: {e}"))?;
-    Ok(dir)
+fn state_path() -> Result<PathBuf, String> {
+    let dir = crate::desktop_host_dir()?.join("run");
+    fs::create_dir_all(&dir).map_err(|e| format!("create run dir: {e}"))?;
+    Ok(dir.join("serve.json"))
 }
 
-fn pid_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(data_dir(app)?.join("serve.pid"))
+fn legacy_pid_path(app: &AppHandle) -> Option<PathBuf> {
+    app.path().app_data_dir().ok().map(|d| d.join("serve.pid"))
 }
 
-pub fn log_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(data_dir(app)?.join("serve.log"))
+pub fn log_path(_app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = crate::desktop_host_dir()?.join("logs");
+    fs::create_dir_all(&dir).map_err(|e| format!("create logs dir: {e}"))?;
+    Ok(dir.join("serve.log"))
 }
 
 // --- health / process ----------------------------------------------------
@@ -180,30 +180,142 @@ fn pid_is_ours(pid: u32) -> bool {
     }
 }
 
-fn read_pid_file(app: &AppHandle) -> Option<(u32, u16)> {
-    let content = fs::read_to_string(pid_path(app).ok()?).ok()?;
+fn parse_serve_json(raw: &str) -> Option<(u32, u16)> {
+    let val: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
+    let obj = val.as_object()?;
+    let pid = obj
+        .get("pid")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u32::try_from(n).ok())?;
+    if pid == 0 {
+        return None;
+    }
+    let port = obj
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u16::try_from(n).ok())
+        .unwrap_or(DEFAULT_PORT);
+    Some((pid, port))
+}
+
+fn parse_legacy_pid(raw: &str) -> Option<(u32, u16)> {
+    let trimmed = raw.trim();
+    if let Ok(pid) = trimmed.parse::<u32>() {
+        return (pid > 0).then_some((pid, DEFAULT_PORT));
+    }
     let mut pid = None;
     let mut port = None;
-    for line in content.lines() {
-        let (k, v) = line.split_once('=')?;
+    for line in raw.lines() {
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         match k.trim() {
-            "pid" => pid = v.trim().parse().ok(),
-            "port" => port = v.trim().parse().ok(),
+            "pid" => pid = v.trim().parse::<u32>().ok(),
+            "port" => port = v.trim().parse::<u16>().ok(),
             _ => {}
         }
     }
-    pid.map(|p| (p, port.unwrap_or(DEFAULT_PORT)))
+    pid.filter(|&p| p > 0)
+        .map(|p| (p, port.unwrap_or(DEFAULT_PORT)))
 }
 
-fn write_pid_file(app: &AppHandle, pid: u32, port: u16) {
-    if let Ok(path) = pid_path(app) {
-        let _ = fs::write(path, format!("pid={pid}\nport={port}\n"));
+pub(crate) fn read_serve_state_at(
+    state_file: &Path,
+    legacy_pid: Option<&Path>,
+) -> Option<(u32, u16)> {
+    if state_file.exists() {
+        return fs::read_to_string(state_file)
+            .ok()
+            .and_then(|raw| parse_serve_json(&raw));
+    }
+    legacy_pid
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|raw| parse_legacy_pid(&raw))
+}
+
+pub(crate) fn write_serve_state_at(state_file: &Path, pid: u32, port: u16) -> Result<(), String> {
+    let parent = state_file
+        .parent()
+        .ok_or_else(|| "invalid serve state path".to_string())?;
+    fs::create_dir_all(parent).map_err(|e| format!("create run dir: {e}"))?;
+    let mut payload = serde_json::to_string_pretty(&serde_json::json!({
+        "pid": pid,
+        "port": port,
+    }))
+    .map_err(|e| e.to_string())?;
+    payload.push('\n');
+
+    let name = state_file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("serve.json");
+    let tmp = parent.join(format!(
+        ".{name}.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    if let Err(err) = fs::write(&tmp, payload.as_bytes()) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("write serve state temp: {err}"));
+    }
+    if let Err(err) = fs::rename(&tmp, state_file) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("rename serve state: {err}"));
+    }
+    Ok(())
+}
+
+pub(crate) fn remove_serve_state_at(
+    state_file: &Path,
+    legacy_pid: Option<&Path>,
+    expected_pid: Option<u32>,
+) {
+    if state_file.exists() {
+        let should_remove = match expected_pid {
+            Some(pid) => fs::read_to_string(state_file)
+                .ok()
+                .and_then(|raw| parse_serve_json(&raw))
+                .map(|(p, _)| p == pid)
+                .unwrap_or(false),
+            None => true,
+        };
+        if should_remove {
+            let _ = fs::remove_file(state_file);
+        }
+    }
+    if let Some(lp) = legacy_pid {
+        if lp.exists() {
+            let should_remove = match expected_pid {
+                Some(pid) => fs::read_to_string(lp)
+                    .ok()
+                    .and_then(|raw| parse_legacy_pid(&raw))
+                    .map(|(p, _)| p == pid)
+                    .unwrap_or(false),
+                None => true,
+            };
+            if should_remove {
+                let _ = fs::remove_file(lp);
+            }
+        }
     }
 }
 
-fn remove_pid_file(app: &AppHandle) {
-    if let Ok(path) = pid_path(app) {
-        let _ = fs::remove_file(path);
+fn read_pid_file(app: &AppHandle) -> Option<(u32, u16)> {
+    let state = state_path().ok()?;
+    let legacy = legacy_pid_path(app);
+    read_serve_state_at(&state, legacy.as_deref())
+}
+
+fn write_pid_file(_app: &AppHandle, pid: u32, port: u16) {
+    if let Ok(path) = state_path() {
+        let _ = write_serve_state_at(&path, pid, port);
+    }
+}
+
+fn remove_pid_file(app: &AppHandle, expected_pid: Option<u32>) {
+    if let Ok(path) = state_path() {
+        let legacy = legacy_pid_path(app);
+        remove_serve_state_at(&path, legacy.as_deref(), expected_pid);
     }
 }
 
@@ -269,8 +381,8 @@ fn spawn_klanker(
     argv: &[String],
     port: u16,
     token: &str,
-    log: &PathBuf,
-    host_dir: &PathBuf,
+    log: &Path,
+    host_dir: &Path,
     workdir: &str,
 ) -> Result<u32, String> {
     let file = OpenOptions::new()
@@ -297,7 +409,7 @@ fn spawn_klanker(
         .env("RELAY_SECRET", token)
         .env("RELAY_WEB_TOKEN", token)
         .env("AGENTS_NO_UPDATE_CHECK", "1")
-        // Data lives under the instance folder, which is the host root.
+        // Data lives under the host root (~/.agents by default, or AGENTS_HOST_DIR).
         .env("AGENTS_HOST_DIR", host_dir)
         .env("PYTHONUTF8", "1")
         // The bundled webview fetches cross-origin; relay CORS is opt-in
@@ -367,11 +479,21 @@ fn spawn_klanker(
 
 // --- lifecycle -----------------------------------------------------------
 
+fn sync_vault_to_keyring() {
+    if let Some(vault_tok) = crate::secrets::read_host_vault_secret("RELAY_WEB_TOKEN") {
+        let account = crate::secrets::relay_account("local");
+        if crate::secrets::get(&account).as_deref() != Some(vault_tok.as_str()) {
+            let _ = crate::secrets::set(&account, &vault_tok);
+        }
+    }
+}
+
 fn adopt_or_mark(s: &mut Serve, app: &AppHandle) {
     // A serve is already answering on the port. If our recorded PID is
     // still alive we spawned it earlier -> owned; otherwise foreign.
     if let Some((pid, port)) = read_pid_file(app) {
         if pid_is_ours(pid) {
+            sync_vault_to_keyring();
             s.state = "running".into();
             s.pid = Some(pid);
             s.port = port;
@@ -380,8 +502,9 @@ fn adopt_or_mark(s: &mut Serve, app: &AppHandle) {
             s.detail = None;
             return;
         }
-        remove_pid_file(app);
+        remove_pid_file(app, Some(pid));
     }
+    sync_vault_to_keyring();
     s.state = "running".into();
     s.pid = None;
     s.port = DEFAULT_PORT;
@@ -400,28 +523,76 @@ fn pick_port() -> u16 {
 }
 
 /// Data root for the managed local serve: the same host root `klanker
-/// serve` uses on the CLI — `AGENTS_HOST_DIR` or `~/.agents`. Sharing one
-/// stem means workspaces, personas, inbox and secrets are identical no
-/// matter who spawned the process.
+/// serve` uses on the CLI — `AGENTS_HOST_DIR` or `~/.agents` (`desktop_host_dir()`).
+/// Sharing one stem means workspaces, personas, inbox and secrets are
+/// identical no matter who spawned the process.
 fn instance_host_dir(_app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = std::env::var_os("AGENTS_HOST_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".agents"));
+    let dir = match std::env::var_os("AGENTS_HOST_DIR").filter(|v| !v.is_empty()) {
+        Some(val) => PathBuf::from(val),
+        None => crate::desktop_host_dir()?,
+    };
     fs::create_dir_all(&dir).map_err(|e| format!("create host dir: {e}"))?;
     Ok(dir)
 }
 
-/// Entry workspace for `klanker serve`: `default` wins, else the first
-/// directory under `<host>/workspaces`. None when the host has no ws yet —
-/// serve still boots (per-request turns pick their own).
-fn entry_workspace(host_dir: &PathBuf) -> Option<String> {
+fn valid_ws_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\', ':'])
+        && !name.contains("..")
+}
+
+/// Entry workspace for `klanker serve`:
+/// 1. `<host>/agents.json -> default_workspace` (if present under `<host>/workspaces/`),
+/// 2. `"default"`,
+/// 3. first workspace directory under `<host>/workspaces/`.
+/// None when the host has no workspaces yet — serve still boots.
+pub(crate) fn entry_workspace(host_dir: &Path) -> Option<String> {
     let ws_root = host_dir.join("workspaces");
+    if let Ok(raw) = fs::read_to_string(host_dir.join("agents.json")) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(configured) = val.get("default_workspace").and_then(|v| v.as_str()) {
+                let configured = configured.trim();
+                if valid_ws_name(configured) && ws_root.join(configured).is_dir() {
+                    return Some(configured.to_string());
+                }
+            }
+        }
+    }
     if ws_root.join("default").is_dir() {
         return Some("default".into());
     }
-    fs::read_dir(&ws_root).ok()?.flatten().find_map(|e| {
-        e.path().is_dir().then(|| e.file_name().to_string_lossy().to_string())
-    })
+    let mut dirs_found: Vec<String> = fs::read_dir(&ws_root)
+        .ok()?
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            (e.path().is_dir() && valid_ws_name(&name)).then_some(name)
+        })
+        .collect();
+    dirs_found.sort();
+    dirs_found.into_iter().next()
+}
+
+fn read_legacy_pin(pin_path: Option<&Path>) -> Option<String> {
+    let path = pin_path?;
+    let raw = fs::read_to_string(path).ok()?;
+    let trimmed = raw.trim().to_string();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
+/// Resolve the shared host bearer token without writing `~/.klanker/relay-secret`:
+/// `<home>/.agents/secrets/host.json` (`RELAY_WEB_TOKEN`) <-> OS Keyring (`relay.local`),
+/// 1-release read-only fallback to `~/.klanker/relay-secret`, else mint a fresh UUID.
+pub(crate) fn resolve_serve_token(
+    vault_token: Option<String>,
+    keyring_token: Option<String>,
+    legacy_pin: Option<&Path>,
+) -> String {
+    vault_token
+        .or(keyring_token)
+        .or_else(|| read_legacy_pin(legacy_pin))
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string())
 }
 
 fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeStatus, String> {
@@ -482,24 +653,18 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
     s.klanker_version = version;
 
     let port = pick_port();
-    // Machine-wide pin wins over keyring: `klanker serve` (CLI) reads and
-    // writes `~/.klanker/relay-secret`, so every serve on this host shares
-    // one bearer — a foreign process validates the same token we hold.
-    let pin = dirs::home_dir().map(|h| h.join(".klanker").join("relay-secret"));
-    let pinned = pin
-        .as_ref()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let token = pinned
-        .or_else(|| crate::secrets::get(&crate::secrets::relay_account("local")))
-        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
-    if let Some(p) = &pin {
-        if fs::read_to_string(p).map(|s| s.trim() != token).unwrap_or(true) {
-            let _ = fs::create_dir_all(p.parent().unwrap_or(p));
-            let _ = fs::write(p, format!("{token}\n"));
-        }
-    }
+    // Shared host bearer: check OS Keyring (`relay.local`) <-> host vault
+    // (`~/.agents/secrets/host.json` -> `RELAY_WEB_TOKEN`), fallback read-only
+    // to `~/.klanker/relay-secret`, else mint a fresh UUID. Sync into BOTH
+    // keyring and host vault; never write `~/.klanker/relay-secret`.
+    let vault_tok = crate::secrets::read_host_vault_secret("RELAY_WEB_TOKEN");
+    let keyring_tok = crate::secrets::get(&crate::secrets::relay_account("local"));
+    let legacy_pin = dirs::home_dir().map(|h| h.join(".klanker").join("relay-secret"));
+    let token = resolve_serve_token(
+        vault_tok.clone(),
+        keyring_tok.clone(),
+        legacy_pin.as_deref(),
+    );
     let log = log_path(app)?;
     let host_dir = instance_host_dir(app)?;
     if !workdir.is_empty() {
@@ -507,7 +672,12 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
     }
     match spawn_klanker(&argv, port, &token, &log, &host_dir, workdir) {
         Ok(pid) => {
-            let _ = crate::secrets::set(&crate::secrets::relay_account("local"), &token);
+            if keyring_tok.as_deref() != Some(token.as_str()) {
+                let _ = crate::secrets::set(&crate::secrets::relay_account("local"), &token);
+            }
+            if vault_tok.as_deref() != Some(token.as_str()) {
+                let _ = crate::secrets::write_host_vault_secret("RELAY_WEB_TOKEN", &token);
+            }
             write_pid_file(app, pid, port);
             s.failed_spawns += 1;
             s.last_spawn = Some(Instant::now());
@@ -564,19 +734,23 @@ fn kill_tree(pid: u32) {
 
 /// Kill the owned child on app exit. Foreign serves are untouched.
 pub fn kill_owned(app: &AppHandle) {
-    let binding = app.state::<ServeState>();
-    let Ok(state) = binding.0.lock() else {
-        return;
-    };
-    if state.owned {
-        if let Some(pid) = state.pid {
-            if pid_alive(pid) {
-                kill_tree(pid);
+    let (owned, owned_pid) = {
+        let binding = app.state::<ServeState>();
+        let Ok(state) = binding.0.lock() else {
+            return;
+        };
+        if state.owned {
+            if let Some(pid) = state.pid {
+                if pid_alive(pid) {
+                    kill_tree(pid);
+                }
             }
         }
+        (state.owned, state.pid)
+    };
+    if owned {
+        remove_pid_file(app, owned_pid);
     }
-    drop(state);
-    remove_pid_file(app);
 }
 
 // --- commands ------------------------------------------------------------
@@ -656,12 +830,129 @@ pub fn init(app: &AppHandle) {
             };
             return;
         }
-        remove_pid_file(app);
+        remove_pid_file(app, Some(pid));
     }
     if health_ok(DEFAULT_PORT) {
         let state = app.state::<ServeState>();
         if let Ok(mut s) = state.0.lock() {
             adopt_or_mark(&mut s, app);
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let p = std::env::temp_dir().join(format!(
+                "klanker-serve-{tag}-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            fs::create_dir_all(&p).unwrap();
+            Self(p)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn entry_workspace_honors_agents_json_default_workspace_then_default_then_first() {
+        let tmp = TempDir::new("ws");
+        let host = &tmp.0;
+        assert_eq!(entry_workspace(host), None);
+
+        fs::create_dir_all(host.join("workspaces").join(".trash").join("old")).unwrap();
+        fs::create_dir_all(host.join("workspaces").join("beta")).unwrap();
+        fs::create_dir_all(host.join("workspaces").join("alpha")).unwrap();
+        assert_eq!(entry_workspace(host).as_deref(), Some("alpha"));
+
+        fs::create_dir_all(host.join("workspaces").join("default")).unwrap();
+        assert_eq!(entry_workspace(host).as_deref(), Some("default"));
+
+        // Invalid or missing configured default_workspace falls back to "default".
+        fs::write(host.join("agents.json"), r#"{"default_workspace":"missing"}"#).unwrap();
+        assert_eq!(entry_workspace(host).as_deref(), Some("default"));
+
+        fs::write(host.join("agents.json"), r#"{"default_workspace":"../escape"}"#).unwrap();
+        assert_eq!(entry_workspace(host).as_deref(), Some("default"));
+
+        // Valid existing default_workspace wins over "default".
+        fs::write(host.join("agents.json"), r#"{"default_workspace":"beta"}"#).unwrap();
+        assert_eq!(entry_workspace(host).as_deref(), Some("beta"));
+    }
+
+    #[test]
+    fn serve_json_round_trip_and_legacy_pid_fallback() {
+        let tmp = TempDir::new("state");
+        let state_file = tmp.0.join("run").join("serve.json");
+        let legacy_pid = tmp.0.join("legacy").join("serve.pid");
+        fs::create_dir_all(legacy_pid.parent().unwrap()).unwrap();
+
+        assert_eq!(read_serve_state_at(&state_file, Some(&legacy_pid)), None);
+
+        // Legacy key=value serve.pid fallback when serve.json is absent.
+        fs::write(&legacy_pid, "pid=4321\nport=8888\n").unwrap();
+        assert_eq!(
+            read_serve_state_at(&state_file, Some(&legacy_pid)),
+            Some((4321, 8888))
+        );
+
+        // serve.json takes precedence once written.
+        write_serve_state_at(&state_file, 9999, 9123).unwrap();
+        assert_eq!(
+            read_serve_state_at(&state_file, Some(&legacy_pid)),
+            Some((9999, 9123))
+        );
+
+        // CLI-written serve.json with extra "url" field parses cleanly.
+        fs::write(
+            &state_file,
+            r#"{"pid": 5555, "port": 8787, "url": "http://127.0.0.1:8787"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            read_serve_state_at(&state_file, Some(&legacy_pid)),
+            Some((5555, 8787))
+        );
+
+        // Removing with mismatched PID preserves serve.json; matching PID removes it.
+        remove_serve_state_at(&state_file, Some(&legacy_pid), Some(1111));
+        assert!(state_file.exists());
+        remove_serve_state_at(&state_file, Some(&legacy_pid), Some(5555));
+        assert!(!state_file.exists());
+    }
+
+    #[test]
+    fn resolve_serve_token_precedence_and_read_only_legacy_pin() {
+        let tmp = TempDir::new("tok");
+        let pin = tmp.0.join(".klanker").join("relay-secret");
+        fs::create_dir_all(pin.parent().unwrap()).unwrap();
+        fs::write(&pin, "legacy-pin\n").unwrap();
+
+        assert_eq!(
+            resolve_serve_token(Some("vault-tok".into()), Some("kr-tok".into()), Some(&pin)),
+            "vault-tok"
+        );
+        assert_eq!(
+            resolve_serve_token(None, Some("kr-tok".into()), Some(&pin)),
+            "kr-tok"
+        );
+        assert_eq!(
+            resolve_serve_token(None, None, Some(&pin)),
+            "legacy-pin"
+        );
+        // Legacy pin stays untouched; missing all sources mints a fresh UUID without creating pin.
+        let missing_pin = tmp.0.join("missing").join("relay-secret");
+        let minted = resolve_serve_token(None, None, Some(&missing_pin));
+        assert!(!minted.is_empty());
+        assert!(!missing_pin.exists());
     }
 }

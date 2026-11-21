@@ -47,6 +47,8 @@ class TestKlanker(unittest.TestCase):
 
     def test_serve_no_auth_flag_and_token_autogen(self):
         import os
+        import tempfile
+        from pathlib import Path
         from unittest.mock import patch
 
         from klanker.__main__ import _maybe_generate_web_token, parse_cli_args
@@ -56,24 +58,164 @@ class TestKlanker(unittest.TestCase):
         args, _ = parse_cli_args(["serve"])
         self.assertFalse(args.no_auth)
 
-        env = {k: v for k, v in os.environ.items()
-               if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")}
-        with patch.dict(os.environ, env, clear=True):
-            url = _maybe_generate_web_token(False)
-            self.assertTrue(url.startswith("http://127.0.0.1:8787/?token="))
-            self.assertTrue(os.environ["RELAY_WEB_TOKEN"])
-            # second call: token already set, nothing new
-            self.assertEqual(_maybe_generate_web_token(False), "")
-            # explicit token respected
-            os.environ["RELAY_WEB_TOKEN"] = "mine"
-            self.assertEqual(_maybe_generate_web_token(False), "")
-            # opt-out
-            del os.environ["RELAY_WEB_TOKEN"]
-            self.assertEqual(_maybe_generate_web_token(True), "")
-            self.assertNotIn("RELAY_WEB_TOKEN", os.environ)
-            os.environ["RELAY_NO_AUTH"] = "1"
-            self.assertEqual(_maybe_generate_web_token(False), "")
-            self.assertNotIn("RELAY_WEB_TOKEN", os.environ)
+        with tempfile.TemporaryDirectory() as td:
+            fake_home = Path(td) / "home"
+            fake_home.mkdir()
+            env = {k: v for k, v in os.environ.items()
+                   if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")}
+            env["AGENTS_HOST_DIR"] = str(Path(td) / "host")
+            with patch.dict(os.environ, env, clear=True), \
+                 patch("pathlib.Path.home", return_value=fake_home):
+                url = _maybe_generate_web_token(False)
+                self.assertTrue(url.startswith("http://127.0.0.1:8787/?token="))
+                self.assertTrue(os.environ["RELAY_WEB_TOKEN"])
+                # second call: token already set, nothing new
+                self.assertEqual(_maybe_generate_web_token(False), "")
+                # explicit token respected
+                os.environ["RELAY_WEB_TOKEN"] = "mine"
+                self.assertEqual(_maybe_generate_web_token(False), "")
+                # opt-out
+                del os.environ["RELAY_WEB_TOKEN"]
+                self.assertEqual(_maybe_generate_web_token(True), "")
+                self.assertNotIn("RELAY_WEB_TOKEN", os.environ)
+                os.environ["RELAY_NO_AUTH"] = "1"
+                self.assertEqual(_maybe_generate_web_token(False), "")
+                self.assertNotIn("RELAY_WEB_TOKEN", os.environ)
+
+    def test_web_token_uses_host_vault_and_never_writes_klanker_dir(self):
+        import json
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from agents_workspace import Host, write_secret
+        from agents_workspace.secrets import secrets_host_file
+        from klanker.__main__ import _maybe_generate_web_token
+
+        with tempfile.TemporaryDirectory() as td:
+            fake_home = Path(td) / "home"
+            fake_home.mkdir()
+            host_dir = Path(td) / "host"
+            base_env = {
+                k: v for k, v in os.environ.items()
+                if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")
+            }
+            base_env["AGENTS_HOST_DIR"] = str(host_dir)
+
+            # 1. Fresh mint writes ONLY <host>/secrets/host.json, never ~/.klanker or <host>/secrets.json
+            with patch.dict(os.environ, dict(base_env), clear=True), \
+                 patch("pathlib.Path.home", return_value=fake_home):
+                url = _maybe_generate_web_token(False)
+                minted = os.environ["RELAY_WEB_TOKEN"]
+                self.assertEqual(url, f"http://127.0.0.1:8787/?token={minted}")
+            vault_path = secrets_host_file(Host.open(host_dir))
+            self.assertTrue(vault_path.is_file())
+            self.assertEqual(json.loads(vault_path.read_text(encoding="utf-8"))["RELAY_WEB_TOKEN"], minted)
+            self.assertFalse((fake_home / ".klanker").exists())
+            self.assertFalse((host_dir / "secrets.json").exists())
+
+            # 2. Existing vault secret wins over legacy ~/.klanker/relay-secret
+            write_secret("RELAY_WEB_TOKEN", "vault-token-abc", host=Host.open(host_dir), scope="host")
+            legacy_pin = fake_home / ".klanker" / "relay-secret"
+            legacy_pin.parent.mkdir(parents=True, exist_ok=True)
+            legacy_pin.write_text("legacy-token-xyz\n", encoding="utf-8")
+            with patch.dict(os.environ, dict(base_env), clear=True), \
+                 patch("pathlib.Path.home", return_value=fake_home):
+                url2 = _maybe_generate_web_token(False)
+                self.assertEqual(url2, "http://127.0.0.1:8787/?token=vault-token-abc")
+                self.assertEqual(os.environ["RELAY_WEB_TOKEN"], "vault-token-abc")
+            self.assertEqual(legacy_pin.read_text(encoding="utf-8"), "legacy-token-xyz\n")
+
+        # 3. Empty vault falls back read-only to ~/.klanker/relay-secret and persists to vault
+        with tempfile.TemporaryDirectory() as td:
+            fake_home = Path(td) / "home"
+            host_dir = Path(td) / "host"
+            legacy_pin = fake_home / ".klanker" / "relay-secret"
+            legacy_pin.parent.mkdir(parents=True, exist_ok=True)
+            legacy_pin.write_text("legacy-only-token\n", encoding="utf-8")
+            env = {
+                k: v for k, v in os.environ.items()
+                if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")
+            }
+            env["AGENTS_HOST_DIR"] = str(host_dir)
+            with patch.dict(os.environ, env, clear=True), \
+                 patch("pathlib.Path.home", return_value=fake_home):
+                url = _maybe_generate_web_token(False)
+                self.assertEqual(url, "http://127.0.0.1:8787/?token=legacy-only-token")
+                self.assertEqual(os.environ["RELAY_WEB_TOKEN"], "legacy-only-token")
+            vault_path = secrets_host_file(Host.open(host_dir))
+            self.assertEqual(
+                json.loads(vault_path.read_text(encoding="utf-8"))["RELAY_WEB_TOKEN"],
+                "legacy-only-token",
+            )
+            self.assertFalse((host_dir / "secrets.json").exists())
+
+    def test_serve_command_writes_and_releases_serve_json(self):
+        import json
+        import os
+        import sys
+        import tempfile
+        import types
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from agents_workspace import Host
+        from klanker.__main__ import main as cli_main
+        from klanker.sensing import HostCapabilities
+
+        with tempfile.TemporaryDirectory() as td:
+            fake_home = Path(td) / "home"
+            fake_home.mkdir()
+            host_dir = Path(td) / "host"
+            Host.open(host_dir).create("default")
+            state_file = host_dir / "run" / "serve.json"
+            observed: dict[str, object] = {}
+
+            def fake_relay_main(argv):
+                observed["argv"] = argv
+                observed["state"] = json.loads(state_file.read_text(encoding="utf-8"))
+                return 0
+
+            fake_relay_pkg = types.ModuleType("agents_relay")
+            fake_relay_main_mod = types.ModuleType("agents_relay.__main__")
+            fake_relay_main_mod.main = fake_relay_main
+            fake_relay_pkg.__main__ = fake_relay_main_mod
+
+            caps = HostCapabilities(
+                os_name="test",
+                is_tty=False,
+                python_version="3.10.0",
+                suite_modules={"relay": True, "harness": False},
+                has_workspace=True,
+            )
+            env = {
+                k: v for k, v in os.environ.items()
+                if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "AGENTS_WORKSPACE")
+            }
+            env.update({
+                "AGENTS_HOST_DIR": str(host_dir),
+                "RELAY_HOST": "127.0.0.1",
+                "RELAY_PORT": "9123",
+                "AGENTS_NO_UPDATE_CHECK": "1",
+            })
+            with patch.dict(os.environ, env, clear=True), \
+                 patch("pathlib.Path.home", return_value=fake_home), \
+                 patch("klanker.nucleus.probe_host", return_value=caps), \
+                 patch("klanker.mgmt.install", return_value=True), \
+                 patch.dict(sys.modules, {
+                     "agents_relay": fake_relay_pkg,
+                     "agents_relay.__main__": fake_relay_main_mod,
+                 }):
+                rc = cli_main(["serve", "--no-telegram"])
+            self.assertEqual(rc, 0)
+            self.assertEqual(observed["argv"], ["serve", "--no-telegram"])
+            self.assertEqual(
+                observed["state"],
+                {"pid": os.getpid(), "port": 9123, "url": "http://127.0.0.1:9123"},
+            )
+            self.assertFalse(state_file.exists())
+            self.assertFalse((fake_home / ".klanker").exists())
 
     def test_send_verb_quotes_text(self):
         from klanker.remind import build_send_verb
