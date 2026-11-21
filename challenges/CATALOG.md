@@ -14,14 +14,17 @@ States: `open | claimed | landed | waived` · Evidence: `V | M | C | D`
 |---|---|---|---|---|---|
 | agent-identity-github-app | wire | — | any | open | D |
 | agent-teams | brain | — | any | open | D |
+| apps-reorg | serve | — | web | open | D |
 | deepseek-chat-demo-harvest | serve | — | web | open | D |
+| generative-spaces | serve | — | web | open | D |
+| goblin-harvest | serve | — | desktop | open | D |
 | intent-ui | serve | — | web | open | D |
 | sandboxed-desktop-stream | serve | — | web | open | D |
 | unified-session-history | serve | — | web | open | D |
 
 ## Unblocked now (all needs landed/waived)
 
-```agent-identity-github-app, agent-teams, deepseek-chat-demo-harvest, intent-ui, sandboxed-desktop-stream, unified-session-history
+```agent-identity-github-app, agent-teams, apps-reorg, deepseek-chat-demo-harvest, generative-spaces, goblin-harvest, intent-ui, sandboxed-desktop-stream, unified-session-history
 ```
 
 <!-- board:end -->
