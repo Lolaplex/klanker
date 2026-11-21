@@ -16,9 +16,17 @@ class TestBg(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.old = bg.BG_DIR
-        bg.BG_DIR = Path(self.tmp.name) / "bg-sessions"
-        self.addCleanup(setattr, bg, "BG_DIR", self.old)
+        self.host = Path(self.tmp.name) / "host"
+        self.old_env = os.environ.get("AGENTS_HOST_DIR")
+        os.environ["AGENTS_HOST_DIR"] = str(self.host)
+        self.addCleanup(self._restore_env)
+        self.bg_dir = self.host / "run" / "bg-sessions"
+
+    def _restore_env(self):
+        if self.old_env is None:
+            os.environ.pop("AGENTS_HOST_DIR", None)
+        else:
+            os.environ["AGENTS_HOST_DIR"] = self.old_env
 
     def test_spawn_writes_meta(self):
         class FakeProc:
@@ -29,7 +37,7 @@ class TestBg(unittest.TestCase):
         self.assertEqual(meta["pid"], 4321)
         self.assertEqual(meta["status"], "spawned")
         self.assertTrue(Path(meta["log"]).exists() or True)  # created by open()
-        row = json.loads((bg.BG_DIR / f"{meta['id']}.json").read_text())
+        row = json.loads((self.bg_dir / f"{meta['id']}.json").read_text())
         self.assertEqual(row["task"], "say hi")
         argv = popen.call_args.args[0]
         self.assertIn("_bg-run", argv)
@@ -88,6 +96,78 @@ class TestBg(unittest.TestCase):
         self.assertTrue(args.follow)
         args, _ = parse_cli_args(["kill", "bg_1"])
         self.assertEqual(args.id, "bg_1")
+
+    def test_spawn_run_child_and_restart_honor_workspace_and_workdir(self):
+        from agents_workspace import Host
+
+        class FakeProc:
+            pid = 9876
+
+        Host.from_env().create("alpha")
+        Host.from_env().create("beta")
+        wd = Path(self.tmp.name) / "repo"
+        wd.mkdir()
+
+        with patch("subprocess.Popen", return_value=FakeProc()) as popen:
+            meta = bg.spawn("build app", user="alice", provider="echo", workspace="alpha", workdir=str(wd))
+        self.assertEqual(meta["workspace"], "alpha")
+        self.assertEqual(meta["workdir"], str(wd))
+        child_env = popen.call_args.kwargs["env"]
+        self.assertEqual(child_env["AGENTS_WORKSPACE"], "alpha")
+        self.assertEqual(Path(child_env["AGENTS_WORKDIR"]).resolve(), wd.resolve())
+
+        with patch("subprocess.Popen", return_value=FakeProc()):
+            bg.spawn("other task", workspace="beta")
+        alpha_rows = bg.list_sessions(workspace="alpha")
+        self.assertEqual([r["id"] for r in alpha_rows], [meta["id"]])
+
+        with patch("klanker.nucleus.Nucleus.run_turn", return_value=0) as rt:
+            rc = bg.run_child(meta["id"], user="", provider="")
+        self.assertEqual(rc, 0)
+        self.assertEqual(rt.call_args.kwargs["workspace"].id, "alpha")
+        self.assertEqual(rt.call_args.kwargs["workdir"], str(wd))
+        self.assertEqual(rt.call_args.kwargs["provider"], "echo")
+
+        with patch("subprocess.Popen", return_value=FakeProc()) as popen2:
+            restarted = bg.restart(meta["id"])
+        self.assertNotEqual(restarted["id"], meta["id"])
+        self.assertEqual(restarted["workspace"], "alpha")
+        self.assertEqual(restarted["workdir"], str(wd))
+        self.assertEqual(popen2.call_args.kwargs["env"]["AGENTS_WORKSPACE"], "alpha")
+
+    def test_legacy_workspace_dir_emits_deprecation_warning(self):
+        import warnings
+
+        legacy_wd = Path(self.tmp.name) / "legacy-wd"
+        legacy_wd.mkdir()
+        new_wd = Path(self.tmp.name) / "new-wd"
+        new_wd.mkdir()
+        with patch.dict(
+            os.environ,
+            {"AGENTS_WORKSPACE_DIR": str(legacy_wd)},
+            clear=False,
+        ):
+            os.environ.pop("AGENTS_WORKDIR", None)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                _ws_id, wd, _ws = bg._resolve_bg_context()
+            self.assertEqual(wd, str(legacy_wd))
+            self.assertTrue(
+                any(
+                    issubclass(w.category, DeprecationWarning)
+                    and "AGENTS_WORKSPACE_DIR" in str(w.message)
+                    for w in caught
+                )
+            )
+            os.environ["AGENTS_WORKDIR"] = str(new_wd)
+            with warnings.catch_warnings(record=True) as caught2:
+                warnings.simplefilter("always")
+                _ws_id, wd2, _ws = bg._resolve_bg_context()
+            self.assertEqual(wd2, str(new_wd))
+            self.assertEqual(
+                [w for w in caught2 if issubclass(w.category, DeprecationWarning)],
+                [],
+            )
 
 
 if __name__ == "__main__":

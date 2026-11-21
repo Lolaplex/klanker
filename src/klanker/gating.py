@@ -1,10 +1,12 @@
-"""Serve-time Telegram allowlist and opt-in approval command."""
+"""Serve-time Telegram allowlist, host approval paths, and opt-in approval command."""
 
 from __future__ import annotations
 
 import math
 import os
 import shlex
+from pathlib import Path
+from typing import Any
 
 APPROVAL_TIMEOUT_SEC = 300
 APPROVAL_CMD = f"agents-relay approve --user {{user}} --timeout {APPROVAL_TIMEOUT_SEC}"
@@ -12,6 +14,57 @@ APPROVAL_CMD = f"agents-relay approve --user {{user}} --timeout {APPROVAL_TIMEOU
 # fallback when the command has no ``--timeout``. ``AGENTS_APPROVAL_TIMEOUT`` overrides both.
 HARNESS_APPROVAL_GRACE_SEC = 15
 HARNESS_APPROVAL_FALLBACK_SEC = 330
+_ALLOWLIST_OFF = frozenset({"0", "off", "none", "false", "no"})
+
+
+def approval_dir() -> Path:
+    """Host-owned approval dir ``<host>/run/approvals``."""
+    from agents_workspace import Host
+
+    return Host.from_env().run / "approvals"
+
+
+def approval_tokens_dir() -> Path:
+    """Host-owned ephemeral approval token dir ``<host>/run/approvals/tokens``."""
+    return approval_dir() / "tokens"
+
+
+def _is_inside_workspace(path: Path, host: Any) -> bool:
+    try:
+        resolved = path.expanduser().resolve(strict=False)
+        ws_root = Path(host.workspaces_dir).expanduser().resolve(strict=False)
+    except OSError:
+        return False
+    return resolved == ws_root or resolved.is_relative_to(ws_root)
+
+
+def approval_allowlist_path() -> Path | None:
+    """Host-owned tool approval allowlist path, or None when disabled.
+
+    Never resolves inside ``<host>/workspaces/`` so approval allowlists cannot
+    be planted or leaked inside a workspace tree.
+    """
+    from agents_workspace import Host
+
+    host = Host.from_env()
+    default = host.dir / "approval-allowlist.json"
+    raw = os.environ.get("AGENTS_APPROVAL_ALLOWLIST", "").strip()
+    if not raw:
+        return default
+    if raw.lower() in _ALLOWLIST_OFF:
+        return None
+    cand = Path(raw).expanduser()
+    if _is_inside_workspace(cand, host):
+        return default
+    return cand
+
+
+def approval_http_configured() -> bool:
+    """True when turn env carries both ``AGENTS_RELAY_URL`` and ``AGENTS_APPROVAL_TOKEN``."""
+    return bool(
+        os.environ.get("AGENTS_RELAY_URL", "").strip()
+        and os.environ.get("AGENTS_APPROVAL_TOKEN", "").strip()
+    )
 
 
 def approval_wait_sec() -> int:
@@ -42,11 +95,14 @@ def env_flag(name: str) -> bool:
 
 
 def _secret(key: str) -> str:
-    """ws/host secrets.json > env; env-only when the resolver cannot run."""
+    """Host secrets vault > env (``scope='host'``); never reads workspace secrets."""
     try:
         from agents_workspace import resolve_secret
 
-        return resolve_secret(key)
+        try:
+            return resolve_secret(key, scope="host")
+        except TypeError:
+            return resolve_secret(key)
     except Exception:
         return os.environ.get(key, "")
 
@@ -58,7 +114,23 @@ def telegram_would_poll(*, no_telegram: bool) -> bool:
 
 
 def allowlist_configured() -> bool:
-    return bool(os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "").strip())
+    if "TELEGRAM_ALLOWED_CHAT_IDS" in os.environ:
+        return bool(os.environ.get("TELEGRAM_ALLOWED_CHAT_IDS", "").strip())
+    if _secret("TELEGRAM_ALLOWED_CHAT_IDS").strip():
+        return True
+    try:
+        from agents_workspace import host_config
+
+        cfg = host_config()
+        for key in ("telegram_allowed_chat_ids", "allowed_chat_ids"):
+            val = cfg.get(key)
+            if isinstance(val, (list, tuple)) and any(str(v).strip() for v in val):
+                return True
+            if isinstance(val, str) and val.strip():
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def telegram_refusal(*, no_telegram: bool) -> str | None:
@@ -91,11 +163,22 @@ def apply_approval_env(*, telegram: bool = False) -> None:
     ``KLANKER_TELEGRAM_OPEN`` still sets ``AGENTS_RELAY_ALLOW_ANYONE`` when it
     is unset, which relay needs before it will poll an empty allowlist.
     An exported ``AGENTS_APPROVAL_CMD`` wins. Harness substitutes ``{user}``.
+    Host-only ``AGENTS_APPROVAL_ALLOWLIST`` is enforced if pointed into ``<ws>/``.
     """
     del telegram
     if env_flag("KLANKER_TELEGRAM_OPEN"):
         # Relay denies an empty allowlist unless this is set. Do not override an export.
         os.environ.setdefault("AGENTS_RELAY_ALLOW_ANYONE", "1")
+    raw_allowlist = os.environ.get("AGENTS_APPROVAL_ALLOWLIST", "").strip()
+    if raw_allowlist and raw_allowlist.lower() not in _ALLOWLIST_OFF:
+        try:
+            from agents_workspace import Host
+
+            host = Host.from_env()
+            if _is_inside_workspace(Path(raw_allowlist).expanduser(), host):
+                os.environ["AGENTS_APPROVAL_ALLOWLIST"] = str(host.dir / "approval-allowlist.json")
+        except Exception:
+            pass
     if not approval_opt_in():
         return
     os.environ.setdefault("AGENTS_APPROVAL_CMD", APPROVAL_CMD)

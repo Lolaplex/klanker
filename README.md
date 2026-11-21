@@ -198,8 +198,8 @@ klanker routine say "Anything new?" --name morning --user 123456 --cron "0 8 * *
 klanker routine pause morning && klanker routine run morning
 ```
 
-Remove external `runner.schedule tick` cron jobs — `serve` already
-ticks, and double-flocking `tick.lock` deadlocks.
+External schedulers: remove external `runner.schedule tick` cron jobs —
+`serve` already ticks, and double-flocking `.tick.lock` deadlocks.
 
 ## PWA, approvals, MCP
 

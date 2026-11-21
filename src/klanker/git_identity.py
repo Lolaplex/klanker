@@ -5,23 +5,72 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 import subprocess
+import sys
 import urllib.request
 from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 
+def _resolve_github_token() -> str:
+    try:
+        from agents_workspace import resolve_secret
+
+        tok = resolve_secret("GITHUB_TOKEN").strip() or resolve_secret("GH_TOKEN").strip()
+        if tok:
+            return tok
+    except Exception:
+        pass
+    return os.environ.get("GITHUB_TOKEN", "").strip() or os.environ.get("GH_TOKEN", "").strip()
+
+
+def askpass_response(prompt: str = "") -> str:
+    """Respond to ``git`` ``GIT_ASKPASS`` / ``core.askPass`` prompts without storing tokens."""
+    low = (prompt or "").lower()
+    if "username" in low:
+        return "x-access-token"
+    return _resolve_github_token()
+
+
+def _askpass_script_path(home: Path) -> Path:
+    try:
+        from agents_workspace import Host
+
+        host = Host.from_env()
+        # Use target home when caller passed an isolated/test home outside Host.
+        if home == Path(os.environ.get("HOME", str(home))):
+            host.run.mkdir(parents=True, exist_ok=True)
+            name = "git-askpass.cmd" if os.name == "nt" else "git-askpass"
+            return host.run / name
+    except Exception:
+        pass
+    name = ".git-askpass.cmd" if os.name == "nt" else ".git-askpass"
+    return home / name
+
+
+def _write_askpass_helper(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    py = sys.executable or "python3"
+    if os.name == "nt" or path.suffix.lower() in (".cmd", ".bat"):
+        content = f'@echo off\r\n"{py}" -m klanker.git_identity --askpass %1\r\n'
+    else:
+        content = f'#!/bin/sh\nexec "{py}" -m klanker.git_identity --askpass "$1"\n'
+    path.write_text(content, encoding="utf-8")
+    try:
+        if os.name != "nt":
+            os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+    except OSError as exc:
+        log.warning("Failed to chmod askpass helper: %s", exc)
+    return path
+
+
 def setup_git_identity(target_home: Path | None = None) -> dict[str, str]:
     home = target_home or Path(os.environ.get("HOME", "/data"))
     home.mkdir(parents=True, exist_ok=True)
 
-    try:
-        from agents_workspace import resolve_secret
-
-        token = resolve_secret("GITHUB_TOKEN").strip() or resolve_secret("GH_TOKEN").strip()
-    except Exception:
-        token = os.environ.get("GITHUB_TOKEN", "").strip() or os.environ.get("GH_TOKEN", "").strip()
+    token = _resolve_github_token()
     name = (
         os.environ.get("GIT_AUTHOR_NAME", "").strip()
         or os.environ.get("GIT_NAME", "").strip()
@@ -35,14 +84,16 @@ def setup_git_identity(target_home: Path | None = None) -> dict[str, str]:
 
     cred_file = home / ".git-credentials"
     gitconfig = home / ".gitconfig"
+    askpass_path = _askpass_script_path(home)
+
+    # Remove any legacy plaintext .git-credentials file.
+    if cred_file.is_file():
+        try:
+            cred_file.unlink()
+        except OSError as exc:
+            log.warning("Failed to remove legacy .git-credentials: %s", exc)
 
     if token:
-        try:
-            cred_file.write_text(f"https://x-access-token:{token}@github.com\n", encoding="utf-8")
-            cred_file.chmod(0o600)
-        except OSError as exc:
-            log.warning("Failed to write .git-credentials: %s", exc)
-
         if not name or not email:
             try:
                 req = urllib.request.Request(
@@ -75,7 +126,7 @@ def setup_git_identity(target_home: Path | None = None) -> dict[str, str]:
         email = "klanker@users.noreply.github.com"
 
     try:
-        # Strip any legacy plaintext token insteadOf sections
+        # Strip legacy plaintext token sections and store credential helpers
         if gitconfig.is_file():
             proc = subprocess.run(
                 ["git", "config", "-f", str(gitconfig), "--get-regexp", r"^url\..*\.insteadof"],
@@ -92,16 +143,22 @@ def setup_git_identity(target_home: Path | None = None) -> dict[str, str]:
                         check=False,
                         capture_output=True,
                     )
+            subprocess.run(
+                ["git", "config", "-f", str(gitconfig), "--unset-all", "credential.helper"],
+                check=False,
+                capture_output=True,
+            )
 
         if token:
+            helper = _write_askpass_helper(askpass_path)
             subprocess.run(
                 [
                     "git",
                     "config",
                     "-f",
                     str(gitconfig),
-                    "credential.helper",
-                    f"store --file {cred_file.as_posix()}",
+                    "core.askPass",
+                    helper.as_posix(),
                 ],
                 check=False,
                 capture_output=True,
@@ -124,8 +181,12 @@ def setup_git_identity(target_home: Path | None = None) -> dict[str, str]:
     except Exception as exc:
         log.warning("Failed to configure git: %s", exc)
 
-    return {"name": name, "email": email}
+    return {"name": name, "email": email, "askpass": askpass_path.as_posix() if token else ""}
 
 
 if __name__ == "__main__":
-    setup_git_identity()
+    if len(sys.argv) >= 2 and sys.argv[1] == "--askpass":
+        prompt = sys.argv[2] if len(sys.argv) >= 3 else ""
+        print(askpass_response(prompt))
+    else:
+        setup_git_identity()

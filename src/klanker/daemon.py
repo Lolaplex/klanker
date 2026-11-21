@@ -9,6 +9,7 @@ is never killed when the shell exits; ``klanker stop`` owns shutdown.
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -19,6 +20,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 DEFAULT_RELAY_URL = "http://127.0.0.1:8787"
+DEFAULT_RELAY_PORT = 8787
 
 
 def _is_loopback(url: str) -> bool:
@@ -26,8 +28,26 @@ def _is_loopback(url: str) -> bool:
     return host in {"127.0.0.1", "localhost", "::1"}
 
 
+def serve_state_path() -> Path:
+    """Per-host serve state file: ``<host>/run/serve.json``."""
+    from agents_workspace import Host
+
+    return Host.from_env().run / "serve.json"
+
+
 def daemon_pid_path() -> Path:
-    """Per-host pid file: ``<host>/run/serve.pid``."""
+    """Alias for :func:`serve_state_path` (``<host>/run/serve.json``)."""
+    return serve_state_path()
+
+
+def serve_log_path() -> Path:
+    """Per-host serve log file: ``<host>/logs/serve.log``."""
+    from agents_workspace import Host
+
+    return Host.from_env().logs / "serve.log"
+
+
+def _legacy_host_pid_path() -> Path:
     from agents_workspace import Host
 
     return Host.from_env().run / "serve.pid"
@@ -38,9 +58,58 @@ def _legacy_pid_path() -> Path:
 
 
 def _pid_path_candidates() -> list[Path]:
-    path = daemon_pid_path()
-    legacy = _legacy_pid_path()
-    return [path, legacy] if legacy != path else [path]
+    candidates: list[Path] = []
+    for path in (serve_state_path(), _legacy_host_pid_path(), _legacy_pid_path()):
+        if path not in candidates:
+            candidates.append(path)
+    return candidates
+
+
+def _parse_pid(raw: str) -> int | None:
+    text = raw.strip()
+    if not text:
+        return None
+    if text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        val = data.get("pid")
+        if isinstance(val, bool):
+            return None
+        if isinstance(val, int):
+            return val if val > 0 else None
+        if isinstance(val, str):
+            try:
+                parsed = int(val.strip())
+                return parsed if parsed > 0 else None
+            except ValueError:
+                return None
+        return None
+    try:
+        parsed = int(text)
+        return parsed if parsed > 0 else None
+    except ValueError:
+        return None
+
+
+def _port_from_url(url: str, default: int = DEFAULT_RELAY_PORT) -> int:
+    parsed = urlparse(url if "://" in url else f"http://{url}")
+    try:
+        return int(parsed.port) if parsed.port is not None else default
+    except ValueError:
+        return default
+
+
+def write_serve_state(path: Path, pid: int, port: int, url: str) -> None:
+    """Persist serve state JSON ``{"pid", "port", "url"}`` atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps({"pid": int(pid), "port": int(port), "url": url}, indent=2) + "\n"
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(payload, encoding="utf-8")
+    os.replace(tmp, path)
 
 
 _legacy_pid_warned = False
@@ -48,12 +117,16 @@ _legacy_pid_warned = False
 
 def _read_pid() -> int | None:
     global _legacy_pid_warned
+    legacy_klanker = _legacy_pid_path()
     for path in _pid_path_candidates():
         try:
-            pid = int(path.read_text(encoding="utf-8").strip())
-        except Exception:
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
             continue
-        if path == _legacy_pid_path() and not _legacy_pid_warned:
+        pid = _parse_pid(raw)
+        if pid is None:
+            continue
+        if path == legacy_klanker and not _legacy_pid_warned:
             _legacy_pid_warned = True
             import warnings
 
@@ -91,13 +164,25 @@ def _spawn_detached(argv: list[str]) -> subprocess.Popen:
         kwargs["startupinfo"] = si
     else:
         kwargs["start_new_session"] = True
-    return subprocess.Popen(
-        argv,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        **kwargs,
-    )
+    log_fh = None
+    try:
+        log_path = serve_log_path()
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_fh = open(log_path, "ab")
+    except OSError:
+        log_fh = None
+    stream = log_fh if log_fh is not None else subprocess.DEVNULL
+    try:
+        return subprocess.Popen(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=stream,
+            stderr=stream,
+            **kwargs,
+        )
+    finally:
+        if log_fh is not None:
+            log_fh.close()
 
 
 def ensure_daemon(url: str = DEFAULT_RELAY_URL, *, wait: float = 20.0) -> bool:
@@ -112,9 +197,7 @@ def ensure_daemon(url: str = DEFAULT_RELAY_URL, *, wait: float = 20.0) -> bool:
     if not _is_loopback(base):
         return False
     proc = _spawn_detached([sys.executable, "-m", "klanker", "serve"])
-    path = daemon_pid_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(str(proc.pid), encoding="utf-8")
+    write_serve_state(serve_state_path(), proc.pid, _port_from_url(base), base)
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
         if relay_health(base):
@@ -126,9 +209,10 @@ def ensure_daemon(url: str = DEFAULT_RELAY_URL, *, wait: float = 20.0) -> bool:
 
 
 def release_pid_file(path: Path, pid: int) -> None:
-    """Remove the pid file only if it still names this process."""
+    """Remove the pid/state file only if it still names this process."""
     try:
-        if path.read_text(encoding="utf-8").strip() == str(pid):
+        parsed = _parse_pid(path.read_text(encoding="utf-8"))
+        if parsed is not None and parsed == pid:
             path.unlink()
     except OSError:
         pass

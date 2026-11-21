@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from klanker.git_identity import setup_git_identity
+from klanker.git_identity import askpass_response, setup_git_identity
 
 
 class TestGitIdentity(unittest.TestCase):
@@ -54,14 +54,18 @@ class TestGitIdentity(unittest.TestCase):
             self.assertIn("name = Alice", content)
             self.assertIn("email = alice@example.com", content)
 
-    def test_token_writes_credentials_and_queries_github_user(self):
+    def test_token_configures_askpass_without_plaintext_credentials(self):
         mock_response = MagicMock()
         mock_response.status = 200
         mock_response.read.return_value = b'{"login": "felixk", "id": 12345}'
         mock_response.__enter__.return_value = mock_response
 
+        cred_file = self.home / ".git-credentials"
+        cred_file.write_text("https://x-access-token:oldleak@github.com\n", encoding="utf-8")
+
         extra = {
             "GITHUB_TOKEN": "ghp_mocktoken123",
+            "AGENTS_HOST_DIR": str(self.home / ".agents"),
         }
         with patch.dict(os.environ, self._clean_env(extra), clear=True):
             with patch("urllib.request.urlopen", return_value=mock_response):
@@ -69,14 +73,27 @@ class TestGitIdentity(unittest.TestCase):
                 self.assertEqual(res["name"], "felixk")
                 self.assertEqual(res["email"], "12345+felixk@users.noreply.github.com")
 
-                cred_file = self.home / ".git-credentials"
-                self.assertTrue(cred_file.exists())
-                self.assertIn("x-access-token:ghp_mocktoken123@github.com", cred_file.read_text(encoding="utf-8"))
+                self.assertFalse(cred_file.exists())
+                askpass_file = Path(res["askpass"])
+                self.assertTrue(askpass_file.is_file())
+                self.assertNotIn(
+                    "ghp_mocktoken123", askpass_file.read_text(encoding="utf-8")
+                )
 
                 gitconfig = self.home / ".gitconfig"
                 content = gitconfig.read_text(encoding="utf-8")
-                self.assertIn("helper = store --file", content)
+                self.assertIn("askPass", content)
+                self.assertNotIn("helper = store --file", content)
+                self.assertNotIn("ghp_mocktoken123", content)
                 self.assertNotIn("insteadof", content.lower())
+                self.assertEqual(
+                    askpass_response("Username for 'https://github.com': "),
+                    "x-access-token",
+                )
+                self.assertEqual(
+                    askpass_response("Password for 'https://github.com': "),
+                    "ghp_mocktoken123",
+                )
 
 
 if __name__ == "__main__":

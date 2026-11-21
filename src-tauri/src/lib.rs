@@ -8,7 +8,16 @@ pub mod serve;
 pub mod tray;
 pub mod updater;
 
+use std::path::PathBuf;
 use tauri::Manager;
+
+/// Host root for desktop infra (`~/.agents`), deliberately ignoring
+/// `AGENTS_HOST_DIR` so tests and CI never hijack the desktop registry.
+pub(crate) fn desktop_host_dir() -> Result<PathBuf, String> {
+    dirs::home_dir()
+        .map(|h| h.join(".agents"))
+        .ok_or_else(|| "no home dir".to_string())
+}
 
 #[tauri::command]
 fn secret_get(account: String) -> Option<String> {

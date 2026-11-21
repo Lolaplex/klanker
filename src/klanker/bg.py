@@ -2,7 +2,7 @@
 
 Each `klanker bg "<task>"` spawns a detached `klanker _bg-run` child that runs
 one non-interactive harness turn. Session bookkeeping is two flat files under
-``~/.agents/bg-sessions/`` — ``<id>.json`` (pid, task, status) and ``<id>.log``
+``<host>/run/bg-sessions/`` — ``<id>.json`` (pid, task, status) and ``<id>.log``
 (merged child output). No daemon, no broker: subprocess + file descriptors.
 """
 
@@ -18,12 +18,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-BG_DIR = Path.home() / ".agents" / "bg-sessions"
-
-
 def _dir() -> Path:
-    BG_DIR.mkdir(parents=True, exist_ok=True)
-    return BG_DIR
+    from agents_workspace import Host
+    d = Host.from_env().run / "bg-sessions"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 def _meta_path(bid: str) -> Path:
@@ -119,17 +118,56 @@ def _status(meta: dict[str, Any]) -> str:
     return state or "exited"
 
 
-def spawn(task: str, *, user: str = "user", provider: str = "") -> dict[str, Any]:
+def _resolve_bg_context(
+    workspace: str = "", workdir: str = ""
+) -> tuple[str, str, Any]:
+    """Resolve (workspace_id, workdir, Workspace | None) without failing when no ws exists."""
+    from agents_workspace import Host, Workspace
+    from agents_workspace.compat import read_alias
+
+    ws_id = (workspace or "").strip() or os.environ.get("AGENTS_WORKSPACE", "").strip()
+    wd = (workdir or "").strip() or read_alias(
+        None, "AGENTS_WORKDIR", "AGENTS_WORKSPACE_DIR"
+    )
+    ws_obj = None
+    if ws_id:
+        host = Host.from_env()
+        if not host.workspace_exists(ws_id):
+            raise ValueError(f"unknown workspace: {ws_id}")
+        ws_obj = host.workspace(ws_id)
+    else:
+        try:
+            ws_obj = Workspace.from_env()
+            ws_id = ws_obj.id
+        except Exception:
+            ws_obj = None
+    if not wd and ws_obj is not None:
+        wd = str(ws_obj.workdir)
+    return ws_id, wd, ws_obj
+
+
+def spawn(
+    task: str,
+    *,
+    user: str = "user",
+    provider: str = "",
+    workspace: str = "",
+    workdir: str = "",
+) -> dict[str, Any]:
     """Detach one background turn. Returns the session row."""
     task = (task or "").strip()
     if not task:
         raise ValueError("task is required")
+    ws_id, wd, ws_obj = _resolve_bg_context(workspace=workspace, workdir=workdir)
     bid = "bg_" + secrets.token_hex(4)
     meta: dict[str, Any] = {
         "id": bid,
         "session": f"ses_{bid}",
         "task": task,
         "user": user,
+        "provider": provider or "",
+        "workspace": ws_id,
+        "workdir": wd,
         "pid": 0,
         "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "status": "spawned",
@@ -147,6 +185,8 @@ def spawn(task: str, *, user: str = "user", provider: str = "") -> dict[str, Any
         "stdin": subprocess.DEVNULL,
         "close_fds": True,
     }
+    if ws_obj is not None:
+        kwargs["env"] = ws_obj.env(workdir=wd) if wd else ws_obj.env()
     if os.name == "nt":
         kwargs["creationflags"] = (
             subprocess.CREATE_NO_WINDOW
@@ -162,11 +202,16 @@ def spawn(task: str, *, user: str = "user", provider: str = "") -> dict[str, Any
     return meta
 
 
-def list_sessions() -> list[dict[str, Any]]:
+def list_sessions(*, workspace: str = "") -> list[dict[str, Any]]:
     rows = []
+    ws_filter = (workspace or "").strip()
     for path in sorted(_dir().glob("bg_*.json")):
         meta = _read_meta(path.stem)
         if not meta:
+            continue
+        meta.setdefault("workspace", "")
+        meta.setdefault("workdir", "")
+        if ws_filter and meta.get("workspace") != ws_filter:
             continue
         meta["status"] = _status(meta)
         rows.append(meta)
@@ -177,8 +222,24 @@ def list_sessions() -> list[dict[str, Any]]:
 def find(bid: str) -> dict[str, Any]:
     meta = _read_meta(bid)
     if meta:
+        meta.setdefault("workspace", "")
+        meta.setdefault("workdir", "")
         meta["status"] = _status(meta)
     return meta
+
+
+def restart(bid: str) -> dict[str, Any]:
+    """Restart an existing background job preserving its workspace and workdir."""
+    meta = _read_meta(bid)
+    if not meta:
+        raise ValueError(f"unknown session: {bid}")
+    return spawn(
+        str(meta.get("task") or ""),
+        user=str(meta.get("user") or "user"),
+        provider=str(meta.get("provider") or ""),
+        workspace=str(meta.get("workspace") or ""),
+        workdir=str(meta.get("workdir") or ""),
+    )
 
 
 def kill(bid: str) -> dict[str, Any]:
@@ -243,14 +304,26 @@ def run_child(bid: str, *, user: str, provider: str) -> int:
     meta["status"] = "running"
     _write_meta(meta)
     try:
+        from agents_workspace import Host
         from .nucleus import Nucleus
 
+        ws_ref = str(meta.get("workspace") or "").strip()
+        wd = str(meta.get("workdir") or "").strip()
+        ws_obj = None
+        if ws_ref:
+            host = Host.from_env()
+            if not host.workspace_exists(ws_ref):
+                raise ValueError(f"unknown workspace: {ws_ref}")
+            ws_obj = host.workspace(ws_ref)
+        eff_provider = provider or str(meta.get("provider") or "").strip() or None
         rc = Nucleus().run_turn(
             message=str(meta.get("task") or ""),
-            user=user or "user",
+            user=user or str(meta.get("user") or "user"),
             session=str(meta.get("session") or f"ses_{bid}"),
             channel="bg",
-            provider=provider or None,
+            provider=eff_provider,
+            workspace=ws_obj,
+            workdir=wd,
         )
     except Exception as exc:  # child must always write its end state
         print(f"bg run failed: {exc}", file=sys.stderr)
@@ -273,6 +346,8 @@ def dispatch(args) -> int:
                 getattr(args, "task", "") or "",
                 user=getattr(args, "user", "user") or "user",
                 provider=getattr(args, "provider", "") or "",
+                workspace=getattr(args, "workspace", "") or "",
+                workdir=getattr(args, "workdir", "") or "",
             )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -280,7 +355,7 @@ def dispatch(args) -> int:
         print(f"{meta['id']} pid {meta['pid']} — logs: klanker logs {meta['id']}")
         return 0
     if command == "ps":
-        print(_fmt_rows(list_sessions()))
+        print(_fmt_rows(list_sessions(workspace=getattr(args, "workspace", "") or "")))
         return 0
     if command == "logs":
         bid = getattr(args, "id", "") or ""

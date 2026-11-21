@@ -18,8 +18,8 @@ def _default_project() -> str:
 
 
 def _repl_prefs_path() -> Path:
-    from agents_workspace import Workspace
-    new = Workspace.from_env().host.clients / "shell" / "prefs.json"
+    from agents_workspace import Host
+    new = Host.from_env().clients / "shell" / "prefs.json"
     if not new.exists():
         legacy = Path.cwd() / ".agents" / "repl" / "prefs.json"
         if legacy.is_file():

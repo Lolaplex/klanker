@@ -514,18 +514,37 @@ def default_turn(
     ]
     if loop_supports_detached_session():
         cmd.append("--detached-session")
-    hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL}
-    if sys.platform == "win32":
-        hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=timeout,
-        check=False,
-        env=workspace.env() if workspace is not None else None,
-        **hidden,
-    )
+    ws = workspace or _job_workspace(job)
+    if ws is not None:
+        from agents_workspace.runtime import (
+            isolation_of,
+            run as ws_run,
+            to_container_argv,
+            to_container_env,
+        )
+        from .nucleus import _provider_key_env
+
+        isolation = isolation_of(ws)
+        role = "container" if isolation == "container" else "turn"
+        key_env = _provider_key_env(provider)
+        env = ws.env(role=role, provider_key_env=key_env)
+        if isolation == "container":
+            cmd = to_container_argv(ws, cmd)
+            env = to_container_env(ws, env)
+        proc = ws_run(ws, cmd, env, capture=True, timeout=timeout)
+    else:
+        hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL}
+        if sys.platform == "win32":
+            hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+            env=None,
+            **hidden,
+        )
     return int(proc.returncode), extract_reply(proc.stdout or "")
 
 

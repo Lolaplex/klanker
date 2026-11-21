@@ -737,6 +737,70 @@ class TestGatingAndDocs(unittest.TestCase):
             self.assertNotIn("AGENTS_APPROVAL_CMD", os.environ)
             self.assertEqual(os.environ["AGENTS_APPROVAL_MODE"], "off")
 
+    def test_host_anchored_approvals_and_secrets(self):
+        from agents_workspace import Host, write_secret
+        from agents_workspace.secrets import secrets_ws_file
+        from klanker.gating import (
+            _secret,
+            allowlist_configured,
+            approval_allowlist_path,
+            approval_dir,
+            approval_http_configured,
+            approval_tokens_dir,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            host_dir = Path(tmp) / "host"
+            ws_dir = host_dir / "workspaces"
+            ws_allowlist = ws_dir / "demo" / "approval-allowlist.json"
+            with patch.dict(
+                os.environ,
+                {"AGENTS_HOST_DIR": str(host_dir), "AGENTS_WORKSPACE": "demo"},
+                clear=False,
+            ):
+                os.environ.pop("AGENTS_WORKSPACES_DIR", None)
+                os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+                os.environ.pop("TELEGRAM_ALLOWED_CHAT_IDS", None)
+                os.environ.pop("AGENTS_RELAY_ALLOW_ANYONE", None)
+                os.environ.pop("AGENTS_RELAY_URL", None)
+                os.environ.pop("AGENTS_APPROVAL_TOKEN", None)
+                os.environ.pop("AGENTS_APPROVAL_ALLOWLIST", None)
+                os.environ.pop("AGENTS_APPROVAL_CMD", None)
+                os.environ.pop("AGENTS_APPROVAL_MODE", None)
+
+                ws = Host.from_env().create("demo")
+                ws_secret_path = secrets_ws_file(ws)
+                ws_secret_path.parent.mkdir(parents=True, exist_ok=True)
+                ws_secret_path.write_text(
+                    json.dumps({"TELEGRAM_BOT_TOKEN": "ws-leak", "TELEGRAM_ALLOWED_CHAT_IDS": "99"}),
+                    encoding="utf-8",
+                )
+                ws_allowlist.parent.mkdir(parents=True, exist_ok=True)
+                ws_allowlist.write_text(json.dumps(["shell"]), encoding="utf-8")
+
+                self.assertEqual(approval_dir(), host_dir / "run" / "approvals")
+                self.assertEqual(approval_tokens_dir(), host_dir / "run" / "approvals" / "tokens")
+                self.assertEqual(_secret("TELEGRAM_BOT_TOKEN"), "")
+                self.assertFalse(allowlist_configured())
+
+                write_secret("TELEGRAM_ALLOWED_CHAT_IDS", "123", scope="host")
+                self.assertTrue(allowlist_configured())
+
+                os.environ["AGENTS_APPROVAL_ALLOWLIST"] = str(ws_allowlist)
+                self.assertEqual(approval_allowlist_path(), host_dir / "approval-allowlist.json")
+
+                os.environ["AGENTS_APPROVAL_MODE"] = "ask"
+                apply_approval_env(telegram=False)
+                self.assertEqual(
+                    os.environ.get("AGENTS_APPROVAL_ALLOWLIST"),
+                    str(host_dir / "approval-allowlist.json"),
+                )
+
+                self.assertFalse(approval_http_configured())
+                os.environ["AGENTS_RELAY_URL"] = "http://127.0.0.1:8787"
+                os.environ["AGENTS_APPROVAL_TOKEN"] = "tok"
+                self.assertTrue(approval_http_configured())
+
     def test_mcp_and_skills_sense(self):
         from klanker.config_sense import mcp_report, probe_server, skills_report
         from klanker.nucleus import Nucleus

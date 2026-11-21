@@ -17,8 +17,10 @@
 #   KLANKER_REGISTRY push target reachable from the NAS (default 127.0.0.1:9500)
 #   KLANKER_DOCKERFILE Dockerfile path relative to $SRC (default Dockerfile;
 #                      e.g. Dockerfile.nas for a deployment-specific overlay)
-#   GITHUB_TOKEN     needed while any suite repo is private (build arg only)
+#   GITHUB_TOKEN     needed while any suite repo is private (BuildKit secret mount)
 set -eu
+
+export DOCKER_BUILDKIT=1
 
 SRC="${KLANKER_SRC:-/src}"
 REF="${KLANKER_REF:-dev}"
@@ -41,8 +43,9 @@ git -C "$SRC" clean -fd -e 'Dockerfile.nas' -e 'compose.nas.*'
 
 BUST="$(date +%Y%m%d%H%M%S)"
 BUILD_ARGS="--build-arg SUITE_REF=$REF --build-arg CACHE_BUST=$BUST"
+SECRET_ARGS=""
 if [ -n "${GITHUB_TOKEN:-}" ]; then
-    BUILD_ARGS="$BUILD_ARGS --build-arg GITHUB_TOKEN=$GITHUB_TOKEN"
+    SECRET_ARGS="--secret id=github_token,env=GITHUB_TOKEN"
 else
     echo "self-deploy: GITHUB_TOKEN unset — build fails if any suite repo is private" >&2
 fi
@@ -53,13 +56,13 @@ if [ "$DOCKERFILE" != "Dockerfile" ]; then
     # that is what tracks $REF — then layer the overlay on the fresh base.
     echo "self-deploy: building base image first (ref=$REF)"
     # shellcheck disable=SC2086
-    docker build $BUILD_ARGS -f "$SRC/Dockerfile" -t "$LOCAL" "$SRC"
+    docker build $BUILD_ARGS $SECRET_ARGS -f "$SRC/Dockerfile" -t "$LOCAL" "$SRC"
     echo "self-deploy: layering overlay $DOCKERFILE on fresh base"
     docker build --build-arg "BASE_IMAGE=$LOCAL" -f "$SRC/$DOCKERFILE" -t "$LOCAL" "$SRC"
 else
     echo "self-deploy: building $LOCAL (ref=$REF, dockerfile=$DOCKERFILE)"
     # shellcheck disable=SC2086
-    docker build $BUILD_ARGS -f "$SRC/$DOCKERFILE" -t "$LOCAL" "$SRC"
+    docker build $BUILD_ARGS $SECRET_ARGS -f "$SRC/$DOCKERFILE" -t "$LOCAL" "$SRC"
 fi
 
 for tag in $TAGS; do

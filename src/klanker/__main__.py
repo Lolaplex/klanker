@@ -31,68 +31,41 @@ def _maybe_generate_web_token(no_auth: bool) -> str:
 
     An explicit ``RELAY_WEB_TOKEN`` always wins. ``--no-auth`` or
     ``RELAY_NO_AUTH=1`` is the only way to serve unprotected. Otherwise the
-    token is pinned machine-wide in ``~/.klanker/relay-secret`` so every
-    serve on this host — CLI or desktop-spawned, any workspace — shares one
-    bearer. ``<host>/secrets.json`` is kept in sync for older clients.
+    token is stored in the host secret vault (``RELAY_WEB_TOKEN``,
+    ``scope="host"``) with a one-release read-only fallback to legacy
+    ``~/.klanker/relay-secret``.
     """
     no_auth = no_auth or os.environ.get("RELAY_NO_AUTH", "").strip().lower() in (
         "1", "true", "yes")
     if os.environ.get("RELAY_WEB_TOKEN") or no_auth:
         return ""
-    import json
     import secrets
 
-    from pathlib import Path
+    from agents_workspace import Host, resolve_secret, write_secret
 
-    pin = Path.home() / ".klanker" / "relay-secret"
-
-    def _read_pin() -> str:
-        try:
-            return pin.read_text("utf-8").strip()
-        except OSError:
-            return ""
-
-    def _write_pin(value: str) -> None:
-        try:
-            pin.parent.mkdir(parents=True, exist_ok=True)
-            tmp = pin.with_name(pin.name + ".tmp")
-            tmp.write_text(value + "\n", "utf-8")
-            os.replace(tmp, pin)
-        except OSError:
-            pass
-
-    def _mirror_host_secret(value: str) -> None:
-        try:
-            from agents_workspace import Host
-
-            path = Host.from_env().secrets
-            data = json.loads(path.read_text("utf-8")) if path.exists() else {}
-            if data.get("RELAY_WEB_TOKEN") == value:
-                return
-            data["RELAY_WEB_TOKEN"] = value
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(json.dumps(data, indent=2) + "\n", "utf-8")
-            os.replace(tmp, path)
-        except Exception:
-            pass
-
-    token = _read_pin()
+    host_obj = Host.from_env()
+    token = resolve_secret("RELAY_WEB_TOKEN", host=host_obj, scope="host").strip()
+    need_persist = False
     if not token:
+        pin = Path.home() / ".klanker" / "relay-secret"
         try:
-            from agents_workspace import resolve_secret
-
-            token = resolve_secret("RELAY_WEB_TOKEN")
-        except ImportError:
-            pass
+            token = pin.read_text("utf-8").strip()
+        except OSError:
+            token = ""
+        if token:
+            need_persist = True
     if not token:
         token = secrets.token_urlsafe(24)
-    _write_pin(token)
-    _mirror_host_secret(token)
+        need_persist = True
+    if need_persist:
+        try:
+            write_secret("RELAY_WEB_TOKEN", token, host=host_obj, scope="host")
+        except OSError as exc:
+            log.warning("failed to persist RELAY_WEB_TOKEN to host vault: %s", exc)
     os.environ["RELAY_WEB_TOKEN"] = token
-    host = os.environ.get("RELAY_HOST", "127.0.0.1")
+    bind_host = os.environ.get("RELAY_HOST", "127.0.0.1")
     port = os.environ.get("RELAY_PORT", "8787")
-    return f"http://{host}:{port}/?token={token}"
+    return f"http://{bind_host}:{port}/?token={token}"
 
 
 def apply_workdir(raw: str | None) -> int | None:
@@ -193,7 +166,10 @@ def build_parser() -> argparse.ArgumentParser:
     # 1b4. Detached background runner
     bg_p = sub.add_parser("bg", help="Spawn a detached background turn (klanker ps/logs/kill)")
     bg_p.add_argument("task", type=str, help="Task for the background turn")
+    bg_p.add_argument("--workspace", default=argparse.SUPPRESS, help="Data workspace id (AGENTS_WORKSPACE)")
+    bg_p.add_argument("--workdir", default=argparse.SUPPRESS, help="Working directory (AGENTS_WORKDIR)")
     ps_p = sub.add_parser("ps", help="List background sessions")
+    ps_p.add_argument("--workspace", default=argparse.SUPPRESS, help="Filter by workspace id")
     logs_p = sub.add_parser("logs", help="Print a background session's log")
     logs_p.add_argument("id", type=str, help="bg_<id> session id")
     logs_p.add_argument("-f", "--follow", action="store_true", help="Follow the log until the child exits")
@@ -663,13 +639,22 @@ def main(argv: list[str] | None = None) -> int:
 
         from . import daemon as _daemon
 
-        pid_path = _daemon.daemon_pid_path()
-        pid_path.parent.mkdir(parents=True, exist_ok=True)
-        pid_path.write_text(str(os.getpid()), encoding="utf-8")
+        state_path = _daemon.serve_state_path()
+        bind_host = os.environ.get("RELAY_HOST", "127.0.0.1").strip() or "127.0.0.1"
+        try:
+            bind_port = int(os.environ.get("RELAY_PORT", "8787").strip() or "8787")
+        except ValueError:
+            bind_port = _daemon.DEFAULT_RELAY_PORT
+        _daemon.write_serve_state(
+            state_path,
+            os.getpid(),
+            bind_port,
+            f"http://{bind_host}:{bind_port}",
+        )
         try:
             return relay_main(sub_argv)
         finally:
-            _daemon.release_pid_file(pid_path, os.getpid())
+            _daemon.release_pid_file(state_path, os.getpid())
 
     elif args.command == "routine":
         from .routine import dispatch

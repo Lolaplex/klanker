@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # --- stage 1: dashboard build (node is discarded, runtime is python-only) ---
 FROM node:22-alpine AS web
 RUN corepack enable
@@ -20,11 +21,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git ca-cer
 
 WORKDIR /app
 
-ARG GITHUB_TOKEN
-
-RUN if [ -n "$GITHUB_TOKEN" ]; then \
-        git config --global url."https://${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"; \
-    fi
+# Private suite repos authenticate via BuildKit secret mount `id=github_token`
+# during pip install so no token ever enters ARG, ENV, .gitconfig, or image layers.
 
 # agents-browser is the Python CDP client only. Chromium is not installed;
 # set AGENTS_BROWSER_BIN when a browser binary is required.
@@ -59,11 +57,17 @@ ARG STORE_REF=${SUITE_REF}
 # dep there reaches the image automatically; the *_REF ARGs stay the
 # per-package override surface. One resolver pass also orders the
 # workspace contract before its dependents.
-RUN echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}" && \
-    python scripts/dev-suite.py --emit > /tmp/suite-reqs.txt && \
-    pip install --no-cache-dir -r /tmp/suite-reqs.txt && \
-    pip install --no-cache-dir . && \
-    (git config --global --remove-section url."https://${GITHUB_TOKEN}@github.com/" 2>/dev/null || true)
+RUN --mount=type=secret,id=github_token \
+    set -eu; \
+    if [ -s /run/secrets/github_token ]; then \
+        export GIT_CONFIG_COUNT=1; \
+        export GIT_CONFIG_KEY_0=credential.helper; \
+        export GIT_CONFIG_VALUE_0='!f() { echo username=x-access-token; printf "password=%s\n" "$(tr -d "\r\n" </run/secrets/github_token)"; }; f'; \
+    fi; \
+    echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}"; \
+    python scripts/dev-suite.py --emit > /tmp/suite-reqs.txt; \
+    pip install --no-cache-dir -r /tmp/suite-reqs.txt; \
+    pip install --no-cache-dir .
 
 # Optional ACP agent for agents-relay acp-run: INSTALL_DEVIN=1 bakes
 # devin-cli into the image (AGENTS_ACP_CMD="devin acp"; credentials live
