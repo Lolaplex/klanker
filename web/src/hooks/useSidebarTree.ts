@@ -23,8 +23,8 @@ export function useSidebarTree(args: {
   setWorkspaces: (rows: { id: string; label?: string }[]) => void;
   treePersonas: Record<string, PersonaRow[]>;
   setTreePersonas: React.Dispatch<React.SetStateAction<Record<string, PersonaRow[]>>>;
-  serverSessions: Record<string, { id: string; goal?: string }[]>;
-  setServerSessions: React.Dispatch<React.SetStateAction<Record<string, { id: string; goal?: string }[]>>>;
+  serverSessions: Record<string, { id: string; goal?: string; title?: string }[]>;
+  setServerSessions: React.Dispatch<React.SetStateAction<Record<string, { id: string; goal?: string; title?: string }[]>>>;
   sessionTitles: Record<string, string>;
   setSessionTitles: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   expandWs: (ws: string) => void;
@@ -35,7 +35,7 @@ export function useSidebarTree(args: {
   const { activeInstance, status, chats, setSelWs, setWsNote, evCache, onResetApprovals } = args;
   const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
   const [treePersonas, setTreePersonas] = useState<Record<string, PersonaRow[]>>({});
-  const [serverSessions, setServerSessions] = useState<Record<string, { id: string; goal?: string }[]>>({});
+  const [serverSessions, setServerSessions] = useState<Record<string, { id: string; goal?: string; title?: string }[]>>({});
   // Session titles keyed "inst ws persona session": prefetched eagerly, cached in localStorage.
   const [sessionTitles, setSessionTitles] = useState<Record<string, string>>(() => {
     try {
@@ -92,10 +92,23 @@ export function useSidebarTree(args: {
       .then((rows) => {
         const list = rows.filter((s) => s.id);
         setServerSessions((prev) => ({ ...prev, [key]: list }));
-        // Prefetch each session's events once: sidebar title + open-time restore cache.
+        // Seed titles delivered by the relay (list endpoint computes the
+        // first-user-message title server-side); only rows without one get
+        // the per-session events prefetch.
+        const seeded = list.filter((s) => s.title);
+        if (seeded.length) {
+          setSessionTitles((prev) => {
+            const next = { ...prev };
+            for (const s of seeded) {
+              const ck = `${inst.id} ${ws} ${persona} ${s.id}`;
+              if (!next[ck]) next[ck] = clipTitle(s.title!);
+            }
+            return next;
+          });
+        }
         for (const s of list) {
           const ck = `${inst.id} ${ws} ${persona} ${s.id}`;
-          if (sessionTitles[ck] || evCache.current.has(ck) || titleFetches.current.has(ck)) continue;
+          if (s.title || sessionTitles[ck] || evCache.current.has(ck) || titleFetches.current.has(ck)) continue;
           titleFetches.current.add(ck);
           void api
             .sessionEvents(inst, ws, persona, s.id)
@@ -125,11 +138,14 @@ export function useSidebarTree(args: {
       .filter((i) => !i.draft && (i.messages.length > 0 || Boolean(server?.some((s) => s.id === i.session))))
       .map((i) => {
         const first = i.messages.find((m) => m.role === "user")?.content?.trim();
+        const remote = server?.find((s) => s.id === i.session);
         return {
           chatId: i.id,
           session: i.session,
-          label: first ? clipTitle(first) : sessionTitles[`${instId} ${ws} ${persona} ${i.session}`] || "new chat",
-          pending: !server?.some((s) => s.id === i.session),
+          label: first
+            ? clipTitle(first)
+            : sessionTitles[`${instId} ${ws} ${persona} ${i.session}`] || remote?.title || remote?.goal || "new chat",
+          pending: !remote,
         };
       });
     const covered = new Set(localRows.map((r) => r.session));
@@ -138,7 +154,7 @@ export function useSidebarTree(args: {
       .map((s) => ({
         chatId: s.id,
         session: s.id,
-        label: sessionTitles[`${instId} ${ws} ${persona} ${s.id}`] || s.goal || "…",
+        label: sessionTitles[`${instId} ${ws} ${persona} ${s.id}`] || s.title || s.goal || "…",
         pending: false,
       }));
     return [...localRows, ...remoteRows];
