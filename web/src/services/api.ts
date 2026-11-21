@@ -3,7 +3,6 @@ import {
   DesktopSettings,
   DiscoveredPeer,
   KlankerInstance,
-  PresenceOffer,
   PendingApproval,
   ProcessStatus,
   TracePage,
@@ -771,43 +770,21 @@ export const api = {
   },
 
   // --- not available in the browser -----------------------------------------
-  /** Signed presence offers from the serving relay's registry —
-   *  PWA hits same-origin, desktop the managed local relay. */
-  async listPresenceOffers(): Promise<PresenceOffer[]> {
-    const res = caps.keyring
-      ? await localRelayFetch("/v1/presence/offers")
-      : await fetch("/v1/presence/offers").catch(() => null);
-    if (!res?.ok) return [];
-    const data = await res.json().catch(() => ({}));
-    return (data.offers as PresenceOffer[]) || [];
-  },
+  // Tailnet discovery: desktop uses its native CLI scan; the web surface
+  // asks the serving relay to run the same probe server-side (/v1/discover).
 
-  /** Publish a road declaration for this host via agents_keys signing. */
-  async publishPresenceOffer(
-    keySlug: string,
-    label: string,
-    roads: { kind: string; addr: string; priority?: number }[]
-  ): Promise<{ ok: boolean; reason?: string }> {
-    const body = { key_slug: keySlug, label, roads };
-    const res = caps.keyring
-      ? await localRelayFetch("/v1/presence/publish", "POST", body)
-      : await fetch("/v1/presence/publish", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }).catch(() => null);
-    if (!res) return { ok: false, reason: "relay unreachable" };
-    if (res.ok) return { ok: true };
-    const text = await res.text().catch(() => "");
-    return { ok: false, reason: text.replace(/^.*?"([^"]+)".*$/, "$1") || `HTTP ${res.status}` };
-  },
-
-  // Tailnet discovery needs a local tailscale CLI + LAN probes — desktop only.
-
-  async discoverPeers(): Promise<DiscoveredPeer[]> {
-    if (!isTauri()) return [];
+  async discoverPeers(inst?: KlankerInstance): Promise<DiscoveredPeer[]> {
+    if (isTauri()) {
+      try {
+        const peers = await invoke<DiscoveredPeer[]>("discover_peers");
+        if (peers.length) return peers;
+      } catch {}
+    }
     try {
-      return await invoke<DiscoveredPeer[]>("discover_peers");
+      const res = inst
+        ? await req<{ peers?: DiscoveredPeer[] }>(inst, "/v1/discover", { headers: headers(inst) })
+        : await fetch("/v1/discover").then((r) => (r.ok ? r.json() : { peers: [] }));
+      return res.peers || [];
     } catch {
       return [];
     }

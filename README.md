@@ -1,15 +1,17 @@
-<h1 align="center">klanker</h1>
+<p align="center">
+  <img src=".github/img/lockup.svg" alt="klanker" width="640">
+</p>
 
 <p align="center">
-  <a href="https://github.com/Lolaplex/klanker/releases"><img src="https://img.shields.io/badge/version-0.2.1-blue.svg?style=flat-square" alt="Version 0.2.1"></a>
-  <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.10+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+"></a>
   <a href="https://pypi.org/project/klanker/"><img src="https://img.shields.io/pypi/v/klanker.svg?style=flat-square" alt="PyPI"></a>
+  <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.10+-3776AB.svg?style=flat-square&logo=python&logoColor=white" alt="Python 3.10+"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="License"></a>
 </p>
 
 <p align="center">
-  <strong>Adaptive autonomous agent runtime and terminal companion.</strong><br>
-  Terminal companion, background care runner, and self-hosted assistant on agents-harness.
+  Adaptive agent distribution — brain, mouth and feelers on the
+  <a href="https://github.com/Lolaplex">Lolaplex</a> suite.<br>
+  Terminal companion, background care runner, and self-hosted assistant.
 </p>
 
 ---
@@ -17,231 +19,224 @@
 ## Quickstart
 
 ```bash
-pip install klanker
-pip install -e ".[repl]"   # shell + gateway + TUI
+pip install klanker            # or: uv tool install klanker
 
-# Interactive shell (default — real shell, not a bash frontend)
+# Interactive shell
 klanker
-klanker --plain              # stdin/stdout when no Ratatui
+klanker --plain                # stdin/stdout when no TUI
 
-# Probe host capabilities
+# Probe what this host can do
 klanker sense
 
-# One harness turn (non-interactive)
+# One harness turn, non-interactive
 klanker chat "ping"
-
-# Code in a repo: workdir is the repo root, workspace is the data id
-klanker --workdir <repo>
 klanker chat "fix the failing test" --workdir <repo>
+
+# Serve HTTP + Telegram + the PWA
+klanker serve
+# prints a minted URL once, e.g. http://127.0.0.1:8977/?token=<token>
+# open it — that is the phone/desktop chat surface
+```
+
+`klanker serve` auto-mints a `RELAY_WEB_TOKEN` unless `--no-auth` (or
+`RELAY_NO_AUTH=1`) is passed — `--no-auth` also disables the web surface.
+A workspace id selects the data boundary:
+
+```bash
+klanker --workspace work       # REPL inside data workspace "work"
 klanker chat "note this" --workspace work
 ```
 
-Klanker is **self-equipping**: when you request tools or capabilities in chat (e.g. browser automation, agent key minting), Klanker autonomously installs and equips feelers via its terminal on demand.
-
-You can also pre-install optional extras ahead of time:
+Klanker is **self-equipping**: request a capability in chat (browser
+automation, agent key minting) and it installs the matching feeler via
+its own terminal on demand. To pre-install:
 
 ```bash
 pip install "klanker[browser]"   # CDP browser automation
-pip install "klanker[keys]"      # Ed25519 agent key minting and DID resolution
-pip install "klanker[calendar]"  # CalDAV calendar integration
-pip install "klanker[all]"       # All optional extensions
+pip install "klanker[keys]"      # Ed25519 agent keys, DID resolution
+pip install "klanker[all]"       # every optional extension
 ```
 
 > [!TIP]
-> **🤖 Agent-Driven Setup:**
-> Give your coding agent **this repo** (clone or URL), then tell it to **"install klanker, sense host capabilities, and run your personal assistant."**
+> **🤖 Agent-driven setup:** point your coding agent at this repo and
+> tell it to *"install klanker, sense the host, and run my assistant"*.
 
-Dev lock-step, Docker builds, and NAS self-deploy: see [INSTALL.md](INSTALL.md).
+Dev lock-step, Docker images, NAS self-deploy: [INSTALL.md](INSTALL.md).
 
----
+## Screenshots
+
+<p align="center">
+  <img src=".github/img/dashboard.png" alt="klanker serve dashboard — workspace tree, chat stream, export" width="720">
+</p>
+<p align="center">
+  <img src=".github/img/manage.png" alt="Manage panel — installed skills, routines, memory" width="360">
+  <img src=".github/img/mobile-chat.png" alt="PWA chat on a 390px phone viewport" width="360">
+</p>
+
+All captures are the real `klanker serve` dashboard — no mockups. The
+Tauri desktop app (`src-tauri/`) is a thin shell over the same `web/` UI.
 
 ## Architecture
 
-| Layer | Responsibility | Stack / Package |
+```
+                 ┌────────────────────────────────────┐
+                 │  klanker — CLI, prompt, overlay    │
+                 └──┬───────┬──────────┬──────────┬───┘
+                    │ REPL  │ serve    │ chat     │ cron
+                    ▼       ▼          ▼          ▼
+        ┌─────────────┐  ┌──────────────────────────────┐
+        │ src-tauri   │  │ agents-relay — I/O           │
+        │ desktop app │  │ /v1/* HTTP, Telegram, PWA    │
+        └─────────────┘  └───────┬──────────────────┬───┘
+                                ▼                  ▼
+                      ┌──────────────────┐  ┌─────────────────┐
+                      │ agents-harness   │  │ feelers         │
+                      │ loop, tools,     │  │ terminal,       │
+                      │ approvals        │  │ memory, traces, │
+                      └───────┬──────────┘  │ keys, browser,  │
+                              │             │ calendar        │
+                              ▼             └─────────────────┘
+                      ┌───────────────────────────────┐
+                      │ agents-workspace — host,      │
+                      │ workspaces, personas, paths   │
+                      └───────────────────────────────┘
+```
+
+**Layering rule:** `klanker` imports no harness internals. It talks to
+the suite through CLIs (`runner.loop`, `agents_relay`,
+`agents_terminal`, `agents_memory`, `agents_traces`). The harness owns
+the loop, tools and approvals; klanker owns the prompt, the CLI surface
+and the overlay.
+
+| Layer | Responsibility | Package |
 | :--- | :--- | :--- |
-| **Workspace** | One root for memory, traces, schedules, personas, relay state | `agents-workspace` |
-| **Brain** | Deterministic loop, LLM streaming, Cordis kernel, Koru schedules | `agents-harness` |
-| **Memory** | Persistent local markdown memory and typed facts. Search covers that tree only | `agents-memory` |
-| **Observability** | Append-only JSONL event logging & turn reconstruction | `agents-traces` |
-| **I/O Gateway** | Universal inbound/outbound HTTP (`/v1/turn`, `/v1/inject`) and Telegram long-poll | `agents-relay` |
-| **Tools & Feelers** | Jailed execution, CalDAV calendar, CDP browser, agent DID keys | `agents-terminal`, `agents-calendar`, `agents-browser`, `agents-keys` |
+| Workspace | One root for memory, traces, schedules, personas, relay state | `agents-workspace` |
+| Brain | Deterministic loop, LLM streaming, schedules | `agents-harness` |
+| Memory | Persistent local markdown memory and typed facts | `agents-memory` |
+| Observability | Append-only JSONL event log, turn reconstruction | `agents-traces` |
+| I/O gateway | `/v1/turn`, `/v1/inject`, `/v1/chat/stream`, Telegram long-poll | `agents-relay` |
+| Tools & feelers | Jailed execution, CalDAV, CDP browser, DID keys | `agents-terminal`, `agents-calendar`, `agents-browser`, `agents-keys` |
+| Surfaces | PWA chat console; Tauri thin-shell desktop app | `web/`, `src-tauri/` |
 
-- **Workspace (`agents-workspace`)**: Resolves every suite path under one host (`AGENTS_HOST_DIR`, workspaces via `AGENTS_WORKSPACE=<id>`). No daemon, no network.
-- **Brain (`agents-harness`)**: Deterministic execution loop, LLM completions, Cordis job catalog, and Koru scheduled flows.
-- **Memory (`agents-memory`)**: Persistent local markdown memory and typed facts. A memory search covers that indexed tree only.
-- **Tracing (`agents-traces`)**: Zero-bloat JSONL observability and turn reconstruction.
-- **Relay (`agents-relay`)**: Stdlib HTTP and Telegram gateway for turns, alerts, and notifications.
-- **Calendar & Tools (`agents-calendar`, `agents-terminal`, optional `agents-browser`, `agents-keys`)**: Pre-wired capabilities for schedules, safe commands, and web interaction.
+## Feature matrix
 
----
-
-## Capabilities & Roadmap
-
-### Core Capabilities (Implemented)
-
-- [x] **Adaptive Host Sensing (`klanker sense`)**: Automatic host inspection and runtime discovery.
-- [x] **Autonomous Self-Equipping**: Dynamic feeler and tool self-installation via `mcp.terminal` on demand.
-- [x] **Dynamic System Prompt (`klanker prompt`)**: Context-aware prompt generation grounded in host capabilities and time.
-- [x] **Multi-Surface Shell**: Interactive REPL, one-shot CLI turns, background care worker (`cron`), and gateway server (`serve`).
-- [x] **Full Agent Tooling Integration**: Core bindings for `agents-harness`, `agents-relay`, `agents-memory`, `agents-traces`, `agents-terminal`, and `agents-calendar`.
-- [x] **Telegram Reminders**: Dynamic reminder scheduling routed to `agents-relay send`.
-
-### Planned (Roadmap)
-
-- [ ] **Graphic Architecture Map**: Visual system diagram asset hosted on GitHub.
-- [ ] **Autonomous Mesh Coordination**: Distributed multi-instance task delegation via A2A.
-- [ ] **Desktop Companion GUI**: Native workbench integration with `klanker-desktop`.
-
----
+| Capability | Surface | Status |
+| :--- | :--- | :--- |
+| Interactive REPL / one-shot turns | `klanker`, `klanker chat` | landed |
+| Host capability probe | `klanker sense [--json]` | landed |
+| Dynamic system prompt | `klanker prompt` | landed |
+| HTTP + Telegram + PWA gateway | `klanker serve` | landed |
+| Scheduled care flows, reminders, routines | `klanker cron`, `remind`, `routine` | landed |
+| Multi-workspace, per-persona sessions | `--workspace`, `/v1/workspaces` | landed |
+| PWA: streaming chat, workspace tree, export MD/JSON | `web/` on `klanker serve` | landed |
+| Management UI: skills, routines, memory | `web/` Manage panel | landed |
+| Approval gate (`ask`/`strict`) | harness + relay channel | landed |
+| Auto-recall memory + repo per turn | `recall.enabled` / `AGENTS_RECALL`, Settings toggle (`/v1/klanker/recall`) | landed |
+| Self-equipping feelers | on demand via `mcp.terminal` | landed |
+| Windows desktop app + tray | `src-tauri/` thin shell over `web/` | in progress |
+| Cross-device live turn streaming | `GET /v1/runs/stream` fan-out | landed |
+| Web push (VAPID) | `/v1/push/vapid-key`, `/v1/push/subscribe` | endpoints + client landed; send path pending |
 
 ## Commands
 
 | Command | Description |
 | :--- | :--- |
-| `klanker` | Start interactive multi-turn REPL chat |
-| `klanker --workdir <path>` | REPL with `AGENTS_WORKDIR` set and the workdir locked to that directory |
-| `klanker "message"` | Run a single turn directly in terminal |
-| `klanker sense [--json]` | Probe host capabilities, installed agent packages, MCP servers, and skills |
-| `klanker prompt [--workspace <id>]` | Inspect dynamic system prompt generated for current host |
-| `klanker chat "message" [--workspace <id>] [--workdir <path>]` | One turn inside data workspace `<id>` with session working dir |
-| `klanker serve [--no-telegram]` | Start HTTP (`/v1/turn`), the PWA at `/` when `RELAY_WEB_TOKEN` is set, Telegram long-poll, and the schedule ticker |
-| `klanker cron [--flow <name>]` | Run scheduled care flows via harness executor |
-| `klanker remind add --user <user> --channel <channel> --at <when> --text <msg>` | Fixed-text reminder on that channel |
-| `klanker routine add\|say\|list\|pause\|resume\|remove\|run` | LLM routines (`prompt` + `at` or `cron`). `say` is one sentence. `pause` keeps the job. |
-| `klanker evidence --from <day> --to <day>` | Per-day routine-run and workspace files (read-only; does not search memory or traces) |
-
----
+| `klanker` | Interactive multi-turn shell |
+| `klanker --workdir <path>` | REPL with `AGENTS_WORKDIR` set, workdir locked |
+| `klanker sense [--json]` | Probe host, agent packages, MCP servers, skills |
+| `klanker prompt [--workspace <id>]` | Print the generated system prompt |
+| `klanker chat "msg" [--workspace <id>] [--workdir <path>]` | One harness turn |
+| `klanker serve [--no-telegram] [--no-auth]` | HTTP `/v1/*`, PWA at `/`, Telegram, schedule ticker |
+| `klanker cron [--flow <name>]` | Scheduled care flows via harness executor |
+| `klanker remind add --user <u> --channel <c> --at <when> --text <msg>` | Fixed-text reminder |
+| `klanker routine add\|say\|list\|pause\|resume\|remove\|run` | LLM routines (`prompt` + `at`/`cron`) |
+| `klanker evidence --from <day> --to <day>` | Per-day routine runs and workspace files |
+| `klanker workspace create\|list` | Manage workspaces on this host |
+| `klanker persona list\|add\|inbox\|task\|handoff` | Persona registry + inbox handoffs |
+| `klanker import` | Import `~/.claude`, `~/.codex`, `~/.cursor` rules/skills/mcp into a workspace |
+| `klanker bg` + `ps`/`logs`/`kill` | Detached background turns |
+| `klanker doctor` | Config, keys, MCP health, tokens, suite versions |
+| `klanker update` | Update suite packages (git checkouts pull, installs upgrade) |
+| `klanker audit` | Trace integrity + replay verification via agents-traces |
+| `klanker stop` | Stop the local daemon |
 
 ## Workspaces
 
-A host (`AGENTS_HOST_DIR`, default `~/.agents`) holds shared infrastructure. A workspace (`<host>/workspaces/<id>`) is one data boundary: memory, rules, skills, modules, schedules, traces, routine runs, relay state, personas, config. `agents-workspace` resolves every path.
+A host (`AGENTS_HOST_DIR`, default `~/.agents`) holds shared
+infrastructure. A workspace (`<host>/workspaces/<id>`) is one data
+boundary: memory, rules, skills, modules, schedules, traces, routine
+runs, relay state, personas, config.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `AGENTS_HOST_DIR` | `~/.agents` | Host root (keys, agents.json, workspaces/) |
 | `AGENTS_WORKSPACE` | `default` | Workspace id (not a path) |
 | `AGENTS_WORKDIR` | `<ws>/work` | Session working directory (the coding cwd) |
-| `AGENTS_WORKSPACE_DIR` | — | Deprecated alias for `AGENTS_WORKDIR` (one release) |
 
-`AGENTS_HOME` stays readable as a legacy alias. `--workspace <dir>` once meant the workdir; that use warns and maps to `--workdir` for one release.
+`klanker serve` hosts every workspace on the host; a `/v1/turn` body
+picks one with `"workspace": "<id>"`. `GET /v1/workspaces` lists,
+`POST /v1/workspaces` creates. `AGENTS_HOME` remains a legacy alias;
+a directory passed to `--workspace` maps to `--workdir` with a
+deprecation warning for one release.
 
-```bash
-agents-workspace list
-agents-workspace create <id>
-agents-workspace show <id>
-```
+## Schedules, reminders, routines
 
-`klanker serve` hosts every workspace on the host. A turn picks one with `"workspace": "<id>"` in the `/v1/turn` body. `GET /v1/workspaces` lists them, `POST /v1/workspaces {"label": "..."}` creates one. `klanker routine add --workspace <id>` pins a routine to a workspace.
+`klanker serve` ticks `runner.schedule.tick()` every 60 s
+(`KLANKER_TICK=0` disables). A same-minute duplicate is dropped;
+replies that are `NO_UPDATE` are not sent. Routine turns inherit a
+timeout sized so a turn waiting on an approval is not killed first
+(`AGENTS_APPROVAL_TIMEOUT`-aware).
 
----
-
-## Schedules
-
-`klanker serve` runs a ticker every 60 seconds. `KLANKER_TICK=0` turns it off. The ticker calls `runner.schedule.tick()`.
-
-A harness that exposes `register_routine_handler` locks `<schedules>/tick.lock` inside `tick()`. Klanker does not lock that file. A second flock on it in the same process deadlocks. On older harness builds (no handler), the ticker takes a non-blocking lock on a different file, `<ws>/schedules/.tick.lock` (i.e. `$AGENTS_SCHEDULES_DIR/.tick.lock`), so two Klanker processes do not overlap. The scheduler starts each `tick()` on its own thread so a long job cannot push the next cron slot past the grace window.
-
-Routines are job files with `"kind": "routine"`. The verb is `python -m klanker routine run <name> --scheduled`, so a verb-only harness tick still runs them. Each job stores the originating `channel` and `user` (the turn channel, or `KLANKER_CHANNEL`, or `local`). A same-minute duplicate is dropped via `<name>.json.last`. Replies that are exactly `NO_UPDATE` (or start with it) are not sent. Telegram chat ids go out through `agents-relay send`. Any other channel is printed locally, including an HTTP user such as `anonymous`. `klanker routine add` without `--timezone` stores `runner.schedule.configured_timezone()` (`AGENTS_TIMEZONE`, then `TZ`, then the workspace `config.json`, else UTC). The routine turn subprocess timeout is 30 seconds under the job `timeout_sec`. The default `timeout_sec` is the harness approval wait (`AGENTS_APPROVAL_TIMEOUT`, else the approver `--timeout` plus 15 seconds) plus 330 seconds, 645 with the default approver, so a turn waiting on an approval is not killed first. Routines added through `mcp.schedule.add` without a timeout get the same default. When the installed harness accepts `--detached-session`, routine turns pass it.
-
-Each finished routine run, including `NO_UPDATE` and failures, is written under `<ws>/routine-runs/<name>/` (`AGENTS_ROUTINE_RUNS_DIR`): `index.jsonl` plus one markdown file. Each write replaces the file in one step. Runs older than 90 days, and runs past the newest 2000, are removed (`AGENTS_ROUTINE_RUNS_KEEP_DAYS`, `AGENTS_ROUTINE_RUNS_KEEP_COUNT`). Those files are not part of the memory index unless a turn adds them. `klanker evidence --from YYYY-MM-DD --to YYYY-MM-DD` lists them and the workspace by day.
-
-`klanker serve` installs the module overlay into each workspace's `modules/` dir at startup. Turns get `AGENTS_MODULES_DIR` through the workspace env (`ws.env()`), never through a process-global variable, so a turn on workspace B reads B's overlay. Harness ignores overlay modules, including `mcp.schedule.add`, unless that variable is set. A custom `LOOP_CMD` skips Klanker's system prompt and `klanker.turn` shims; serve logs a warning when it is set.
-
-`klanker.turn` is the process that runs the harness loop. When `agents-traces` is installed it registers `read_content` as the content backend, so a `<ref digest="..."/>` can be paged instead of summarized. It also registers the evidence check as the final-response hook: a side effect needs a successful `agents_harness.tool_receipt.v1`, and a memory save also needs `agents_memory.write_receipt.v1`. One revision pass runs; leftover findings are `response_flags`. Read-only terminal commands are `mcp.terminal.list`, `read`, `grep`, and `stat`. File edits use `mcp.terminal.edit` for existing files and `mcp.terminal.write` for new ones; both are mutating, so they follow the approval mode below. `mcp.terminal.run` is not the file-edit path.
+Each finished run — including `NO_UPDATE` and failures — lands under
+`<ws>/routine-runs/<name>/` (`index.jsonl` + one markdown file, atomic
+writes, pruned past 90 days / newest 2000). `klanker evidence` lists
+runs and workspace files per day.
 
 ```bash
 klanker remind add --user 123456 --channel telegram --at +10m --text "stand up"
-klanker remind add --user 123456 --channel telegram --cron "0 8 * * 1" --prompt "Weekly review" --timezone UTC
-klanker routine add --name morning --user 123456 --channel telegram --cron "0 8 * * *" --timezone UTC --prompt "Anything new?"
 klanker routine say "Anything new?" --name morning --user 123456 --cron "0 8 * * *"
-klanker routine pause morning
-klanker routine resume morning
-klanker routine list
-klanker routine run morning
-klanker routine remove morning
+klanker routine pause morning && klanker routine run morning
 ```
 
-The schedule tool `mcp.schedule.add` accepts `text` (fixed reminder) or `prompt` (routine). Passing `prompt` through the model tool depends on the harness forwarding that argument. `klanker.turn` appends `--prompt` when the current harness special-case drops it.
+Remove external `runner.schedule tick` cron jobs — `serve` already
+ticks, and double-flocking `tick.lock` deadlocks.
 
-### External schedulers (cron, systemd timer, PaaS scheduled task)
+## PWA, approvals, MCP
 
-`klanker serve` already ticks. Remove external `python -m runner.schedule tick` tasks.
-
-If you keep one, it must run as the service user. A root shell (`docker exec` without a user) creates root-owned lock and state files. Approvals are opt-in in the service environment; a shell that does not inherit `AGENTS_APPROVAL_MODE` stays ungated. Example: `setpriv --reuid=<service user> --regid=<service group> --init-groups python -m runner.schedule tick`.
-
-Do not flock `tick.lock` around that command. The harness locks it inside `tick()`, and a second flock in the same process deadlocks. `.tick.lock` is only the outer lock for harness builds that have no `register_routine_handler`.
-
-## Web app (PWA)
-
-`klanker serve` also serves the relay's built-in PWA at `/` when `RELAY_WEB_TOKEN` is set. That is the phone surface: open `https://<host>/`, paste the token once, and chat with streamed progress. `RELAY_WEB_USER` (default `web`) is the harness `--user` for web turns, so web sessions are a separate session space from the Telegram chat id. The relay stays stateless; the browser keeps the thread and session id.
-
-```bash
-RELAY_WEB_TOKEN=<long random string>
-RELAY_WEB_USER=web
-```
-
-Set `RELAY_SECRET` too if CLI clients still need header auth. Without it, the cookie is the only gate on every endpoint once the web surface is on.
-
----
-
-## Approvals
-
-`klanker serve` does not enable the approval gate. When `AGENTS_APPROVAL_MODE` is unset, mutating tools run with no Telegram Approve/Deny prompt.
-
-Opt in by setting the mode to `ask` or `strict`. If `AGENTS_APPROVAL_CMD` is unset, serve fills the default `agents-relay approve` command. An exported command is left as-is.
-
-```bash
-AGENTS_APPROVAL_MODE=ask
-AGENTS_APPROVAL_CMD='agents-relay approve --user {user} --timeout 300'
-```
-
-The harness substitutes `{user}`. With `ask` or `strict`, mutating tools wait for Approve / Deny. A denial is final.
-
-Telegram refuses to start when `TELEGRAM_BOT_TOKEN` is set and `TELEGRAM_ALLOWED_CHAT_IDS` is empty. Opt in to an open bot with `KLANKER_TELEGRAM_OPEN=1`. That also sets `AGENTS_RELAY_ALLOW_ANYONE=1` when it is unset, which is what relay requires before it will poll with an empty allowlist. Routine delivery passes `allow_anyone` through to `send_to_user`.
-
-## MCP servers and skills
-
-External MCP servers use Claude/Cursor-shaped `<host>/mcp.json` (override `AGENTS_MCP_CONFIG`). An example is [`examples/mcp.json`](examples/mcp.json). `klanker sense` expands `${VAR}` in `url`, `command`, `args`, and `env` the same way the harness does, then lists each server and a lightweight health check (command on `PATH`, or the URL accepts a connection).
-
-The harness reads `<ws>/skills/*/SKILL.md` (`AGENTS_SKILLS_DIR`). In the container, `AGENTS_HOST_DIR=/data/.agents`, so skills live at `/data/.agents/workspaces/<id>/skills` on the data volume.
+- **PWA:** `klanker serve` serves `web/` at `/` behind the minted
+  `?token=` URL. `RELAY_WEB_USER` (default `web`) namespaces web
+  sessions; set `RELAY_SECRET` if header-authed CLI clients remain.
+- **Approvals:** unset `AGENTS_APPROVAL_MODE` runs mutating tools
+  ungated. Set `ask` or `strict`; serve fills the default
+  `agents-relay approve` command when `AGENTS_APPROVAL_CMD` is unset.
+- **Telegram allowlist:** with `TELEGRAM_BOT_TOKEN` set and
+  `TELEGRAM_ALLOWED_CHAT_IDS` empty the bot refuses to start;
+  `KLANKER_TELEGRAM_OPEN=1` opts into an open bot.
+- **MCP & skills:** external servers use Claude/Cursor-shaped
+  `<host>/mcp.json` (see `examples/mcp.json`); skills live in
+  `<ws>/skills/*/SKILL.md`. `klanker sense` lists and health-checks
+  both.
 
 ## Docker
 
-The image installs `agents-workspace` (path contract), `agents-harness[mcp]` (stdio and HTTP MCP client), and `agents-browser` (CDP client: `mcp` + `websockets`). It does not install Chromium. Set `AGENTS_BROWSER_BIN` or install a browser on the host if you use it. `agents-browser` has no `--help-json` yet; `search`, `read`, `snapshot`, `open`, and `screenshot` are hand-written manifests.
+The image installs `agents-workspace`, `agents-harness[mcp]`,
+`agents-relay`, `agents-memory`, `agents-traces`, `agents-calendar` and
+`agents-browser` (no bundled Chromium — set `AGENTS_BROWSER_BIN`).
+Packages come from git `main` by default; pin `SUITE_REF` (or
+`HARNESS_REF` etc.) for another branch/tag and rebuild `--no-cache`.
+`AGENTS_VISION=1` forwards image attachments as vision parts.
+Full compose and NAS paths: [INSTALL.md](INSTALL.md).
 
-Git installs are cached by the image layer. Rebuild with `--no-cache`, or change `CACHE_BUST` / `SUITE_REF`, or the harness and relay commits stay stale. After the image is running, `pip freeze | grep agents-` should list git commits. `AGENTS_VISION=1` makes image attachments vision parts (see `.env.example`).
-
-Dependency floors: `agents-workspace>=0.1.0`, `agents-harness[mcp]>=0.1.0`, `agents-relay>=0.1.0`, `agents-memory>=1.2.0`, `agents-traces>=0.1.0`, `agents-calendar>=0.1.0`. The image installs packages from git `main` (the latest releases) by default. Set `SUITE_REF`, or a per-package ref such as `HARNESS_REF`, to build from another branch or tag.
-
-`agents-traces --help-json` is a raw argparse dump and does not list subcommands. `stats`, `inspect`, `sessions`, `verify`, and `cleanup` are hand-written. `audit` and `seal` stay the harness modules. Anything else is `mcp.traces.argv` after generation.
-
-`agents-keys` is not in the image. If you install it, only read verbs (`did`, `resolve`, `ssh-pubkey`) are exposed unless `KLANKER_KEYS_WRITE=1`. `vand` is exposed only when it is installed.
-
-The entrypoint does not `chmod 666` the Docker socket. As root it adds `klanker` to the socket's group (`setpriv --init-groups` keeps that group). If that still fails, set the service `group_add` to the host socket gid (`stat -c %g /var/run/docker.sock`).
-
----
-
-## Git hooks (commit discipline)
-
-Run once per clone (contributors and coding agents):
+## Development
 
 ```bash
-bash hooks/install.sh
+bash hooks/install.sh    # commit discipline — once per clone, never --no-verify
+pytest                   # python suite
+cd web && npm test       # web unit tests
 ```
 
-This sets `core.hooksPath=hooks` and seeds `concepts/`, `signals/`, and
-`scripts/git_wall_allowlist.txt` when missing. Do **not** set
-`core.hooksPath=/dev/null` — that disables discipline without
-`--no-verify`. See [AGENTS.md](AGENTS.md) for the three-section commit
-template (`## World Model`, `## Membrane`, `## Gates`).
-
-## Tests
-
-```bash
-pytest
-```
-
----
+Commits carry `## World Model`, `## Gates`, `## Membrane` sections —
+see [AGENTS.md](AGENTS.md). `docs/ROADMAP.md` is the direction doc.
 
 ## License
 

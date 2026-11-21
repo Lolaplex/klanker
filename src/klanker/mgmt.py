@@ -12,6 +12,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from . import __version__
+
 _PREFIX = "/v1/klanker"
 
 
@@ -236,6 +238,10 @@ def handler_class(base: type) -> type:
     """Subclass ``base`` (relay TurnHandler) with klanker mgmt routes."""
 
     class KlankerMgmtHandler(base):  # type: ignore[misc]
+        # /health surfaces this as `klanker_version` (agents-relay reads
+        # it off the handler — flat, additive, no auth change).
+        klanker_version = __version__
+
         def do_GET(self) -> None:
             if not _dispatch(self, "GET"):
                 super().do_GET()
