@@ -31,8 +31,10 @@ jobs:
           pip install build twine pytest httpx
           if [ "${GITHUB_BASE_REF:-}" != "main" ] && [ "${GITHUB_REF_NAME:-}" != "main" ]; then
             python scripts/dev-suite.py
+            pip install -e . || pip install --no-deps -e .
+          else
+            pip install -e .
           fi
-          pip install -e .
 
       - name: Run test suite
         timeout-minutes: 5

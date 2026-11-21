@@ -82,15 +82,20 @@ def _read_dependencies(text: str) -> list[str]:
 
 
 def suite_deps() -> list[tuple[str, str]]:
-    """(name, extras) for every agents-* dependency in pyproject.toml."""
+    """(name, extras) for every agents-* dependency in pyproject.toml (plus SUITE_EXTRA_DEPS)."""
     pyproject = REPO / "pyproject.toml"
-    if not pyproject.is_file():
-        return []
-    deps = _read_dependencies(pyproject.read_text(encoding="utf-8"))
-    out = []
+    deps: list[str] = []
+    if pyproject.is_file():
+        deps.extend(_read_dependencies(pyproject.read_text(encoding="utf-8")))
+    extra_env = os.environ.get("SUITE_EXTRA_DEPS", "").strip()
+    if extra_env:
+        deps.extend(p for p in re.split(r"[\s,]+", extra_env) if p)
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for dep in deps:
         m = DEP_RE.match(dep)
-        if m:
+        if m and m.group(1) not in seen:
+            seen.add(m.group(1))
             out.append((m.group(1), m.group(2) or ""))
     return out
 
@@ -117,8 +122,8 @@ def _git_env() -> dict[str, str]:
     token = os.environ.get("READ_REPO_TOKEN", "").strip()
     if token:
         env["GIT_CONFIG_COUNT"] = "1"
-        env["GIT_CONFIG_KEY_0"] = f"url.https://x-access-token:{token}@github.com/.insteadOf"
-        env["GIT_CONFIG_VALUE_0"] = "https://github.com/"
+        env["GIT_CONFIG_KEY_0"] = "credential.helper"
+        env["GIT_CONFIG_VALUE_0"] = '!f() { echo username=x-access-token; printf "password=%s\\n" "$READ_REPO_TOKEN"; }; f'
     return env
 
 
