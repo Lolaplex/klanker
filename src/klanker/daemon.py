@@ -151,6 +151,12 @@ def relay_health(url: str, *, timeout: float = 1.5) -> bool:
 
 
 def _spawn_detached(argv: list[str]) -> subprocess.Popen:
+    # Hard kill-switch at the OS boundary: a detached serve inherits this
+    # process' env — under pytest that is a per-test tmp host, and the leak
+    # then binds :8787 with phantom workspaces + a vault the desktop cannot
+    # read. Tests that exercise spawn mock this function outright.
+    if os.environ.get("AGENTS_NO_AUTOSPAWN"):
+        raise RuntimeError("autospawn disabled via AGENTS_NO_AUTOSPAWN")
     kwargs: dict = {}
     if os.name == "nt":
         kwargs["creationflags"] = (
@@ -196,7 +202,10 @@ def ensure_daemon(url: str = DEFAULT_RELAY_URL, *, wait: float = 20.0) -> bool:
         return True
     if not _is_loopback(base):
         return False
-    proc = _spawn_detached([sys.executable, "-m", "klanker", "serve"])
+    try:
+        proc = _spawn_detached([sys.executable, "-m", "klanker", "serve"])
+    except RuntimeError:
+        return False
     write_serve_state(serve_state_path(), proc.pid, _port_from_url(base), base)
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:

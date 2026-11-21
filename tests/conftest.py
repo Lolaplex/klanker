@@ -8,3 +8,6 @@ import pytest
 def _isolated_host(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
     monkeypatch.delenv("AGENTS_WORKSPACE", raising=False)
+    # Never let an ensure path detach a real `klanker serve`: the child
+    # would keep this tmp host env, bind :8787, and outlive the suite.
+    monkeypatch.setenv("AGENTS_NO_AUTOSPAWN", "1")
