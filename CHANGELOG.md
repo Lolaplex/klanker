@@ -10,18 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Chat-level provider+model picker: the chat toolbar's old model-only `<select>` (desktop-only, taxonomy-mapped) is replaced by a popover that picks provider AND model as a pair — real provider names straight from `/v1/providers`, including `acp.*` agent rows carrying their own probed model lists, plus freeform model entry, settings favorites/recent for mapped kinds, and a clear-to-inherit action. Visible on mobile too. Picks flow through `provider`/`model` on the turn request, so one thread can run `acp.devin:swe-2` while the instance stays on its default loop.
 - `src-tauri` `[[bin]]` name `Klanker`: debug builds now produce `Klanker.exe` matching `mainBinaryName`, so Windows firewall prompts (which display the file name when no version info exists) stop showing `klanker_desktop.exe`.
-
-### Added
 - Mobile WebKit E2E suite (klanker#56): `web/playwright.config.ts` + `web/e2e/mobile.spec.ts` run the real built UI against a fully stubbed relay (`page.route`) on two mobile viewports — chat send/stream-receive, sidebar drawer, settings open/cancel, approval allow/deny. Icon-only header controls now carry `aria-label`s so the flows (and screen readers) have stable selectors.
 - Relay version compat (klanker#106): `web` probes each running instance's public `/health` once and compares the reported `version` against the bundled `MIN_RELAY` constant. Local managed instance below the floor shows an inline banner with an "upgrade klanker" button (`klanker_upgrade` invoke, `caps.spawn` gated, re-probes after); a remote instance below the floor shows a warning banner but keeps working; relays too old to report a version get a single hint per session, never a nag.
+- `klanker serve` grafted handler reports `klanker_version` (klanker `__version__`), surfaced by the relay as `klanker_version` on `GET /health` (pairs with agents-relay's version report).
+- `klanker serve` inherits the relay's persistent handoff wake queue (agents-relay): in-flight `?wake=1` handoffs are crash-marked under `<ws>/relay/handoffs/` and unfinished ones replay on boot, honoring `accepts_messages`/`allow_peers` at wake time (klanker#93 — shared local-serve path, no desktop-only code).
+- `scripts/gate-remote.py` — phone-equivalent phase gate: boots `agents-relay serve` on the host's non-loopback address with a throwaway `AGENTS_HOST_DIR` and drives the remote client path (POST `/v1/workspaces`, `.../personas`, `.../sessions`, `/v1/turn` via the echo provider, session listed back). Exit 0 = PASS; runnable in CI like `gate-container.sh`.
 
 ### Fixed
 - Composer losing focus after the first typed character on a fresh bucket: the first keystroke created the draft chat, which changed the `ChatConsole` remount key and dropped the keyboard mid-word (mobile lost every char after the first). Each bucket now always keeps an open draft so the key is stable from boot.
 
 ### Changed
 - `web/src/App.tsx` split (1667 → ~830 LOC) along existing seams — zero behavior change: `chatBuckets.ts` (bucket types + localStorage helpers), `chatSync.ts` (event merge + reconcile), `hooks/useKeyboardViewport.ts` (iOS keyboard geometry), `components/AuthGate.tsx` (token gate), `hooks/useInstances.ts` (boot/auth + health poll), `hooks/usePersistChats.ts` (dirty-scoped persistence), `hooks/useSidebarTree.ts` (ws/persona/session tree), `hooks/useChatSync.ts` (reconcile + foreign-run SSE attach), `hooks/useApprovals.ts` (approval poll + decide).
-
-### Added
 - `Dockerfile` `INSTALL_DEVIN` build arg: `=1` bakes `devin-cli` into the image (`/opt/devin-home`, symlinked to `PATH`) so `agents-relay acp-run` can spawn `devin acp` as the turn agent — the route for hosts that build a single Dockerfile (Coolify on the VPS; the NAS keeps its untracked overlay). Off by default; release images unchanged.
 - `klanker serve` secure-by-default web auth: when `RELAY_WEB_TOKEN` is unset an ephemeral token is generated per serve and printed once (`klanker serve -> http://host:port/?token=…`, Jupyter-style). `GET /?token=…` on the relay mints the HttpOnly cookie and redirects to `/`, so the pasted URL is the whole login flow. `--no-auth` (or `RELAY_NO_AUTH=1`) is the explicit opt-out.
 - Prompt evidence rules: the system prompt now forbids asserting git state (clean tree, empty diff, committed, merged) or file contents without a successful read in the same turn, and requires reporting the failure + re-reading actual state when an edit's `old` text misses or a run is denied — 'verworfen'/'diff leer'/'committed' without a matching tool result is a fabricated claim.
@@ -60,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `serve_restart` actually restarts: an owned serve is killed and the respawn waits for the pid to die — previously the health probe re-adopted the still-running process, so a new agents-relay build or changed env was never picked up. Foreign serves are still never killed.
 
 ### Changed
+- README rebuilt around the real product surface: lockup + real `klanker serve` screenshots under `.github/img/` (dashboard, manage panel, 390px PWA chat), a verified ~30-line quickstart (pip/uv → `klanker serve` → minted `?token=` URL → PWA), an ASCII layer diagram with the no-direct-import rule, a feature matrix that names the pending halves honestly (web-push send path), and a commands table covering the actual parser verbs (`persona`, `workspace`, `bg`/`ps`/`logs`/`kill`, `doctor`, `update`, `import`, `audit`, `stop`). Stale claims trimmed (hardcoded version badge, unlisted verbs).
 - Live cross-device turns: while a foreign turn is active for the open chat (`remoteActive`), the session's trace-tail check tightens from 12s to 2s — tool_call and message records appended mid-turn surface near-live on watching devices, and the reply appears ~2s after landing. True token-level fan-out still needs the relay subscribe route (agents-relay side); this is the honest client slice over existing endpoints.
 - The desktop file registry reconciles with the managed local relay's `remotes.json`: remotes added via PWA merge into the desktop instance list (deduped by endpoint host), saves mirror into the relay, and deletes remove relay rows for the same endpoint so instances added on either surface appear on both.
 - The sidebar `auth` chip is clickable and opens the instance sheet for re-authentication; the sheet flags a rejected secret inline, and saving re-probes the relay immediately instead of waiting for the health poll.
@@ -341,3 +341,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replay provider, not the env-configured default. The instance provider
   picker labels its empty choice "host default (env)" and only offers
   "inherit app setting" on desktop.
+
+### Removed
+
+- "publish this host" in Add Instance. Hosts now announce themselves: the
+  relay self-publishes a signed road declaration at serve start when
+  `AGENTS_PRESENCE_LABEL`/`KEY`/`ADDR` are set (agents-relay dev 2d4d23b).
+  Signed-offers discovery stays as the read side.
+
+### Changed
+
+- Discovery scans now run server-side too: on the web surface the rescan
+  button asks the serving relay (`GET /v1/discover`, agents-relay dev
+  656e9db) instead of returning nothing. Desktop keeps the native probe.
+
+### Removed
+
+- Signed presence offers (list, publish UI, types). Remotes mount by URL;
+  same-network hosts come from the health-probe scan. The shared
+  road-declaration registry had no consumer.
