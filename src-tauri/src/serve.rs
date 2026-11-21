@@ -234,17 +234,20 @@ fn try_probe(argv: &[&str]) -> Option<Option<String>> {
     None
 }
 
-/// Resolve how to run `klanker`. Probe order: `klanker` on PATH,
-/// `py -m klanker`, `python -m klanker`, `uv tool run klanker`.
+/// Resolve how to run `klanker`. Probe order: `py -m klanker`,
+/// `python -m klanker`, `klanker` on PATH, `uv tool run klanker`.
+/// Interpreter forms come first: the `klanker.exe` entry-point shim is a
+/// console launcher that dies silently (exit 0, no output) when spawned
+/// from a console-less GUI parent under CREATE_NO_WINDOW.
 /// Returns (argv_prefix, version).
 fn find_klanker(app: &AppHandle) -> Option<(Vec<String>, Option<String>)> {
-    if let Some(v) = try_probe(&["klanker"]) {
-        return Some((vec!["klanker".into()], v));
-    }
     for prog in ["py", "python"] {
         if let Some(v) = try_probe(&[prog, "-m", "klanker"]) {
             return Some((vec![prog.into(), "-m".into(), "klanker".into()], v));
         }
+    }
+    if let Some(v) = try_probe(&["klanker"]) {
+        return Some((vec!["klanker".into()], v));
     }
     if let Some(uv) = crate::provision::uv_bin(app) {
         if let Some(v) = try_probe(&[&uv.to_string_lossy(), "tool", "run", "klanker"]) {
@@ -322,18 +325,38 @@ fn spawn_klanker(
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
 
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("spawn klanker serve: {e}"))?;
+    // Diagnose spawn failures in the same log the child would write to —
+    // a silent death otherwise leaves only "respawned" markers behind.
+    let log_err = |msg: &str| {
+        if let Ok(mut f) = OpenOptions::new().append(true).open(log) {
+            let _ = writeln!(f, "[shell] spawn failed: {msg}");
+        }
+    };
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("spawn klanker serve: {e}");
+            log_err(&msg);
+            return Err(msg);
+        }
+    };
     let pid = child.id();
     let mut child = child;
     // Surface early exit: a child that dies within the first seconds is a
     // spawn failure, not a running serve.
     std::thread::sleep(Duration::from_secs(3));
     match child.try_wait() {
-        Ok(Some(status)) => Err(format!("klanker serve exited early ({status})")),
+        Ok(Some(status)) => {
+            let msg = format!("klanker serve exited early ({status})");
+            log_err(&msg);
+            Err(msg)
+        }
         Ok(None) => Ok(pid),
-        Err(e) => Err(format!("wait klanker serve: {e}")),
+        Err(e) => {
+            let msg = format!("wait klanker serve: {e}");
+            log_err(&msg);
+            Err(msg)
+        }
     }
 }
 
