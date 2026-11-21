@@ -18,10 +18,17 @@ const LS_ACTIVE = "klanker.active";
 
 /** "" means same origin — the dashboard is served by the relay itself.
  *  `via: "relay"` instances mount through the relay's authenticated proxy. */
+/** Live port of the desktop-managed serve — updated from serve_status.
+ *  A restart spawns on a fresh port when the default is held by a foreign
+ *  process, so the hardcoded registry URL cannot be trusted. */
+let localServePort = 8787;
+
 const base = (inst: KlankerInstance): string =>
   inst.via === "relay"
     ? `/v1/remote/${encodeURIComponent(inst.id)}`
-    : (inst.endpoint?.base_url || inst.base_url || "").replace(/\/+$/, "");
+    : inst.kind === "local" && caps.spawn
+      ? `http://127.0.0.1:${localServePort}`
+      : (inst.endpoint?.base_url || inst.base_url || "").replace(/\/+$/, "");
 
 function headers(inst: KlankerInstance, json = false): Record<string, string> {
   const h: Record<string, string> = {};
@@ -846,13 +853,19 @@ export const api = {
   },
 
   async serveStatus(): Promise<ServeStatus> {
-    return invoke<ServeStatus>("serve_status");
+    const st = await invoke<ServeStatus>("serve_status");
+    if (st.port) localServePort = st.port;
+    return st;
   },
   async serveEnsureLocal(workdir?: string): Promise<ServeStatus> {
-    return invoke<ServeStatus>("serve_ensure_local", { workdir });
+    const st = await invoke<ServeStatus>("serve_ensure_local", { workdir });
+    if (st.port) localServePort = st.port;
+    return st;
   },
   async serveRestart(workdir?: string): Promise<ServeStatus> {
-    return invoke<ServeStatus>("serve_restart", { workdir });
+    const st = await invoke<ServeStatus>("serve_restart", { workdir });
+    if (st.port) localServePort = st.port;
+    return st;
   },
 
   /** Spawn/attach the managed local serve and return the instance plus its
@@ -1181,7 +1194,7 @@ export function desktopLocalInstance(): KlankerInstance {
     port: 8787,
     system_prompt: "",
     kind: "local",
-    endpoint: { base_url: "http://127.0.0.1:8787" },
+    endpoint: { base_url: `http://127.0.0.1:${localServePort}` },
     created_at: now,
     updated_at: now,
   };

@@ -397,13 +397,20 @@ fn entry_workspace(host_dir: &PathBuf) -> Option<String> {
     })
 }
 
-fn do_ensure(app: &AppHandle, workdir: &str) -> Result<ServeStatus, String> {
+fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeStatus, String> {
     let state = app.state::<ServeState>();
     let mut s = state.0.lock().map_err(|e| e.to_string())?;
 
     if health_ok(s.port) || health_ok(DEFAULT_PORT) {
-        adopt_or_mark(&mut s, app);
-        return Ok(ServeStatus::of(&s));
+        if !force_own {
+            adopt_or_mark(&mut s, app);
+            return Ok(ServeStatus::of(&s));
+        }
+        // Restart semantics: never adopt a foreign process — its token is
+        // not the keyring one, so linking would fail forever. Leave it
+        // running and spawn our own on a fresh port instead.
+        s.owned = false;
+        s.pid = None;
     }
 
     // A booting child needs grace — python imports take seconds. Only
@@ -557,14 +564,15 @@ pub async fn serve_status(app: AppHandle) -> Result<ServeStatus, String> {
 /// instance is the managed `local` entry — spawn policy lives in JS.
 #[tauri::command]
 pub async fn serve_ensure_local(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
-    do_ensure(&app, workdir.as_deref().unwrap_or(""))
+    do_ensure(&app, workdir.as_deref().unwrap_or(""), false)
 }
 
 /// Manual retry from the "server lost" state — resets the respawn budget.
 /// An owned serve is actually killed first: without that the health probe
 /// in `do_ensure` adopts the still-dying process and the "restart" becomes
 /// a no-op, so a new agents-relay build or changed env is never picked up.
-/// A foreign serve is never touched — it is just adopted again.
+/// A foreign serve is never killed, but never adopted either — restart
+/// means "a serve we own", so a changed secret actually takes effect.
 #[tauri::command]
 pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
     let mut killed = None;
@@ -589,7 +597,7 @@ pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<Se
             std::thread::sleep(Duration::from_millis(250));
         }
     }
-    do_ensure(&app, workdir.as_deref().unwrap_or(""))
+    do_ensure(&app, workdir.as_deref().unwrap_or(""), true)
 }
 
 /// Warm the state at app start: a live pid-file serve on its recorded

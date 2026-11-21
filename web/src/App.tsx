@@ -330,7 +330,8 @@ export function App() {
       // New secret on the managed local serve: restart it so the respawn
       // reads the fresh keyring entry — the running process still validates
       // against its spawn-time token and would 401 forever otherwise.
-      if (saved.kind === "local" && caps.spawn && saved.secret && saved.secret !== prevSecret) {
+      const staleAuth = inst.herd[saved.id]?.detail === "unauthorized";
+      if (saved.kind === "local" && caps.spawn && saved.secret && (saved.secret !== prevSecret || staleAuth)) {
         void api.serveRestart(saved.workspace || undefined).then(() =>
           api.getGatewayStatus(saved).then((st) =>
             inst.setHerd((prev) => ({ ...prev, [saved.id]: st }))
