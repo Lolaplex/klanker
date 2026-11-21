@@ -46,9 +46,17 @@ def _ws_or_none() -> Workspace | None:
 
 
 def mcp_overlay_path() -> Path:
-    """Optional ``<ws>/mcp.json`` overlay; wins per-server over the host file."""
+    """Host control-plane per-workspace MCP overlay (``<host>/mcp/ws-<id>.json``)
+    or legacy ``<ws>/mcp.json`` fallback."""
     ws = _ws_or_none()
-    return (ws.root if ws else Host.from_env().dir) / "mcp.json"
+    if ws is None:
+        return Host.from_env().dir / "mcp.json"
+    ws_id = (ws.id or "").strip()
+    if ws_id:
+        ctrl = ws.host.dir / "mcp" / f"ws-{ws_id}.json"
+        if ctrl.is_file() or not (ws.dir / "mcp.json").is_file():
+            return ctrl
+    return ws.dir / "mcp.json"
 
 
 def skills_dir() -> Path:

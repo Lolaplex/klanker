@@ -14,6 +14,38 @@ from .sensing import HostCapabilities, probe_host
 log = logging.getLogger("klanker.nucleus")
 
 
+def _provider_key_env(provider: str) -> str:
+    """Resolve the active provider's key env var from its manifest."""
+    name = (provider or "").strip()
+    if not name:
+        return ""
+    try:
+        from runner.providers import find_provider
+
+        manifest = find_provider(name)
+    except Exception:
+        manifest = None
+    if not isinstance(manifest, dict):
+        try:
+            import json
+            from agents_workspace import Host
+
+            candidate = Host.from_env().dir / "providers" / f"{name}.json"
+            if candidate.is_file():
+                raw = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    manifest = raw
+        except Exception:
+            manifest = None
+    if isinstance(manifest, dict):
+        key_env = str(manifest.get("key_env") or "").strip()
+        if key_env:
+            return key_env
+        if manifest.get("kind", "openai_compat") == "openai_compat":
+            return "LLM_API_KEY"
+    return ""
+
+
 class Nucleus:
     def __init__(self, caps: HostCapabilities | None = None) -> None:
         self.caps = caps or probe_host()
@@ -85,13 +117,35 @@ class Nucleus:
             if seal:
                 cmd.append("--seal")
 
-            env = ws.env(persona=persona, workdir=workdir) if workdir \
-                else ws.env(persona=persona)
-            hidden: dict[str, Any] = {"stdin": subprocess.DEVNULL, "env": env}
-            if sys.platform == "win32":
-                hidden["creationflags"] = subprocess.CREATE_NO_WINDOW
-            res = subprocess.run(cmd, **hidden)
-            return res.returncode
+            from agents_workspace.runtime import (
+                isolation_of,
+                run as ws_run,
+                to_container_argv,
+                to_container_env,
+            )
+
+            isolation = isolation_of(ws)
+            role = "container" if isolation == "container" else "turn"
+            key_env = _provider_key_env(selected_provider)
+            env = (
+                ws.env(
+                    persona=persona,
+                    workdir=workdir,
+                    role=role,
+                    provider_key_env=key_env,
+                )
+                if workdir
+                else ws.env(
+                    persona=persona,
+                    role=role,
+                    provider_key_env=key_env,
+                )
+            )
+            if isolation == "container":
+                cmd = to_container_argv(ws, cmd)
+                env = to_container_env(ws, env)
+            res = ws_run(ws, cmd, env, capture=False)
+            return int(res.returncode)
         else:
             print(
                 "Error: agents-harness is required for conversational turns.\n"

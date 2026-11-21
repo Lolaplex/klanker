@@ -26,3 +26,21 @@ def test_mcp_report_ws_overlay(tmp_path, monkeypatch):
     rep = mcp_report()
     names = {r["name"] for r in rep["mcp_servers"]}
     assert names == {"a", "b", "c"}
+
+
+def test_mcp_report_control_plane_ws_overlay(tmp_path, monkeypatch):
+    import json
+    host = tmp_path / "host"
+    ws = host / "workspaces" / "alpha"
+    ws.mkdir(parents=True)
+    (ws / "workspace.json").write_text('{"id": "alpha"}')
+    (host / "mcp").mkdir(parents=True)
+    (host / "mcp.json").write_text(json.dumps({"mcpServers": {"a": {"command": "x"}}}))
+    (host / "mcp" / "ws-alpha.json").write_text(json.dumps({"mcpServers": {"d": {"url": "http://d"}}}))
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(host))
+    monkeypatch.setenv("AGENTS_WORKSPACE", "alpha")
+    monkeypatch.delenv("AGENTS_MCP_CONFIG", raising=False)
+    monkeypatch.delenv("AGENTS_MCP_CONFIG_FILE", raising=False)
+    from klanker.config_sense import mcp_report
+    names = {r["name"] for r in mcp_report()["mcp_servers"]}
+    assert names == {"a", "d"}

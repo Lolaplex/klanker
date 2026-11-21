@@ -92,6 +92,46 @@ def test_workspace_flag_sets_env_for_spawned_loop(tmp_path, monkeypatch):
     assert os.environ["AGENTS_WORKDIR_LOCK"] == "1"
 
 
+def test_turn_spawns_strip_infra_and_foreign_llm_secrets(tmp_path, monkeypatch):
+    from agents_workspace import Host
+    from klanker.routine import default_turn
+
+    host_dir = tmp_path / "host"
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(host_dir))
+    monkeypatch.setenv("RELAY_SECRET", "rsec")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "ttok")
+    monkeypatch.setenv("OPENAI_API_KEY", "oak")
+    monkeypatch.setenv("LLM_API_KEY", "lak")
+    monkeypatch.setenv("LOOP_PROVIDER", "openai.default")
+    ws = Host.from_env().create("demo")
+    monkeypatch.setenv("AGENTS_WORKSPACE", "demo")
+
+    caps = _caps()
+    nucleus = cli.Nucleus(caps=caps)
+    with patch("klanker.nucleus.probe_host", return_value=caps), \
+         patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        rc = nucleus.run_turn(message="hi", workspace=ws)
+    assert rc == 0
+    child_env = mock_run.call_args.kwargs["env"]
+    assert "RELAY_SECRET" not in child_env
+    assert "TELEGRAM_BOT_TOKEN" not in child_env
+    assert "OPENAI_API_KEY" not in child_env
+    assert child_env["LLM_API_KEY"] == "lak"
+
+    with patch("klanker.prompt.save_system_prompt", return_value=tmp_path / "p.txt"), \
+         patch("klanker.sensing.probe_host", return_value=caps), \
+         patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stdout = "ok"
+        default_turn({"name": "j1", "prompt": "p", "user": "u"}, workspace=ws)
+    r_env = mock_run.call_args.kwargs["env"]
+    assert "RELAY_SECRET" not in r_env
+    assert "TELEGRAM_BOT_TOKEN" not in r_env
+    assert "OPENAI_API_KEY" not in r_env
+    assert r_env["LLM_API_KEY"] == "lak"
+
+
 def test_workspace_id_selects_data_workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "home"))
     from agents_workspace import Host

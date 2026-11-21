@@ -2,7 +2,8 @@
 
 Preview lists what each source would contribute; ``--apply`` copies skills into
 ``<ws>/skills``, instruction/memory files into ``<ws>/rules/imported``, and merges
-``mcpServers`` into the workspace ``mcp.json`` overlay.
+``mcpServers`` into the host MCP control plane (``<host>/mcp/ws-<id>.json`` or
+``<host>/mcp.json``).
 """
 
 from __future__ import annotations
@@ -79,6 +80,21 @@ def _dst_for(ws, item: Item) -> Path:
     raise ValueError(f"no file target for kind {item.kind}")
 
 
+def _mcp_target(ws) -> Path:
+    """Host control-plane MCP config target (never inside <ws>/mcp.json)."""
+    host = getattr(ws, "host", None)
+    if host is not None:
+        host_dir = host.dir
+    else:
+        from agents_workspace import Host
+
+        host_dir = Host.from_env().dir
+    ws_id = str(getattr(ws, "id", "") or "").strip()
+    if ws_id:
+        return host_dir / "mcp" / f"ws-{ws_id}.json"
+    return host_dir / "mcp.json"
+
+
 def apply_items(ws, items: list[Item]) -> list[str]:
     """Copy items into the workspace; returns written/merged path lines."""
     done: list[str] = []
@@ -103,17 +119,18 @@ def apply_items(ws, items: list[Item]) -> list[str]:
             shutil.copy2(item.src, dst)
         done.append(f"wrote {item.kind} {item.name} -> {dst}")
     if mcp_merge:
-        overlay = ws.dir / "mcp.json"
+        target = _mcp_target(ws)
+        target.parent.mkdir(parents=True, exist_ok=True)
         try:
-            data = json.loads(overlay.read_text(encoding="utf-8")) if overlay.is_file() else {}
+            data = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
         except json.JSONDecodeError:
             data = {}
         servers = data.setdefault("mcpServers", {})
         added = [k for k in mcp_merge if k not in servers]
         for name in added:
             servers[name] = mcp_merge[name]
-        overlay.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        done.append(f"mcp   merged {len(added)} server(s) -> {overlay} ({len(mcp_merge) - len(added)} already present)")
+        target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        done.append(f"mcp   merged {len(added)} server(s) -> {target} ({len(mcp_merge) - len(added)} already present)")
     return done
 
 
@@ -133,7 +150,7 @@ def run(source: str = "all", workspace: str = "", apply: bool = False) -> int:
             try:
                 dst = f" -> {_dst_for(ws, item)}"
             except ValueError:
-                dst = " -> (mcp overlay)" if item.kind == "mcp" else ""
+                dst = f" -> {_mcp_target(ws)}" if item.kind == "mcp" else ""
         print(f"  {item.kind:<5} {item.source:<7} {item.name:<40} {item.src}{dst}")
     print(f"{len(items)} item(s) from {', '.join(sources)}")
     if not apply:

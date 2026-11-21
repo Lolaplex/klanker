@@ -97,6 +97,44 @@ class TestBg(unittest.TestCase):
         args, _ = parse_cli_args(["kill", "bg_1"])
         self.assertEqual(args.id, "bg_1")
 
+    def test_spawn_run_child_and_restart_honor_workspace_and_workdir(self):
+        from agents_workspace import Host
+
+        class FakeProc:
+            pid = 9876
+
+        Host.from_env().create("alpha")
+        Host.from_env().create("beta")
+        wd = Path(self.tmp.name) / "repo"
+        wd.mkdir()
+
+        with patch("subprocess.Popen", return_value=FakeProc()) as popen:
+            meta = bg.spawn("build app", user="alice", provider="echo", workspace="alpha", workdir=str(wd))
+        self.assertEqual(meta["workspace"], "alpha")
+        self.assertEqual(meta["workdir"], str(wd))
+        child_env = popen.call_args.kwargs["env"]
+        self.assertEqual(child_env["AGENTS_WORKSPACE"], "alpha")
+        self.assertEqual(Path(child_env["AGENTS_WORKDIR"]).resolve(), wd.resolve())
+
+        with patch("subprocess.Popen", return_value=FakeProc()):
+            bg.spawn("other task", workspace="beta")
+        alpha_rows = bg.list_sessions(workspace="alpha")
+        self.assertEqual([r["id"] for r in alpha_rows], [meta["id"]])
+
+        with patch("klanker.nucleus.Nucleus.run_turn", return_value=0) as rt:
+            rc = bg.run_child(meta["id"], user="", provider="")
+        self.assertEqual(rc, 0)
+        self.assertEqual(rt.call_args.kwargs["workspace"].id, "alpha")
+        self.assertEqual(rt.call_args.kwargs["workdir"], str(wd))
+        self.assertEqual(rt.call_args.kwargs["provider"], "echo")
+
+        with patch("subprocess.Popen", return_value=FakeProc()) as popen2:
+            restarted = bg.restart(meta["id"])
+        self.assertNotEqual(restarted["id"], meta["id"])
+        self.assertEqual(restarted["workspace"], "alpha")
+        self.assertEqual(restarted["workdir"], str(wd))
+        self.assertEqual(popen2.call_args.kwargs["env"]["AGENTS_WORKSPACE"], "alpha")
+
 
 if __name__ == "__main__":
     unittest.main()

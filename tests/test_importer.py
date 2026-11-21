@@ -27,9 +27,16 @@ def _fake_home(tmp: str) -> Path:
     return home
 
 
-def _fake_ws(tmp: str) -> SimpleNamespace:
-    ws_root = Path(tmp) / "ws"
-    return SimpleNamespace(dir=ws_root, rules=ws_root / "rules", skills=ws_root / "skills")
+def _fake_ws(tmp: str, *, ws_id: str = "demo") -> SimpleNamespace:
+    host_dir = Path(tmp) / "host"
+    ws_root = host_dir / "workspaces" / (ws_id or "default")
+    return SimpleNamespace(
+        id=ws_id,
+        dir=ws_root,
+        rules=ws_root / "rules",
+        skills=ws_root / "skills",
+        host=SimpleNamespace(dir=host_dir),
+    )
 
 
 class ScanTests(unittest.TestCase):
@@ -60,10 +67,20 @@ class ApplyTests(unittest.TestCase):
             self.assertTrue((ws.rules / "imported" / "claude" / "CLAUDE.md").is_file())
             self.assertTrue((ws.rules / "imported" / "claude" / "commands" / "review.md").is_file())
             self.assertTrue((ws.rules / "imported" / "cursor" / "a.mdc").is_file())
-            overlay = json.loads((ws.dir / "mcp.json").read_text(encoding="utf-8"))
-            self.assertIn("docs", overlay["mcpServers"])
-            self.assertIn("mem", overlay["mcpServers"])
+            self.assertFalse((ws.dir / "mcp.json").exists())
+            target = json.loads((ws.host.dir / "mcp" / "ws-demo.json").read_text(encoding="utf-8"))
+            self.assertIn("docs", target["mcpServers"])
+            self.assertIn("mem", target["mcpServers"])
             self.assertTrue(any("note" in line for line in lines))
+
+    def test_apply_mcp_fallback_to_host_mcp_json_without_ws_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _fake_ws(tmp, ws_id="")
+            items = [i for i in scan(_fake_home(tmp)) if i.kind == "mcp"]
+            apply_items(ws, items)
+            self.assertFalse((ws.dir / "mcp.json").exists())
+            target = json.loads((ws.host.dir / "mcp.json").read_text(encoding="utf-8"))
+            self.assertIn("docs", target["mcpServers"])
 
     def test_apply_skips_existing_skill(self):
         with tempfile.TemporaryDirectory() as tmp:

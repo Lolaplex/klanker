@@ -9,7 +9,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from agents_workspace import Workspace
+from agents_workspace import Host
 
 _TRUTHY = ("1", "true", "yes", "on")
 _CI_KEYS = (
@@ -45,7 +45,7 @@ def _parse_version(v: str) -> tuple[int, ...]:
 
 
 def _cache_file(package_name: str) -> Path:
-    host = Workspace.from_env().host
+    host = Host.from_env()
     return host.cache / "updates" / f"updates-{package_name}.json"
 
 

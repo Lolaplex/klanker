@@ -193,7 +193,10 @@ def build_parser() -> argparse.ArgumentParser:
     # 1b4. Detached background runner
     bg_p = sub.add_parser("bg", help="Spawn a detached background turn (klanker ps/logs/kill)")
     bg_p.add_argument("task", type=str, help="Task for the background turn")
+    bg_p.add_argument("--workspace", default=argparse.SUPPRESS, help="Data workspace id (AGENTS_WORKSPACE)")
+    bg_p.add_argument("--workdir", default=argparse.SUPPRESS, help="Working directory (AGENTS_WORKDIR)")
     ps_p = sub.add_parser("ps", help="List background sessions")
+    ps_p.add_argument("--workspace", default=argparse.SUPPRESS, help="Filter by workspace id")
     logs_p = sub.add_parser("logs", help="Print a background session's log")
     logs_p.add_argument("id", type=str, help="bg_<id> session id")
     logs_p.add_argument("-f", "--follow", action="store_true", help="Follow the log until the child exits")
