@@ -106,23 +106,75 @@ pub fn log_path(_app: &AppHandle) -> Result<PathBuf, String> {
 
 // --- health / process ----------------------------------------------------
 
-pub fn health_ok(port: u16) -> bool {
+fn probe(port: u16, request: &str) -> Option<String> {
     let addr = format!("127.0.0.1:{port}");
-    let Ok(mut s) = TcpStream::connect(&addr) else {
-        return false;
-    };
+    let mut s = TcpStream::connect(&addr).ok()?;
     let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(3)));
-    if s
-        .write_all(b"GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n")
-        .is_err()
-    {
-        return false;
-    }
+    s.write_all(request.as_bytes()).ok()?;
     let mut buf = [0u8; 512];
     let n = s.read(&mut buf).unwrap_or(0);
-    let head = String::from_utf8_lossy(&buf[..n]);
-    head.starts_with("HTTP/") && head.contains(" 200")
+    Some(String::from_utf8_lossy(&buf[..n]).into_owned())
+}
+
+pub fn health_ok(port: u16) -> bool {
+    probe(port, "GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .map(|head| head.starts_with("HTTP/") && head.contains(" 200"))
+        .unwrap_or(false)
+}
+
+/// Bearer probe modelling exactly what the frontend sends: a healthy serve
+/// whose secret we cannot resolve is indistinguishable from a dead one —
+/// every /v1 call 401s. Verified adoption requires the resolved token to
+/// authenticate, so a stale env-only token (dead parent, rotated store)
+/// triggers a respawn instead of being adopted.
+fn auth_ok(port: u16, token: &str) -> bool {
+    let req = format!(
+        "GET /v1/workspaces HTTP/1.0\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\r\n"
+    );
+    probe(port, &req)
+        .map(|head| head.starts_with("HTTP/") && head.contains(" 200"))
+        .unwrap_or(false)
+}
+
+/// PID listening on a TCP port — needed to take the port back from a serve
+/// we cannot authenticate to (one serve per device).
+fn pid_on_port(port: u16) -> Option<u32> {
+    #[cfg(target_os = "windows")]
+    {
+        let out = Command::new("netstat")
+            .args(["-ano", "-p", "tcp"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        let suffix = format!(":{port}");
+        for line in text.lines() {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            // Proto  Local          Foreign        State      PID
+            if cols.len() >= 5 && cols[3] == "LISTENING" && cols[1].ends_with(&suffix) {
+                if let Ok(pid) = cols[4].parse::<u32>() {
+                    return Some(pid);
+                }
+            }
+        }
+        None
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let out = Command::new("lsof")
+            .args(["-nP", "-ti", &format!("tcp:{port}"), "-sTCP:LISTEN"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.trim().parse::<u32>().ok())
+            .next()
+    }
 }
 
 fn pid_alive(pid: u32) -> bool {
@@ -595,20 +647,77 @@ pub(crate) fn resolve_serve_token(
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string())
 }
 
+/// Shared host bearer token as resolved from vault, keyring, legacy pin,
+/// or freshly minted — plus which stores already held it.
+fn resolved_token() -> (String, Option<String>, Option<String>) {
+    let vault_tok = crate::secrets::read_host_vault_secret("RELAY_WEB_TOKEN");
+    let keyring_tok = crate::secrets::get(&crate::secrets::relay_account("local"));
+    let legacy_pin = dirs::home_dir().map(|h| h.join(".klanker").join("relay-secret"));
+    let token = resolve_serve_token(
+        vault_tok.clone(),
+        keyring_tok.clone(),
+        legacy_pin.as_deref(),
+    );
+    (token, vault_tok, keyring_tok)
+}
+
+/// Sync the shared token into BOTH stores — the frontend reads the keyring,
+/// `klanker serve`/CLI consumers read the host vault. Adoption must persist
+/// too: a resolved pin or keyring token is useless to the UI when the other
+/// store stays empty.
+fn persist_token(token: &str, vault_tok: Option<&str>, keyring_tok: Option<&str>) {
+    if keyring_tok != Some(token) {
+        let _ = crate::secrets::set(&crate::secrets::relay_account("local"), token);
+    }
+    if vault_tok != Some(token) {
+        let _ = crate::secrets::write_host_vault_secret("RELAY_WEB_TOKEN", token);
+    }
+}
+
 fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeStatus, String> {
     let state = app.state::<ServeState>();
     let mut s = state.0.lock().map_err(|e| e.to_string())?;
 
-    if health_ok(s.port) || health_ok(DEFAULT_PORT) {
-        if !force_own {
-            adopt_or_mark(&mut s, app);
-            return Ok(ServeStatus::of(&s));
+    let live_port = if health_ok(s.port) {
+        Some(s.port)
+    } else if health_ok(DEFAULT_PORT) {
+        Some(DEFAULT_PORT)
+    } else {
+        None
+    };
+    if let Some(port) = live_port {
+        let (token, vault_tok, keyring_tok) = resolved_token();
+        if auth_ok(port, &token) {
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
+            if !force_own {
+                adopt_or_mark(&mut s, app);
+                return Ok(ServeStatus::of(&s));
+            }
+            // Restart semantics: never adopt a foreign process — a changed
+            // secret must take effect via a respawn we own.
+            s.owned = false;
+            s.pid = None;
+        } else {
+            // Token mismatch: the port is held by a serve spawned with a
+            // secret we can no longer resolve (env-only mint by a dead
+            // parent, rotated store). One serve per device — take the port
+            // back. A non-klanker listener is never killed; we spawn on a
+            // fresh port instead.
+            if let Some(pid) = pid_on_port(port) {
+                if pid_is_ours(pid) {
+                    kill_tree(pid);
+                    for _ in 0..40 {
+                        if !pid_alive(pid) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                    remove_pid_file(app, Some(pid));
+                    s.pid = None;
+                    s.owned = false;
+                }
+            }
         }
-        // Restart semantics: never adopt a foreign process — its token is
-        // not the keyring one, so linking would fail forever. Leave it
-        // running and spawn our own on a fresh port instead.
-        s.owned = false;
-        s.pid = None;
     }
 
     // A booting child needs grace — python imports take seconds. Only
@@ -647,24 +756,20 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
 
     let Some((argv, version)) = find_klanker(app) else {
         s.state = "not_found".into();
-        s.detail = Some("klanker not found — install via `uv tool install klanker` or `pip install klanker`".into());
+        s.detail = Some(
+            "klanker not found — install via `uv tool install klanker` or `pip install klanker`"
+                .into(),
+        );
         return Ok(ServeStatus::of(&s));
     };
     s.klanker_version = version;
 
     let port = pick_port();
-    // Shared host bearer: check OS Keyring (`relay.local`) <-> host vault
+    // Shared host bearer: OS Keyring (`relay.local`) <-> host vault
     // (`~/.agents/secrets/host.json` -> `RELAY_WEB_TOKEN`), fallback read-only
     // to `~/.klanker/relay-secret`, else mint a fresh UUID. Sync into BOTH
     // keyring and host vault; never write `~/.klanker/relay-secret`.
-    let vault_tok = crate::secrets::read_host_vault_secret("RELAY_WEB_TOKEN");
-    let keyring_tok = crate::secrets::get(&crate::secrets::relay_account("local"));
-    let legacy_pin = dirs::home_dir().map(|h| h.join(".klanker").join("relay-secret"));
-    let token = resolve_serve_token(
-        vault_tok.clone(),
-        keyring_tok.clone(),
-        legacy_pin.as_deref(),
-    );
+    let (token, vault_tok, keyring_tok) = resolved_token();
     let log = log_path(app)?;
     let host_dir = instance_host_dir(app)?;
     if !workdir.is_empty() {
@@ -672,12 +777,7 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
     }
     match spawn_klanker(&argv, port, &token, &log, &host_dir, workdir) {
         Ok(pid) => {
-            if keyring_tok.as_deref() != Some(token.as_str()) {
-                let _ = crate::secrets::set(&crate::secrets::relay_account("local"), &token);
-            }
-            if vault_tok.as_deref() != Some(token.as_str()) {
-                let _ = crate::secrets::write_host_vault_secret("RELAY_WEB_TOKEN", &token);
-            }
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
             write_pid_file(app, pid, port);
             s.failed_spawns += 1;
             s.last_spawn = Some(Instant::now());
@@ -700,8 +800,24 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
 fn status(app: &AppHandle) -> Result<ServeStatus, String> {
     let state = app.state::<ServeState>();
     let mut s = state.0.lock().map_err(|e| e.to_string())?;
-    if health_ok(s.port) || health_ok(DEFAULT_PORT) {
-        adopt_or_mark(&mut s, app);
+    let live_port = if health_ok(s.port) {
+        Some(s.port)
+    } else if health_ok(DEFAULT_PORT) {
+        Some(DEFAULT_PORT)
+    } else {
+        None
+    };
+    if let Some(port) = live_port {
+        // Honest state: a running serve we cannot authenticate to is lost
+        // to the UI, not "running". The next ensure/restart respawns it.
+        let (token, _, _) = resolved_token();
+        if !auth_ok(port, &token) {
+            s.state = "lost".into();
+            s.owned = false;
+            s.detail = Some("auth token mismatch — restart respawns a serve we can reach".into());
+        } else {
+            adopt_or_mark(&mut s, app);
+        }
     } else if s.state == "running" || s.state == "starting" {
         let owned_dead = s.owned && s.pid.is_some() && !pid_alive(s.pid.unwrap_or(0));
         if owned_dead || !s.owned {
@@ -778,7 +894,10 @@ pub async fn serve_status(app: AppHandle) -> Result<ServeStatus, String> {
 /// Ensure a local serve answers. Called by the web layer when the active
 /// instance is the managed `local` entry — spawn policy lives in JS.
 #[tauri::command]
-pub async fn serve_ensure_local(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
+pub async fn serve_ensure_local(
+    app: AppHandle,
+    workdir: Option<String>,
+) -> Result<ServeStatus, String> {
     do_ensure(&app, workdir.as_deref().unwrap_or(""), false)
 }
 
@@ -816,11 +935,14 @@ pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<Se
 }
 
 /// Warm the state at app start: a live pid-file serve on its recorded
-/// port is still ours; a port answering without a pid file is foreign.
+/// port is still ours — but only when it still accepts the resolvable
+/// token. A mismatched one is left stopped so ensure spawns a fresh serve.
 pub fn init(app: &AppHandle) {
     app.manage(ServeState(Mutex::new(Serve::default())));
     if let Some((pid, port)) = read_pid_file(app) {
-        if pid_is_ours(pid) && health_ok(port) {
+        let (token, vault_tok, keyring_tok) = resolved_token();
+        if pid_is_ours(pid) && health_ok(port) && auth_ok(port, &token) {
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
             let state = app.state::<ServeState>();
             if let Ok(mut s) = state.0.lock() {
                 s.state = "running".into();
@@ -833,6 +955,11 @@ pub fn init(app: &AppHandle) {
         remove_pid_file(app, Some(pid));
     }
     if health_ok(DEFAULT_PORT) {
+        let (token, vault_tok, keyring_tok) = resolved_token();
+        if !auth_ok(DEFAULT_PORT, &token) {
+            return; // unverifiable listener — ensure will take the port back
+        }
+        persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
         let state = app.state::<ServeState>();
         if let Ok(mut s) = state.0.lock() {
             adopt_or_mark(&mut s, app);
@@ -878,10 +1005,18 @@ mod tests {
         assert_eq!(entry_workspace(host).as_deref(), Some("default"));
 
         // Invalid or missing configured default_workspace falls back to "default".
-        fs::write(host.join("agents.json"), r#"{"default_workspace":"missing"}"#).unwrap();
+        fs::write(
+            host.join("agents.json"),
+            r#"{"default_workspace":"missing"}"#,
+        )
+        .unwrap();
         assert_eq!(entry_workspace(host).as_deref(), Some("default"));
 
-        fs::write(host.join("agents.json"), r#"{"default_workspace":"../escape"}"#).unwrap();
+        fs::write(
+            host.join("agents.json"),
+            r#"{"default_workspace":"../escape"}"#,
+        )
+        .unwrap();
         assert_eq!(entry_workspace(host).as_deref(), Some("default"));
 
         // Valid existing default_workspace wins over "default".
@@ -945,10 +1080,7 @@ mod tests {
             resolve_serve_token(None, Some("kr-tok".into()), Some(&pin)),
             "kr-tok"
         );
-        assert_eq!(
-            resolve_serve_token(None, None, Some(&pin)),
-            "legacy-pin"
-        );
+        assert_eq!(resolve_serve_token(None, None, Some(&pin)), "legacy-pin");
         // Legacy pin stays untouched; missing all sources mints a fresh UUID without creating pin.
         let missing_pin = tmp.0.join("missing").join("relay-secret");
         let minted = resolve_serve_token(None, None, Some(&missing_pin));
