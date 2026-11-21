@@ -23,7 +23,7 @@ klanker serve --no-auth             # only way to run the web surface unprotecte
 klanker cron                        # scheduled care flows
 ```
 
-`--workspace <id>` selects the data workspace (`AGENTS_WORKSPACE=<id>`; unknown id exits 2). `--workdir <dir>` sets the session cwd (`AGENTS_WORKDIR`) plus `AGENTS_WORKSPACE_LOCK=1` for this process and the spawned `runner.loop`. A directory passed to `--workspace` still maps to workdir for one release with a deprecation warning.
+`--workspace <id>` selects the data workspace (`AGENTS_WORKSPACE=<id>`; unknown id exits 2). `--workdir <dir>` sets the session cwd (`AGENTS_WORKDIR`) plus `AGENTS_WORKDIR_LOCK=1` for this process and the spawned `runner.loop`. A directory passed to `--workspace` still maps to workdir for one release with a deprecation warning.
 
 ## Layering
 

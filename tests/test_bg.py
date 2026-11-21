@@ -135,6 +135,40 @@ class TestBg(unittest.TestCase):
         self.assertEqual(restarted["workdir"], str(wd))
         self.assertEqual(popen2.call_args.kwargs["env"]["AGENTS_WORKSPACE"], "alpha")
 
+    def test_legacy_workspace_dir_emits_deprecation_warning(self):
+        import warnings
+
+        legacy_wd = Path(self.tmp.name) / "legacy-wd"
+        legacy_wd.mkdir()
+        new_wd = Path(self.tmp.name) / "new-wd"
+        new_wd.mkdir()
+        with patch.dict(
+            os.environ,
+            {"AGENTS_WORKSPACE_DIR": str(legacy_wd)},
+            clear=False,
+        ):
+            os.environ.pop("AGENTS_WORKDIR", None)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                _ws_id, wd, _ws = bg._resolve_bg_context()
+            self.assertEqual(wd, str(legacy_wd))
+            self.assertTrue(
+                any(
+                    issubclass(w.category, DeprecationWarning)
+                    and "AGENTS_WORKSPACE_DIR" in str(w.message)
+                    for w in caught
+                )
+            )
+            os.environ["AGENTS_WORKDIR"] = str(new_wd)
+            with warnings.catch_warnings(record=True) as caught2:
+                warnings.simplefilter("always")
+                _ws_id, wd2, _ws = bg._resolve_bg_context()
+            self.assertEqual(wd2, str(new_wd))
+            self.assertEqual(
+                [w for w in caught2 if issubclass(w.category, DeprecationWarning)],
+                [],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

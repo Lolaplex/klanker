@@ -123,12 +123,11 @@ def _resolve_bg_context(
 ) -> tuple[str, str, Any]:
     """Resolve (workspace_id, workdir, Workspace | None) without failing when no ws exists."""
     from agents_workspace import Host, Workspace
+    from agents_workspace.compat import read_alias
 
     ws_id = (workspace or "").strip() or os.environ.get("AGENTS_WORKSPACE", "").strip()
-    wd = (
-        (workdir or "").strip()
-        or os.environ.get("AGENTS_WORKDIR", "").strip()
-        or os.environ.get("AGENTS_WORKSPACE_DIR", "").strip()
+    wd = (workdir or "").strip() or read_alias(
+        None, "AGENTS_WORKDIR", "AGENTS_WORKSPACE_DIR"
     )
     ws_obj = None
     if ws_id:
