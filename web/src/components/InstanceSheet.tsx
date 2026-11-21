@@ -65,12 +65,14 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   const [jobBusy, setJobBusy] = useState(false);
   const [jobNote, setJobNote] = useState<string | null>(null);
   const [newPersona, setNewPersona] = useState("");
-  const [providers, setProviders] = useState<{ name: string; model?: string }[]>([]);
+  const [providers, setProviders] = useState<{ name: string; kind?: string; model?: string; models?: string[] }[]>([]);
   const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
   const [personas, setPersonas] = useState<{ id: string; name?: string }[]>([]);
   const choice = choiceOf(formData);
   const kind = choice === "inherit" ? windowKind(settings) : choice;
   const showModel = choice === "lmstudio" || choice === "openrouter";
+  // Real manifest pick (acp.devin, openai.default, …) — generic override.
+  const providerRow = providers.find((p) => p.name === formData.provider);
 
   useEffect(() => {
     setFormData(instance);
@@ -528,21 +530,26 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                   ))}
                 </select>
               ) : (
-                <div className="grid grid-cols-4 gap-1">
-                  {choices.map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => pickProvider(item)}
-                      className={`px-2 py-1.5 min-h-9 rounded border text-[11px] transition-colors ${
-                        choice === item
-                          ? "bg-white text-black border-white"
-                          : "bg-[#0a0a0a] text-[#a3a3a3] border-[#262626] hover:text-white"
-                      }`}
-                    >
-                      {item === "inherit" ? "Inherit" : providerLabel(item)}
-                    </button>
-                  ))}
+                <div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {choices.map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => pickProvider(item)}
+                        className={`px-2 py-1.5 min-h-9 rounded border text-[11px] transition-colors ${
+                          choice === item
+                            ? "bg-white text-black border-white"
+                            : "bg-[#0a0a0a] text-[#a3a3a3] border-[#262626] hover:text-white"
+                        }`}
+                      >
+                        {item === "inherit" ? "Inherit" : providerLabel(item)}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[10px] text-[#525252]">
+                    host provider list unavailable — showing app fallback providers
+                  </p>
                 </div>
               )}
               {choice === "inherit" && providers.length === 0 && (
@@ -550,6 +557,47 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                   Window: {providerLabel(kind)}
                   {windowModel ? ` · ${windowModel}` : ""}
                 </p>
+              )}
+              {providerRow && (
+                <div>
+                  <div className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
+                    Model override
+                  </div>
+                  <input
+                    type="text"
+                    value={formData.model}
+                    spellCheck={false}
+                    placeholder={providerRow.model || "provider default"}
+                    onChange={(e) => {
+                      const next = { ...draftRef.current, model: e.target.value };
+                      writeForm(next);
+                    }}
+                    onBlur={() => save()}
+                    className={inputClass}
+                  />
+                  {(providerRow.models ?? []).length > 0 && (
+                    <div className="mt-1 max-h-36 overflow-y-auto border border-[#262626] rounded">
+                      {(providerRow.models ?? []).map((id) => (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => {
+                            const next = { ...draftRef.current, model: id };
+                            writeForm(next);
+                            save(next);
+                          }}
+                          className={`w-full min-h-9 truncate px-2 py-1.5 text-left ${
+                            id === formData.model.trim()
+                              ? "bg-[#141414] text-white"
+                              : "text-[#a3a3a3] hover:bg-[#181818] hover:text-white"
+                          }`}
+                        >
+                          {id}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
               {showModel && (
                 <ModelControl

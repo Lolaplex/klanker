@@ -17,10 +17,17 @@ const LS_ACTIVE = "klanker.active";
 
 /** "" means same origin — the dashboard is served by the relay itself.
  *  `via: "relay"` instances mount through the relay's authenticated proxy. */
+/** Live port of the desktop-managed serve — updated from serve_status.
+ *  A restart spawns on a fresh port when the default is held by a foreign
+ *  process, so the hardcoded registry URL cannot be trusted. */
+let localServePort = 8787;
+
 const base = (inst: KlankerInstance): string =>
   inst.via === "relay"
     ? `/v1/remote/${encodeURIComponent(inst.id)}`
-    : (inst.endpoint?.base_url || inst.base_url || "").replace(/\/+$/, "");
+    : inst.kind === "local" && caps.spawn
+      ? `http://127.0.0.1:${localServePort}`
+      : (inst.endpoint?.base_url || inst.base_url || "").replace(/\/+$/, "");
 
 function headers(inst: KlankerInstance, json = false): Record<string, string> {
   const h: Record<string, string> = {};
@@ -354,6 +361,23 @@ export const api = {
     }
   },
 
+  /** Public /health probe: `{version, klanker_version?}` on relays that
+   *  report it (agents-relay#27), null otherwise/unreachable. */
+  async relayVersion(inst: KlankerInstance): Promise<{ version?: string; klanker_version?: string } | null> {
+    try {
+      const res = await fetch(base(inst) + "/health", { headers: headers(inst) });
+      if (!res.ok) return null;
+      const body = await res.json().catch(() => null);
+      if (!body || typeof body !== "object") return null;
+      return {
+        version: typeof body.version === "string" ? body.version : undefined,
+        klanker_version: typeof body.klanker_version === "string" ? body.klanker_version : undefined,
+      };
+    } catch {
+      return null;
+    }
+  },
+
   async authStatus(inst: KlankerInstance): Promise<{ authenticated: boolean; enabled: boolean; user: string }> {
     const r = await req<{ authenticated?: boolean; enabled?: boolean; user?: string }>(
       inst,
@@ -415,7 +439,7 @@ export const api = {
     inst: KlankerInstance,
     workspace: string,
     persona: string
-  ): Promise<{ id: string; goal?: string; created_at?: string; last_active?: string }[]> {
+  ): Promise<{ id: string; goal?: string; title?: string; created_at?: string; last_active?: string }[]> {
     try {
       const r = await req<{ sessions?: any[] }>(
         inst,
@@ -425,6 +449,7 @@ export const api = {
       return (r.sessions || []).map((s) => ({
         id: s.id || s.session || "",
         goal: s.goal || undefined,
+        title: s.title || undefined,
         created_at: s.created_at,
         last_active: s.last_active || s.updated_at,
       }));
@@ -449,7 +474,7 @@ export const api = {
   /** Provider manifests known to the host loop (relay#14). */
   async listProviders(
     inst: KlankerInstance
-  ): Promise<{ name: string; kind?: string; model?: string; when?: string }[]> {
+  ): Promise<{ name: string; kind?: string; model?: string; when?: string; models?: string[] }[]> {
     try {
       const r = await req<{ providers?: any[] }>(inst, "/v1/providers", { headers: headers(inst) });
       return (r.providers || []).map((p) => ({
@@ -457,6 +482,9 @@ export const api = {
         kind: p.kind,
         model: p.model,
         when: p.when,
+        models: Array.isArray(p.models)
+          ? p.models.filter((m: unknown) => typeof m === "string" && m)
+          : undefined,
       })).filter((p) => p.name);
     } catch {
       return [];
@@ -803,13 +831,19 @@ export const api = {
   },
 
   async serveStatus(): Promise<ServeStatus> {
-    return invoke<ServeStatus>("serve_status");
+    const st = await invoke<ServeStatus>("serve_status");
+    if (st.port) localServePort = st.port;
+    return st;
   },
   async serveEnsureLocal(workdir?: string): Promise<ServeStatus> {
-    return invoke<ServeStatus>("serve_ensure_local", { workdir });
+    const st = await invoke<ServeStatus>("serve_ensure_local", { workdir });
+    if (st.port) localServePort = st.port;
+    return st;
   },
   async serveRestart(workdir?: string): Promise<ServeStatus> {
-    return invoke<ServeStatus>("serve_restart", { workdir });
+    const st = await invoke<ServeStatus>("serve_restart", { workdir });
+    if (st.port) localServePort = st.port;
+    return st;
   },
 
   /** Spawn/attach the managed local serve and return the instance plus its
@@ -1138,7 +1172,7 @@ export function desktopLocalInstance(): KlankerInstance {
     port: 8787,
     system_prompt: "",
     kind: "local",
-    endpoint: { base_url: "http://127.0.0.1:8787" },
+    endpoint: { base_url: `http://127.0.0.1:${localServePort}` },
     created_at: now,
     updated_at: now,
   };

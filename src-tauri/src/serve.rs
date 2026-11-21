@@ -234,17 +234,20 @@ fn try_probe(argv: &[&str]) -> Option<Option<String>> {
     None
 }
 
-/// Resolve how to run `klanker`. Probe order: `klanker` on PATH,
-/// `py -m klanker`, `python -m klanker`, `uv tool run klanker`.
+/// Resolve how to run `klanker`. Probe order: `py -m klanker`,
+/// `python -m klanker`, `klanker` on PATH, `uv tool run klanker`.
+/// Interpreter forms come first: the `klanker.exe` entry-point shim is a
+/// console launcher that dies silently (exit 0, no output) when spawned
+/// from a console-less GUI parent under CREATE_NO_WINDOW.
 /// Returns (argv_prefix, version).
 fn find_klanker(app: &AppHandle) -> Option<(Vec<String>, Option<String>)> {
-    if let Some(v) = try_probe(&["klanker"]) {
-        return Some((vec!["klanker".into()], v));
-    }
     for prog in ["py", "python"] {
         if let Some(v) = try_probe(&[prog, "-m", "klanker"]) {
             return Some((vec![prog.into(), "-m".into(), "klanker".into()], v));
         }
+    }
+    if let Some(v) = try_probe(&["klanker"]) {
+        return Some((vec!["klanker".into()], v));
     }
     if let Some(uv) = crate::provision::uv_bin(app) {
         if let Some(v) = try_probe(&[&uv.to_string_lossy(), "tool", "run", "klanker"]) {
@@ -322,18 +325,38 @@ fn spawn_klanker(
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
 
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("spawn klanker serve: {e}"))?;
+    // Diagnose spawn failures in the same log the child would write to —
+    // a silent death otherwise leaves only "respawned" markers behind.
+    let log_err = |msg: &str| {
+        if let Ok(mut f) = OpenOptions::new().append(true).open(log) {
+            let _ = writeln!(f, "[shell] spawn failed: {msg}");
+        }
+    };
+    let child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("spawn klanker serve: {e}");
+            log_err(&msg);
+            return Err(msg);
+        }
+    };
     let pid = child.id();
     let mut child = child;
     // Surface early exit: a child that dies within the first seconds is a
     // spawn failure, not a running serve.
     std::thread::sleep(Duration::from_secs(3));
     match child.try_wait() {
-        Ok(Some(status)) => Err(format!("klanker serve exited early ({status})")),
+        Ok(Some(status)) => {
+            let msg = format!("klanker serve exited early ({status})");
+            log_err(&msg);
+            Err(msg)
+        }
         Ok(None) => Ok(pid),
-        Err(e) => Err(format!("wait klanker serve: {e}")),
+        Err(e) => {
+            let msg = format!("wait klanker serve: {e}");
+            log_err(&msg);
+            Err(msg)
+        }
     }
 }
 
@@ -371,15 +394,14 @@ fn pick_port() -> u16 {
         .unwrap_or(DEFAULT_PORT)
 }
 
-/// Data root for the managed local serve: `~/.klanker/instances/default` —
-/// the instance dir IS the host root (`<inst>/workspaces/<id>`), no
-/// `.agents` nesting, and `~/.agents` stays untouched.
+/// Data root for the managed local serve: the same host root `klanker
+/// serve` uses on the CLI — `AGENTS_HOST_DIR` or `~/.agents`. Sharing one
+/// stem means workspaces, personas, inbox and secrets are identical no
+/// matter who spawned the process.
 fn instance_host_dir(_app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = dirs::home_dir()
-        .ok_or("no home dir")?
-        .join(".klanker")
-        .join("instances")
-        .join("default");
+    let dir = std::env::var_os("AGENTS_HOST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_default().join(".agents"));
     fs::create_dir_all(&dir).map_err(|e| format!("create host dir: {e}"))?;
     Ok(dir)
 }
@@ -397,13 +419,20 @@ fn entry_workspace(host_dir: &PathBuf) -> Option<String> {
     })
 }
 
-fn do_ensure(app: &AppHandle, workdir: &str) -> Result<ServeStatus, String> {
+fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeStatus, String> {
     let state = app.state::<ServeState>();
     let mut s = state.0.lock().map_err(|e| e.to_string())?;
 
     if health_ok(s.port) || health_ok(DEFAULT_PORT) {
-        adopt_or_mark(&mut s, app);
-        return Ok(ServeStatus::of(&s));
+        if !force_own {
+            adopt_or_mark(&mut s, app);
+            return Ok(ServeStatus::of(&s));
+        }
+        // Restart semantics: never adopt a foreign process — its token is
+        // not the keyring one, so linking would fail forever. Leave it
+        // running and spawn our own on a fresh port instead.
+        s.owned = false;
+        s.pid = None;
     }
 
     // A booting child needs grace — python imports take seconds. Only
@@ -448,7 +477,24 @@ fn do_ensure(app: &AppHandle, workdir: &str) -> Result<ServeStatus, String> {
     s.klanker_version = version;
 
     let port = pick_port();
-    let token = uuid::Uuid::new_v4().simple().to_string();
+    // Machine-wide pin wins over keyring: `klanker serve` (CLI) reads and
+    // writes `~/.klanker/relay-secret`, so every serve on this host shares
+    // one bearer — a foreign process validates the same token we hold.
+    let pin = dirs::home_dir().map(|h| h.join(".klanker").join("relay-secret"));
+    let pinned = pin
+        .as_ref()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let token = pinned
+        .or_else(|| crate::secrets::get(&crate::secrets::relay_account("local")))
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    if let Some(p) = &pin {
+        if fs::read_to_string(p).map(|s| s.trim() != token).unwrap_or(true) {
+            let _ = fs::create_dir_all(p.parent().unwrap_or(p));
+            let _ = fs::write(p, format!("{token}\n"));
+        }
+    }
     let log = log_path(app)?;
     let host_dir = instance_host_dir(app)?;
     if !workdir.is_empty() {
@@ -554,14 +600,15 @@ pub async fn serve_status(app: AppHandle) -> Result<ServeStatus, String> {
 /// instance is the managed `local` entry — spawn policy lives in JS.
 #[tauri::command]
 pub async fn serve_ensure_local(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
-    do_ensure(&app, workdir.as_deref().unwrap_or(""))
+    do_ensure(&app, workdir.as_deref().unwrap_or(""), false)
 }
 
 /// Manual retry from the "server lost" state — resets the respawn budget.
 /// An owned serve is actually killed first: without that the health probe
 /// in `do_ensure` adopts the still-dying process and the "restart" becomes
 /// a no-op, so a new agents-relay build or changed env is never picked up.
-/// A foreign serve is never touched — it is just adopted again.
+/// A foreign serve is never killed, but never adopted either — restart
+/// means "a serve we own", so a changed secret actually takes effect.
 #[tauri::command]
 pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
     let mut killed = None;
@@ -586,7 +633,7 @@ pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<Se
             std::thread::sleep(Duration::from_millis(250));
         }
     }
-    do_ensure(&app, workdir.as_deref().unwrap_or(""))
+    do_ensure(&app, workdir.as_deref().unwrap_or(""), true)
 }
 
 /// Warm the state at app start: a live pid-file serve on its recorded

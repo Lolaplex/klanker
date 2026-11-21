@@ -19,6 +19,8 @@ CLAUDE.md
 
 web/node_modules/
 web/dist/
+web/test-results/
+web/playwright-report/
 src/klanker/_web/
 
 # Tauri desktop shell
