@@ -331,3 +331,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replay provider, not the env-configured default. The instance provider
   picker labels its empty choice "host default (env)" and only offers
   "inherit app setting" on desktop.
+
+### Removed
+
+- "publish this host" in Add Instance. Hosts now announce themselves: the
+  relay self-publishes a signed road declaration at serve start when
+  `AGENTS_PRESENCE_LABEL`/`KEY`/`ADDR` are set (agents-relay dev 2d4d23b).
+  Signed-offers discovery stays as the read side.

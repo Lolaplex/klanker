@@ -782,26 +782,6 @@ export const api = {
     return (data.offers as PresenceOffer[]) || [];
   },
 
-  /** Publish a road declaration for this host via agents_keys signing. */
-  async publishPresenceOffer(
-    keySlug: string,
-    label: string,
-    roads: { kind: string; addr: string; priority?: number }[]
-  ): Promise<{ ok: boolean; reason?: string }> {
-    const body = { key_slug: keySlug, label, roads };
-    const res = caps.keyring
-      ? await localRelayFetch("/v1/presence/publish", "POST", body)
-      : await fetch("/v1/presence/publish", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        }).catch(() => null);
-    if (!res) return { ok: false, reason: "relay unreachable" };
-    if (res.ok) return { ok: true };
-    const text = await res.text().catch(() => "");
-    return { ok: false, reason: text.replace(/^.*?"([^"]+)".*$/, "$1") || `HTTP ${res.status}` };
-  },
-
   // Tailnet discovery needs a local tailscale CLI + LAN probes — desktop only.
 
   async discoverPeers(): Promise<DiscoveredPeer[]> {

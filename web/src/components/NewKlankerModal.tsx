@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Radar, Satellite, X } from "lucide-react";
+import { Radar, X } from "lucide-react";
 import { DiscoveredPeer, KlankerInstance, PresenceOffer } from "../types/klanker";
 import { api } from "../services/api";
 
@@ -16,12 +16,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   const [discovering, setDiscovering] = useState(false);
   const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
   const [presence, setPresence] = useState<PresenceOffer[] | null>(null);
-  const [publishOpen, setPublishOpen] = useState(false);
-  const [pubLabel, setPubLabel] = useState("");
-  const [pubAddr, setPubAddr] = useState("");
-  const [pubKey, setPubKey] = useState("");
-  const [pubBusy, setPubBusy] = useState(false);
-  const [pubNote, setPubNote] = useState("");
 
   // Auto-scan when the modal opens.
   useEffect(() => {
@@ -71,28 +65,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   const pickOffer = (offer: PresenceOffer, endpoint: string) => {
     setName(offer.label);
     setUrl(endpoint);
-  };
-
-  const publish = async () => {
-    const label = pubLabel.trim();
-    const addr = pubAddr.trim();
-    const key = pubKey.trim();
-    if (!label || !addr || !key) return;
-    setPubBusy(true);
-    setPubNote("");
-    try {
-      const r = await api.publishPresenceOffer(key, label, [
-        { kind: addr.includes("://") ? addr.split("://")[0] : "https", addr },
-      ]);
-      if (r.ok) {
-        setPubNote("published");
-        setPresence(await api.listPresenceOffers().catch(() => []));
-      } else {
-        setPubNote(r.reason || "failed");
-      }
-    } finally {
-      setPubBusy(false);
-    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -226,51 +198,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
               )}
             </div>
           )}
-
-          <div className="border border-[#262626] rounded">
-            <button
-              type="button"
-              onClick={() => setPublishOpen((v) => !v)}
-              className="w-full flex items-center justify-center gap-1.5 min-h-9 px-2 py-1 text-[#a3a3a3] hover:text-white"
-            >
-              <Satellite className="w-3 h-3" />
-              <span>{publishOpen ? "close" : "publish this host"}</span>
-            </button>
-            {publishOpen && (
-              <div className="p-2 space-y-2 border-t border-[#262626]">
-                <input
-                  type="text"
-                  placeholder="label (e.g. sigma)"
-                  value={pubLabel}
-                  onChange={(e) => setPubLabel(e.target.value)}
-                  className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2 py-1.5 text-white outline-none"
-                />
-                <input
-                  type="text"
-                  placeholder="reachable addr (host[:port] or https://…)"
-                  value={pubAddr}
-                  onChange={(e) => setPubAddr(e.target.value)}
-                  className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2 py-1.5 text-white outline-none"
-                />
-                <input
-                  type="text"
-                  placeholder="agents-keys slug (signing identity)"
-                  value={pubKey}
-                  onChange={(e) => setPubKey(e.target.value)}
-                  className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2 py-1.5 text-white outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={publish}
-                  disabled={pubBusy || !pubLabel.trim() || !pubAddr.trim() || !pubKey.trim()}
-                  className="w-full min-h-8 px-2 py-1 bg-[#1a1a1a] hover:bg-[#242424] text-white rounded disabled:opacity-40"
-                >
-                  {pubBusy ? "signing…" : "sign + publish"}
-                </button>
-                {pubNote && <p className="text-[10px] text-[#a3a3a3] px-1">{pubNote}</p>}
-              </div>
-            )}
-          </div>
 
           <div className="flex items-center justify-end space-x-2">
             <button type="button" onClick={close} className="inline-flex min-h-9 items-center px-3 py-1.5 text-[#737373] hover:text-white transition-colors">
