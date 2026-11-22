@@ -140,6 +140,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Working directory for this session and spawned turns (AGENTS_WORKDIR)",
     )
+    parser.add_argument(
+        "--remote",
+        default="",
+        help="Registered remote id (<host>/clients/remotes.json); connects instead of the local daemon",
+    )
 
     sub = parser.add_subparsers(dest="command")
 
@@ -356,6 +361,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Extra directory to scan (repeatable). Does not search memory or traces.",
     )
 
+    remote_p = sub.add_parser("remote", help="Manage remote klanker hosts (list/add/rm)")
+    remote_sub = remote_p.add_subparsers(dest="remote_cmd")
+    remote_list = remote_sub.add_parser("list", help="List registered remotes")
+    remote_list.add_argument("--json", action="store_true", help="Print JSON")
+    remote_add = remote_sub.add_parser("add", help="Register a remote host")
+    remote_add.add_argument("name", help="Display name (also the default id slug)")
+    remote_add.add_argument("url", help="Remote base URL (http/https)")
+    remote_add.add_argument("--id", default="", help="Explicit remote id slug")
+    remote_add.add_argument("--token", default="", help="Remote token (prefer --token-stdin)")
+    remote_add.add_argument("--token-stdin", action="store_true", help="Read token from stdin")
+    remote_add.add_argument("--prompt", action="store_true", help="Ask for the token via getpass")
+    remote_rm = remote_sub.add_parser("rm", help="Remove a remote and its vault token")
+    remote_rm.add_argument("id", help="Remote id")
+
     return parser
 
 
@@ -372,6 +391,7 @@ KNOWN_SUBCOMMANDS = {
     "doctor",
     "update",
     "routine",
+    "remote",
     "evidence",
     "persona",
     "workspace",
@@ -666,6 +686,11 @@ def main(argv: list[str] | None = None) -> int:
 
         return dispatch(args)
 
+    elif args.command == "remote":
+        from .remotes_cli import cmd_remote
+
+        return cmd_remote(args)
+
     elif args.command == "evidence":
         from .evidence import run_evidence
 
@@ -681,7 +706,16 @@ def main(argv: list[str] | None = None) -> int:
         from .shell.repl.loop import run_interactive_shell
 
         url = getattr(args, "url", "http://127.0.0.1:8787") or "http://127.0.0.1:8787"
-        if not getattr(args, "no_gateway", False) and _daemon._is_loopback(url):
+        remote_id = (getattr(args, "remote", "") or "").strip()
+        if remote_id:
+            from .remotes_cli import resolve_remote
+
+            row = resolve_remote(remote_id)
+            if row is None:
+                print(f"Error: unknown remote: {remote_id}", file=sys.stderr)
+                return 2
+            url = row["base_url"]
+        elif not getattr(args, "no_gateway", False) and _daemon._is_loopback(url):
             live = _daemon.discover_live_serve()
             if live:
                 url = live
@@ -707,6 +741,7 @@ def main(argv: list[str] | None = None) -> int:
             session=getattr(args, "session", "") or "",
             workspace=getattr(args, "workspace", "") or "",
             workdir=os.environ.get("AGENTS_WORKDIR", "") or "",
+            remote_id=remote_id,
             no_gateway=bool(getattr(args, "no_gateway", False)),
         )
 
@@ -789,8 +824,18 @@ def main(argv: list[str] | None = None) -> int:
         from .shell.repl.loop import run_interactive_shell
 
         ensure_default_overlay()
-        url = _daemon.discover_live_serve() or _daemon.DEFAULT_RELAY_URL
-        if not _daemon.relay_health(url):
+        remote_id = (getattr(args, "remote", "") or "").strip()
+        if remote_id:
+            from .remotes_cli import resolve_remote
+
+            row = resolve_remote(remote_id)
+            if row is None:
+                print(f"Error: unknown remote: {remote_id}", file=sys.stderr)
+                return 2
+            url = row["base_url"]
+        else:
+            url = _daemon.discover_live_serve() or _daemon.DEFAULT_RELAY_URL
+        if not remote_id and not _daemon.relay_health(url):
             started = _daemon.ensure_daemon(url)
             if started:
                 url = started
@@ -805,8 +850,9 @@ def main(argv: list[str] | None = None) -> int:
             provider=provider or "",
             workspace=getattr(args, "workspace", "") or "",
             workdir=os.environ.get("AGENTS_WORKDIR", "") or "",
+            remote_id=remote_id,
         )
-        if _daemon.relay_health(url):
+        if not remote_id and _daemon.relay_health(url):
             print(f"\ndaemon still running at {url} — `klanker stop` to halt")
         return rc
 

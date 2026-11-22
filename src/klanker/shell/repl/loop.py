@@ -38,6 +38,7 @@ def _gateway_client(
     session: str,
     workspace: str = "",
     workdir: str = "",
+    remote_id: str = "",
 ) -> GatewayClient:
     from agents_relay.client import GatewayClient
 
@@ -65,6 +66,7 @@ def _gateway_client(
         project=project.strip() if "project" in explicit else "",
         workspace=workspace,
         workdir=(workdir or "").strip(),
+        remote_id=(remote_id or "").strip(),
         prefs_path=_repl_prefs_path(),
     )
     if session:
@@ -90,6 +92,7 @@ def run_interactive_shell(
     session: str = "",
     workspace: str = "",
     workdir: str = "",
+    remote_id: str = "",
     no_gateway: bool = False,
 ) -> int:
     gateway = None
@@ -105,6 +108,7 @@ def run_interactive_shell(
                 session=session,
                 workspace=workspace,
                 workdir=workdir,
+                remote_id=remote_id,
             )
         except ImportError:
             pass
