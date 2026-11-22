@@ -3,12 +3,18 @@ import type {
   DesktopSettings,
   DiscoveredPeer,
   KlankerInstance,
+  PairCreateResult,
   PendingApproval,
   ProcessStatus,
+  RelayCapabilities,
+  RelayEvent,
+  StoreListResult,
+  StorePaneResult,
   TracePage,
   WorkspaceRow,
 } from "../types/klanker";
 import { DEFAULT_SETTINGS } from "../openrouterModels.ts";
+import { parseSseChunk, parseStoreListResponse } from "../relayEvents.ts";
 
 const LS_INSTANCES = "klanker.instances";
 const LS_INSTANCES_MIGRATED = "klanker.instances_migrated";
@@ -1029,6 +1035,151 @@ export const api = {
   },
   async installAppUpdate(): Promise<void> {
     await invoke("install_update");
+  },
+
+  // --- Wave 5 Phase 2: /v1/events, pairing, store, capabilities ----------
+
+  async getCapabilities(inst: KlankerInstance): Promise<RelayCapabilities> {
+    try {
+      const res = await authedFetch(inst, `${base(inst)}/v1/capabilities`, {
+        headers: headers(inst),
+      });
+      if (!res.ok) return { store: false, voice: false, caldav: false };
+      const r = (await res.json()) as Partial<RelayCapabilities>;
+      return {
+        store: Boolean(r.store),
+        voice: Boolean(r.voice),
+        caldav: Boolean(r.caldav),
+      };
+    } catch {
+      return { store: false, voice: false, caldav: false };
+    }
+  },
+
+  async createPairCode(
+    inst: KlankerInstance,
+    mode: "web" | "remote" = "web",
+    ttlSec = 60
+  ): Promise<PairCreateResult> {
+    return jsonReq<PairCreateResult>(inst, "/v1/pair/create", {
+      mode,
+      ttl_sec: ttlSec,
+    });
+  },
+
+  async redeemPairToken(
+    inst: KlankerInstance,
+    credential: string
+  ): Promise<{ ok: boolean; mode?: string; host_id?: string; error?: string }> {
+    const res = await fetch(`${base(inst)}/v1/pair/redeem`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: credential }),
+    });
+    const text = await res.text().catch(() => "");
+    let data: { ok?: boolean; mode?: string; host_id?: string; error?: string } = {};
+    try {
+      data = JSON.parse(text);
+    } catch {}
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `${res.status}`);
+    }
+    return {
+      ok: true,
+      mode: data.mode,
+      host_id: data.host_id,
+    };
+  },
+
+  async listStoreItems(
+    inst: KlankerInstance,
+    workspaceId: string,
+    kind?: string,
+    status?: string
+  ): Promise<StoreListResult> {
+    const ws = workspaceId.trim();
+    if (!ws) return { supported: false, items: [] };
+    const qs = new URLSearchParams();
+    if (kind) qs.set("kind", kind);
+    if (status) qs.set("status", status);
+    const suffix = qs.toString() ? `?${qs}` : "";
+    const res = await authedFetch(
+      inst,
+      `${base(inst)}/v1/workspaces/${encodeURIComponent(ws)}/store/items${suffix}`,
+      { headers: headers(inst) }
+    );
+    const text = await res.text().catch(() => "");
+    return parseStoreListResponse(res.status, text);
+  },
+
+  async renderStorePane(
+    inst: KlankerInstance,
+    workspaceId: string,
+    entityId: string,
+    target: "markdown" | "ical" | "html" = "markdown"
+  ): Promise<StorePaneResult> {
+    const r = await req<StorePaneResult>(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}/store/pane/${encodeURIComponent(entityId)}?target=${encodeURIComponent(target)}`,
+      { headers: headers(inst) }
+    );
+    return r;
+  },
+
+  async appendStoreItem(
+    inst: KlankerInstance,
+    workspaceId: string,
+    domain: string,
+    payload: Record<string, unknown>
+  ): Promise<{ id: string; actor?: string }> {
+    return jsonReq<{ id: string; actor?: string }>(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(workspaceId)}/store/append`,
+      { domain, payload }
+    );
+  },
+
+  async openRelayEvents(
+    inst: KlankerInstance,
+    signal: AbortSignal,
+    onEvent: (ev: RelayEvent) => void,
+    workspace = ""
+  ): Promise<void> {
+    const ws = workspace.trim();
+    const qs = ws ? `?workspace=${encodeURIComponent(ws)}` : "";
+    const res = await authedFetch(inst, `${base(inst)}/v1/events${qs}`, {
+      headers: { ...headers(inst), Accept: "text/event-stream" },
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`events ${res.status}`);
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx = buf.indexOf("\n\n");
+        let crlfIdx = buf.indexOf("\r\n\r\n");
+        while (idx >= 0 || crlfIdx >= 0) {
+          const splitAt =
+            idx >= 0 && (crlfIdx < 0 || idx < crlfIdx) ? idx : crlfIdx;
+          const sepLen = splitAt === idx ? 2 : 4;
+          const frame = buf.slice(0, splitAt);
+          buf = buf.slice(splitAt + sepLen);
+          for (const ev of parseSseChunk(frame)) {
+            onEvent(ev);
+          }
+          idx = buf.indexOf("\n\n");
+          crlfIdx = buf.indexOf("\r\n\r\n");
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   },
 };
 

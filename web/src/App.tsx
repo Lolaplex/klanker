@@ -40,10 +40,13 @@ import {
 import { reconcileChat } from "./chatSync";
 import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
+import { PairModal } from "./components/PairModal";
+import { WorkspacePane } from "./components/WorkspacePane";
 import { WorkspaceSettingsModal } from "./components/WorkspaceSettingsModal";
 import { useKeyboardViewport } from "./hooks/useKeyboardViewport";
 import { useInstances } from "./hooks/useInstances";
 import { usePersistChats } from "./hooks/usePersistChats";
+import { useRelayEvents } from "./hooks/useRelayEvents";
 import { useSidebarTree } from "./hooks/useSidebarTree";
 import { useChatSync } from "./hooks/useChatSync";
 import { useApprovals } from "./hooks/useApprovals";
@@ -80,6 +83,12 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
   const [wsSettingsId, setWsSettingsId] = useState<string | null>(null);
+  const [pairOpen, setPairOpen] = useState(false);
+  const [storeOpen, setStoreOpen] = useState(false);
+  const [storeSupported, setStoreSupported] = useState(false);
+  const [voiceSupported, setVoiceSupported] = useState(false);
+  const [storeRev, setStoreRev] = useState(0);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
 
   const { kbBox, idleH } = useKeyboardViewport();
 
@@ -151,6 +160,54 @@ export function App() {
 
   const approvals = useApprovals({ activeInstance, status: herdStatus, workspaceId: selWs });
   const relayCompat = useRelayCompat({ activeInstance, managedId: inst.managedId, herd: inst.herd });
+
+  // Probe optional store / voice capabilities for active running relay.
+  useEffect(() => {
+    const inst0 = activeInstance;
+    if (!inst0 || herdStatus?.state !== "running") {
+      setStoreSupported(false);
+      setVoiceSupported(false);
+      return;
+    }
+    let stop = false;
+    void api.getCapabilities(inst0).then((c) => {
+      if (stop) return;
+      setStoreSupported(c.store);
+      setVoiceSupported(c.voice);
+    });
+    return () => {
+      stop = true;
+    };
+  }, [activeInstance?.id, herdStatus?.state, activeInstance]);
+
+  // Workspace-scoped voice read-aloud preference.
+  useEffect(() => {
+    const key = `klanker.voice.${selWs || "default"}`;
+    try {
+      setVoiceEnabled(localStorage.getItem(key) === "1");
+    } catch {
+      setVoiceEnabled(false);
+    }
+    try {
+      window.speechSynthesis?.cancel();
+    } catch {}
+  }, [selWs]);
+
+  const toggleVoice = useCallback(() => {
+    setVoiceEnabled((prev) => {
+      const next = !prev;
+      const key = `klanker.voice.${selWs || "default"}`;
+      try {
+        localStorage.setItem(key, next ? "1" : "0");
+      } catch {}
+      if (!next) {
+        try {
+          window.speechSynthesis?.cancel();
+        } catch {}
+      }
+      return next;
+    });
+  }, [selWs]);
 
   const tree = useSidebarTree({
     activeInstance,
@@ -243,6 +300,29 @@ export function App() {
     evCache,
     setSessionTitles: tree.setSessionTitles,
     setStreamStatus,
+  });
+
+  useRelayEvents({
+    activeInstance,
+    status: herdStatus,
+    onEvent: (ev) => {
+      if (ev.kind === "workspace.changed") {
+        tree.refreshWorkspaces();
+      } else if (ev.kind === "persona.changed") {
+        tree.refreshPersonas(ev.workspace || undefined);
+      } else if (ev.kind === "session.changed") {
+        tree.refreshSessions(
+          ev.workspace || undefined,
+          typeof ev.payload?.persona === "string" ? ev.payload.persona : undefined
+        );
+      } else if (ev.kind === "remote.changed") {
+        void inst.refreshInstances();
+      } else if (ev.kind === "approval.changed") {
+        approvals.refresh();
+      } else if (ev.kind === "store.changed") {
+        setStoreRev((n) => n + 1);
+      }
+    },
   });
 
   const selectChat = (ws: string, persona: string, chatId: string) => {
@@ -574,6 +654,7 @@ export function App() {
       // truth. Generous: prefill/stall gaps are bounded by provider settings.
       const it = stream[Symbol.asyncIterator]();
       const STREAM_IDLE_MS = 5 * 60_000;
+      let replyBuf = "";
       for (;;) {
         const next = await Promise.race([
           it.next(),
@@ -584,6 +665,7 @@ export function App() {
         if (next.done) break;
         const ev = next.value;
         if (ev.type === "delta" && ev.text) {
+          replyBuf += ev.text;
           deltas.push(ev.text);
         } else if (ev.type === "status" && ev.text) {
           setStreamStatus(ev.text);
@@ -608,6 +690,12 @@ export function App() {
         }
       }
       deltas.flush();
+      if (voiceSupported && voiceEnabled && replyBuf.trim() && typeof SpeechSynthesisUtterance !== "undefined") {
+        try {
+          window.speechSynthesis?.cancel();
+          window.speechSynthesis?.speak(new SpeechSynthesisUtterance(replyBuf.trim()));
+        } catch {}
+      }
       setChats((prev) =>
         mapChat(prev, selKey, chatId, (item) => ({
           ...item,
@@ -770,7 +858,20 @@ export function App() {
       </div>
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <Header activeInstance={activeInstance} selWs={selWs} onOpenSettings={openSettings} onOpenManage={() => setManageOpen(true)} onOpenNav={() => setNavOpen(true)} />
+        <Header
+          activeInstance={activeInstance}
+          selWs={selWs}
+          onOpenSettings={openSettings}
+          onOpenManage={() => setManageOpen(true)}
+          onOpenNav={() => setNavOpen(true)}
+          onOpenPair={() => setPairOpen(true)}
+          showStoreToggle={storeSupported}
+          storeOpen={storeOpen}
+          onToggleStore={() => setStoreOpen((o) => !o)}
+          showVoiceToggle={voiceSupported}
+          voiceEnabled={voiceEnabled}
+          onToggleVoice={toggleVoice}
+        />
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activeInstance ? (
@@ -803,69 +904,85 @@ export function App() {
                   )}
                 </div>
               )}
-              <ChatConsole
-                key={`${activeInstance.id}:${openChat?.id ?? ""}`}
-                instance={activeInstance}
-                speakerName={tree.personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || activeInstance.name}
-                messages={messages}
-                input={openChat?.input ?? ""}
-                onInput={(v) => {
-                  if (!selKey) return;
-                  setChats((prev) => {
-                    const b = normBucket(prev[selKey] ?? EMPTY_BUCKET);
-                    const open = b.items.find((i) => i.id === b.openId);
-                    if (open) {
-                      return {
-                        ...prev,
-                        [selKey]: { ...b, items: b.items.map((i) => (i.id === open.id ? { ...i, input: v } : i)) },
-                      };
-                    }
-                    const id = crypto.randomUUID();
-                    return {
-                      ...prev,
-                      [selKey]: { openId: id, items: [...b.items, { id, session: "", messages: [], draft: true, input: v }] },
-                    };
-                  });
-                }}
-                onSendMessage={handleSendMessage}
-                onClearMessages={() => {
-                  if (!openChat) return;
-                  const chatId = openChat.id;
-                  setChats((prev) => mapChat(prev, selKey, chatId, (item) => ({ ...item, messages: [] })));
-                }}
-                onStop={handleStop}
-                isLoading={isLoadingTurn}
-                remoteActive={remoteActive}
-                streamStatus={streamStatus}
-                sessionLabel={`${selWs || "default"} · ${selPersona || "default"} · ${openChat?.session || "new"}`}
-                sendHold={sendHold}
-                providers={chatProviders}
-                pick={chatPicks[selKey]}
-                onPick={(p) => {
-                  setChatPicks((prev) => {
-                    const next = { ...prev };
-                    if (p.provider || p.model) next[selKey] = p;
-                    else delete next[selKey];
-                    return next;
-                  });
-                  // Persist the workspace-scoped pick on the relay.
-                  if (activeInstance) {
-                    void api
-                      .setModelPick(activeInstance, selWs, p.provider || "", p.model || "")
-                      .catch(() => {});
-                  }
-                }}
-                modelRecent={(() => {
-                  const kind = choiceOf(activeInstance) === "inherit" ? windowKind(settings) : choiceOf(activeInstance);
-                  return kind === "openrouter" || kind === "lmstudio"
-                    ? [...new Set([...settings.favorites[kind], ...settings.recent_models[kind]])].filter(Boolean)
-                    : [];
-                })()}
-                pending={approvals.pending}
-                deciding={approvals.deciding}
-                decideError={approvals.decideError}
-                onDecide={(allow) => void approvals.handleDecide(allow)}
-              />
+              <div className="flex-1 flex min-h-0 overflow-hidden">
+                <div className="flex-1 flex flex-col min-w-0 min-h-0">
+                  <ChatConsole
+                    key={`${activeInstance.id}:${openChat?.id ?? ""}`}
+                    instance={activeInstance}
+                    speakerName={tree.personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || activeInstance.name}
+                    messages={messages}
+                    input={openChat?.input ?? ""}
+                    onInput={(v) => {
+                      if (!selKey) return;
+                      setChats((prev) => {
+                        const b = normBucket(prev[selKey] ?? EMPTY_BUCKET);
+                        const open = b.items.find((i) => i.id === b.openId);
+                        if (open) {
+                          return {
+                            ...prev,
+                            [selKey]: { ...b, items: b.items.map((i) => (i.id === open.id ? { ...i, input: v } : i)) },
+                          };
+                        }
+                        const id = crypto.randomUUID();
+                        return {
+                          ...prev,
+                          [selKey]: { openId: id, items: [...b.items, { id, session: "", messages: [], draft: true, input: v }] },
+                        };
+                      });
+                    }}
+                    onSendMessage={handleSendMessage}
+                    onClearMessages={() => {
+                      if (!openChat) return;
+                      const chatId = openChat.id;
+                      setChats((prev) => mapChat(prev, selKey, chatId, (item) => ({ ...item, messages: [] })));
+                    }}
+                    onStop={handleStop}
+                    isLoading={isLoadingTurn}
+                    remoteActive={remoteActive}
+                    streamStatus={streamStatus}
+                    sessionLabel={`${selWs || "default"} · ${selPersona || "default"} · ${openChat?.session || "new"}`}
+                    sendHold={sendHold}
+                    providers={chatProviders}
+                    pick={chatPicks[selKey]}
+                    onPick={(p) => {
+                      setChatPicks((prev) => {
+                        const next = { ...prev };
+                        if (p.provider || p.model) next[selKey] = p;
+                        else delete next[selKey];
+                        return next;
+                      });
+                      // Persist the workspace-scoped pick on the relay.
+                      if (activeInstance) {
+                        void api
+                          .setModelPick(activeInstance, selWs, p.provider || "", p.model || "")
+                          .catch(() => {});
+                      }
+                    }}
+                    modelRecent={(() => {
+                      const kind = choiceOf(activeInstance) === "inherit" ? windowKind(settings) : choiceOf(activeInstance);
+                      return kind === "openrouter" || kind === "lmstudio"
+                        ? [...new Set([...settings.favorites[kind], ...settings.recent_models[kind]])].filter(Boolean)
+                        : [];
+                    })()}
+                    pending={approvals.pending}
+                    deciding={approvals.deciding}
+                    decideError={approvals.decideError}
+                    onDecide={(allow) => void approvals.handleDecide(allow)}
+                  />
+                </div>
+                {storeOpen && storeSupported && (
+                  <WorkspacePane
+                    instance={activeInstance}
+                    workspaceId={selWs}
+                    revision={storeRev}
+                    onUnsupported={() => {
+                      setStoreSupported(false);
+                      setStoreOpen(false);
+                    }}
+                    onClose={() => setStoreOpen(false)}
+                  />
+                )}
+              </div>
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-[#525252] font-mono text-xs">
@@ -933,6 +1050,9 @@ export function App() {
           }}
           onClose={() => setWsSettingsId(null)}
         />
+      )}
+      {pairOpen && activeInstance && (
+        <PairModal instance={activeInstance} onClose={() => setPairOpen(false)} />
       )}
       <DialogHost />
     </div>

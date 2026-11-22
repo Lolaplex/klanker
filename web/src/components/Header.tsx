@@ -1,5 +1,5 @@
 import React from "react";
-import { Globe, Menu, Minus, Settings, SlidersHorizontal, Square, X } from "lucide-react";
+import { Globe, Layers, Menu, Minus, QrCode, Settings, SlidersHorizontal, Square, Volume2, VolumeX, X } from "lucide-react";
 import { KlankerInstance } from "../types/klanker";
 
 interface HeaderProps {
@@ -8,6 +8,13 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenManage: () => void;
   onOpenNav: () => void;
+  onOpenPair?: () => void;
+  showStoreToggle?: boolean;
+  storeOpen?: boolean;
+  onToggleStore?: () => void;
+  showVoiceToggle?: boolean;
+  voiceEnabled?: boolean;
+  onToggleVoice?: () => void;
 }
 
 type TauriWindow = { minimize(): Promise<void>; toggleMaximize(): Promise<void>; close(): Promise<void> };
@@ -17,7 +24,20 @@ function tauriWindow(): TauriWindow | null {
   return w.__TAURI__?.window?.getCurrentWindow?.() ?? null;
 }
 
-export const Header: React.FC<HeaderProps> = ({ activeInstance, selWs, onOpenSettings, onOpenManage, onOpenNav }) => {
+export const Header: React.FC<HeaderProps> = ({
+  activeInstance,
+  selWs,
+  onOpenSettings,
+  onOpenManage,
+  onOpenNav,
+  onOpenPair,
+  showStoreToggle,
+  storeOpen,
+  onToggleStore,
+  showVoiceToggle,
+  voiceEnabled,
+  onToggleVoice,
+}) => {
   const url = activeInstance?.endpoint?.base_url || activeInstance?.base_url || window.location.host;
   const remote = activeInstance?.kind === "remote";
   const win = tauriWindow();
@@ -52,6 +72,47 @@ export const Header: React.FC<HeaderProps> = ({ activeInstance, selWs, onOpenSet
       </div>
 
       <div className="flex items-center space-x-2 shrink-0">
+        {activeInstance && showStoreToggle && onToggleStore && (
+          <button
+            type="button"
+            onClick={onToggleStore}
+            aria-label="Workspace store"
+            className={`inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 border rounded text-xs font-mono transition-colors ${
+              storeOpen
+                ? "bg-[#171717] border-white text-white"
+                : "bg-[#0a0a0a] hover:bg-[#141414] border-[#262626] text-[#a3a3a3] hover:text-white"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Store</span>
+          </button>
+        )}
+        {activeInstance && showVoiceToggle && onToggleVoice && (
+          <button
+            type="button"
+            onClick={onToggleVoice}
+            aria-label="Voice read-aloud"
+            className={`inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 border rounded text-xs font-mono transition-colors ${
+              voiceEnabled
+                ? "bg-[#171717] border-white text-white"
+                : "bg-[#0a0a0a] hover:bg-[#141414] border-[#262626] text-[#a3a3a3] hover:text-white"
+            }`}
+          >
+            {voiceEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+            <span className="hidden md:inline">Voice</span>
+          </button>
+        )}
+        {activeInstance && onOpenPair && (
+          <button
+            type="button"
+            onClick={onOpenPair}
+            aria-label="Pair device"
+            className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
+          >
+            <QrCode className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">Pair</span>
+          </button>
+        )}
         {activeInstance && (
           <button
             onClick={onOpenManage}

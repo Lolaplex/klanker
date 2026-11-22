@@ -112,3 +112,47 @@ export interface WorkspaceRow {
   browser_profile?: string;
   approval_mode?: "off" | "ask" | "strict" | string;
 }
+
+export interface RelayEvent {
+  id: number;
+  kind: string;
+  workspace: string;
+  ts: number;
+  payload: Record<string, unknown>;
+}
+
+export interface PairCreateResult {
+  mode: "web" | "remote";
+  code: string;
+  token: string;
+  pair_url: string;
+  expires_in: number;
+  expires_at: number;
+  host_id: string;
+}
+
+export interface StoreItem {
+  id: string;
+  kinds: string[];
+  attrs: Record<string, unknown>;
+  actor?: string | null;
+  ts?: string | null;
+}
+
+export interface StoreListResult {
+  supported: boolean;
+  items: StoreItem[];
+}
+
+export interface StorePaneResult {
+  entity: string;
+  target: string;
+  content: string;
+  mime: string;
+}
+
+export interface RelayCapabilities {
+  store: boolean;
+  voice: boolean;
+  caldav: boolean;
+}
