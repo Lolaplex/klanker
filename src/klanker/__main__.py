@@ -284,6 +284,18 @@ def build_parser() -> argparse.ArgumentParser:
     import_p.add_argument("--workspace", default="", help="Data workspace id")
     import_p.add_argument("--apply", action="store_true", help="Write the import (default: preview only)")
 
+    # 3d3. Fold file domains into the workspace store.db
+    migrate_p = sub.add_parser(
+        "migrate", help="Migrate file domains into store.db datoms")
+    migrate_p.add_argument(
+        "--to-store", action="store_true", required=True,
+        help="Import personas/config/memory into <ws>/store.db")
+    migrate_p.add_argument(
+        "--workspace", default="", help="Data workspace id (default: env)")
+    migrate_p.add_argument(
+        "--keep-files", action="store_true",
+        help="Do not archive sources to <ws>/archive/pre-store/")
+
     # 3e. Workspaces
     ws_p = sub.add_parser("workspace", help="Create or list workspaces")
     ws_sub = ws_p.add_subparsers(dest="ws_cmd")
@@ -412,6 +424,7 @@ KNOWN_SUBCOMMANDS = {
     "persona",
     "workspace",
     "import",
+    "migrate",
     "bg",
     "ps",
     "logs",
@@ -548,6 +561,24 @@ def main(argv: list[str] | None = None) -> int:
             workspace=getattr(args, "workspace", "") or "",
             apply=bool(getattr(args, "apply", False)),
         )
+
+    elif args.command == "migrate":
+        from agents_workspace import Workspace
+
+        from .migrate import migrate_to_store
+
+        ws_id = getattr(args, "workspace", "") or ""
+        if ws_id:
+            from agents_workspace import Host
+
+            ws = Host.from_env().workspace(ws_id)
+        else:
+            ws = Workspace.from_env()
+        stats = migrate_to_store(ws.dir, archive=not args.keep_files)
+        for domain, s in stats.items():
+            line = ", ".join(f"{k}={v}" for k, v in s.items())
+            print(f"{domain}: {line}")
+        return 0
 
     elif args.command == "workspace":
         from agents_workspace import Host
