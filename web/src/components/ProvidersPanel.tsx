@@ -89,7 +89,12 @@ export function ProvidersPanel({
       load();
       onChanged?.();
     } catch (e) {
-      setNote(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      setNote(
+        /^404|^501/.test(msg)
+          ? "host relay predates the provider write API — update agents-relay on that host"
+          : msg
+      );
     } finally {
       setBusy(false);
     }
@@ -156,13 +161,22 @@ export function ProvidersPanel({
             className={inputClass}
           />
           {form.kind === "acp-agent" ? (
-            <input
-              value={form.command}
-              onChange={(e) => setForm((f) => ({ ...f, command: e.target.value }))}
-              placeholder='agent command, e.g. "devin acp" or "ssh box devin acp"'
-              spellCheck={false}
-              className={inputClass}
-            />
+            <>
+              <input
+                value={form.command}
+                onChange={(e) => setForm((f) => ({ ...f, command: e.target.value }))}
+                placeholder='spawn command, e.g. "devin acp" or "ssh box devin acp"'
+                spellCheck={false}
+                className={inputClass}
+              />
+              <p className="text-[10px] text-[#525252] leading-relaxed">
+                Command runs on this host per turn — the agent speaks ACP over
+                stdio. Auth stays with the agent: it uses its own stored creds
+                (e.g. run <code className="text-[#737373]">devin auth login</code> on
+                the host once), or set <code className="text-[#737373]">AGENTS_ACP_API_KEY</code> in
+                the host env. Probe the row after adding to list its models.
+              </p>
+            </>
           ) : (
             <>
               <input
@@ -190,9 +204,13 @@ export function ProvidersPanel({
               </div>
             </>
           )}
-          <p className="text-[10px] text-[#525252]">
-            Keys live in the host secret vault under the env name above — never in this app.
-          </p>
+          {form.kind !== "acp-agent" && (
+            <p className="text-[10px] text-[#525252]">
+              Keys live in the host secret vault under the env name above — set
+              it via <code className="text-[#737373]">agents-workspace secrets set LLM_API_KEY</code>,
+              never in this app.
+            </p>
+          )}
           <button
             type="button"
             onClick={() => void submit()}

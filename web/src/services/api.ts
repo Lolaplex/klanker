@@ -279,6 +279,11 @@ async function req<T = any>(
     try {
       msg = JSON.parse(body).error || JSON.parse(body).detail || body;
     } catch {}
+    if (/^\s*</.test(msg)) {
+      // stdlib send_error renders HTML — keep its <p> detail, not the tags.
+      const m = /<p>([^<]+)<\/p>/i.exec(msg) || /<title>([^<]+)<\/title>/i.exec(msg);
+      msg = m ? m[1] : msg.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
     throw new Error(`${res.status}${msg ? `: ${String(msg).slice(0, 300)}` : ""}`);
   }
   try {
