@@ -48,7 +48,16 @@ class WsSync:
         self.node_id = node_id
         ws_dir = Path(ws_dir)
         ws_dir.mkdir(parents=True, exist_ok=True)
-        self.conn = connect(ws_dir / "store.db")
+        # The conn is touched from the SSE reader thread (on_op) and the
+        # sync tick thread (drain) — share it safely: relaxed thread-check
+        # + one lock around every DB touch.
+        self.conn = connect(ws_dir / "store.db", check_same_thread=False)
+        self._db = threading.Lock()
+        # msg:*/session:* attrs must exist before any remote op arrives —
+        # ingest refuses unknown attrs and refused envelopes never return.
+        from .msgsync import ensure_domain
+
+        ensure_domain(self.conn)
         self.store = Store(self.conn, node_id)
         self.book = PeerBook(Path(ws_dir) / "sync_peers.json")
         self.seen = BoundedSeen()
@@ -59,14 +68,16 @@ class WsSync:
 
     def drain(self) -> int:
         """Deliver unacked local tail to the peer. Returns batch cursor."""
-        return deliver(
-            lambda since: ops_since(
-                self.conn, since, origin_only=self._origin_only),
-            self.book, self.peer, self.node_id,
-            lambda batch: self._send("op", dict(batch, ws=self.ws_id)),
-            exclude_origin=self.peer,
-            ws=self.ws_id,
-        )
+        with self._db:
+            return deliver(
+                lambda since: ops_since(
+                    self.conn, since, origin_only=self._origin_only,
+                    local_origins=("proj:", "import")),
+                self.book, self.peer, self.node_id,
+                lambda batch: self._send("op", dict(batch, ws=self.ws_id)),
+                exclude_origin=self.peer,
+                ws=self.ws_id,
+            )
 
     def on_ack(self, payload: dict) -> None:
         self.book.ack(self.peer, int(payload.get("cursor") or 0))
@@ -74,7 +85,9 @@ class WsSync:
     # -- receive side ---------------------------------------------------
 
     def on_op(self, payload: dict) -> None:
-        stats = receive(payload.get("envelopes") or [], self._ingest, self.seen)
+        with self._db:
+            stats = receive(
+                payload.get("envelopes") or [], self._ingest, self.seen)
         if stats["applied"]:
             log.info("ws %s: +%d datoms from %s",
                      self.ws_id, stats["applied"], self.peer)
@@ -178,6 +191,7 @@ class SyncRuntime:
         while not self._stop.wait(TICK_SEC):
             for w in self._workers():
                 try:
+                    self._project_msgs(w)
                     w.drain()
                 except Exception as exc:  # noqa: BLE001
                     log.warning("ws %s: drain failed: %s", w.ws_id, exc)
@@ -187,6 +201,26 @@ class SyncRuntime:
             out = [w for ws in self._client_workers.values() for w in ws]
             out.extend(self._hub_workers.values())
             return out
+
+    def _project_msgs(self, w: WsSync) -> None:
+        """Fold new trace message events of this ws into msg:* datoms."""
+        from agents_traces.store import TraceStore
+
+        from .msgsync import project_session
+
+        tdir = Path(w.ws_dir) / "traces"
+        if not tdir.is_dir():
+            return
+        store = TraceStore(tdir)
+        for row in store.list_sessions(days=3650, limit=10000):
+            sid = row.get("session")
+            if not sid:
+                continue
+            events = store.get_events_for_session(str(sid))
+            if not events:
+                continue
+            with w._db:
+                project_session(w.conn, w.ws_dir, str(sid), events)
 
 
 def sync_workspaces() -> dict:

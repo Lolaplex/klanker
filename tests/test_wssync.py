@@ -155,3 +155,34 @@ def test_sync_workspaces_excludes_local_policy(tmp_path, monkeypatch):
     m = sync_workspaces()
     assert str(a.id) in m
     assert str(b.id) not in m
+
+
+def test_msgs_project_and_sync(link, tmp_path):
+    from klanker.msgsync import project_session
+
+    class Ev:
+        def __init__(self, ts, role, content):
+            self.ts, self.type, self.session = ts, "message", "s1"
+            self.metadata = {"role": role, "content": content}
+
+    ws_a_dir = tmp_path / "ws_a"
+    ws_a_dir.mkdir()
+    project_session(link.a.conn, ws_a_dir, "s1", [
+        Ev("2026-11-22T10:00:00Z", "user", "hallo welt"),
+        Ev("2026-11-22T10:00:05Z", "assistant", "moin"),
+    ])
+    link.a.drain(); link.pump()
+    view = link.b.store.view("msg:s1:000001")
+    assert view["msg:role"] == "user"
+    assert view["msg:text"] == "hallo welt"
+    # B replays its own trace projection of the same event: origin
+    # identity differs (proj:s1 on A vs B's own conn), so B's own tx —
+    # but cursor-side dedupe keeps a re-drain silent either way.
+    link.b.drain()
+    link.pump()  # no frame storm
+
+
+def test_session_attrs_seed(link):
+    names = {r[0] for r in link.a.conn.execute("SELECT name FROM attr")}
+    assert "session:host" in names
+    assert "msg:text" in names
