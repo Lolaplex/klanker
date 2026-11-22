@@ -53,16 +53,19 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
   useEffect(() => {
     if (!pair || secondsLeft <= 0) return;
     const t = window.setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev <= 1) {
-          setPair(null);
-          return 0;
-        }
-        return prev - 1;
-      });
+      setSecondsLeft((prev) => (prev <= 1 ? 0 : prev - 1));
     }, 1000);
     return () => window.clearInterval(t);
   }, [pair, secondsLeft]);
+
+  // A pair code is single-use and short-lived; while the modal is open,
+  // mint the next one as soon as the countdown hits zero so the QR/link
+  // on screen is always redeemable. Errors stop the chain — the manual
+  // refresh button stays as the recovery path.
+  useEffect(() => {
+    if (pair && secondsLeft === 0 && !busy) void mint(mode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pair, secondsLeft, busy, mode]);
 
   const resolvedUrl = useMemo(() => {
     if (!pair?.pair_url) return "";
@@ -186,7 +189,7 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
             </>
           ) : (
             <div className="py-6 text-center text-[#737373]">
-              {busy ? "creating single-use code…" : "pairing code expired"}
+              {busy ? "creating single-use code…" : pair ? "renewing…" : "pairing code expired"}
             </div>
           )}
 
