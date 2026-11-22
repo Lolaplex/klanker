@@ -11,12 +11,15 @@ interface SettingsPanelProps {
   instance?: KlankerInstance | null;
   workspace?: string;
   persona?: string;
+  instances?: KlankerInstance[];
   rankedIds: string[];
   modelNote: string | null;
   loadingModels: boolean;
   onClose: () => void;
   onSave: (settings: DesktopSettings) => void;
   onStar: (provider: ModelProvider, id: string) => void;
+  onAddInstance?: () => void;
+  onEditInstance?: (inst: KlankerInstance) => void;
 }
 
 const inputClass =
@@ -29,12 +32,15 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   instance,
   workspace,
   persona,
+  instances,
   rankedIds,
   modelNote,
   loadingModels,
   onClose,
   onSave,
   onStar,
+  onAddInstance,
+  onEditInstance,
 }) => {
   const [draft, setDraft] = useState<DesktopSettings>({ ...settings });
   const [pushBusy, setPushBusy] = useState(false);
@@ -149,6 +155,35 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </button>
         </div>
         <form onSubmit={save} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 space-y-4">
+          {instances && (
+            <div>
+              <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Instances</div>
+              <div className="space-y-1">
+                {instances.map((i) => (
+                  <button
+                    key={i.id}
+                    type="button"
+                    onClick={() => onEditInstance?.(i)}
+                    className="w-full text-left min-h-9 px-2 py-1.5 rounded border border-[#262626] text-[#a3a3a3] hover:bg-[#141414] hover:text-white transition-colors"
+                  >
+                    {i.name}
+                    <span className="text-[#525252]">
+                      {" "}
+                      {i.kind === "local" ? "local" : (i.endpoint?.base_url || "").replace(/^https?:\/\//, "")}
+                    </span>
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={onAddInstance}
+                  className="w-full min-h-9 px-2 py-1.5 rounded border border-dashed border-[#262626] text-[#737373] hover:border-[#525252] hover:text-white transition-colors"
+                >
+                  + connect
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Workdir + LM Studio/Echo are desktop-local concepts: a browser
               can't spawn a local serve and the relay never sees these URLs. */}
           {desktop && (

@@ -35,7 +35,6 @@ interface KlankerListProps {
   onSelectChat: (ws: string, persona: string, chatId: string) => void;
   onNewChat: (ws: string, persona: string) => void;
   onDeleteChat: (ws: string, persona: string, row: SessionRow) => void;
-  onNewHost: () => void;
   onNewWorkspace: () => void;
   onInstanceSettings: (instance: KlankerInstance) => void;
   onDeleteWorkspace: (ws: string) => void;
@@ -75,7 +74,6 @@ export const KlankerList: React.FC<KlankerListProps> = ({
   onSelectChat,
   onNewChat,
   onDeleteChat,
-  onNewHost,
   onNewWorkspace,
   onInstanceSettings,
   onDeleteWorkspace,
@@ -354,16 +352,6 @@ export const KlankerList: React.FC<KlankerListProps> = ({
         )}
       </div>
 
-      <div className="shrink-0 min-h-[73px] p-3 pb-[max(0.5rem,var(--sab))] md:pb-3 border-t border-[#262626] bg-[#000000] flex items-center">
-        <button
-          type="button"
-          onClick={onNewHost}
-          className="flex h-12 w-full items-center justify-center gap-1.5 px-2.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] text-[#a3a3a3] hover:text-white rounded text-xs font-mono transition-colors"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>Connect</span>
-        </button>
-      </div>
     </aside>
   );
 };
