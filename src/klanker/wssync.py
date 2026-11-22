@@ -50,8 +50,15 @@ class WsSync:
         ws_dir.mkdir(parents=True, exist_ok=True)
         # The conn is touched from the SSE reader thread (on_op) and the
         # sync tick thread (drain) — share it safely: relaxed thread-check
-        # + one lock around every DB touch.
-        self.conn = connect(ws_dir / "store.db", check_same_thread=False)
+        # + one lock around every DB touch. Older agents-store lacks the
+        # kwarg: fall back loudly (single-threaded use stays correct).
+        try:
+            self.conn = connect(
+                ws_dir / "store.db", check_same_thread=False)
+        except TypeError:
+            log.warning("agents-store too old for check_same_thread; "
+                        "sync threads may crash on shared conn")
+            self.conn = connect(ws_dir / "store.db")
         self._db = threading.Lock()
         # msg:*/session:* attrs must exist before any remote op arrives —
         # ingest refuses unknown attrs and refused envelopes never return.
@@ -69,10 +76,16 @@ class WsSync:
     def drain(self) -> int:
         """Deliver unacked local tail to the peer. Returns batch cursor."""
         with self._db:
+            def _ops(since):
+                try:
+                    return ops_since(
+                        self.conn, since, origin_only=self._origin_only,
+                        local_origins=("proj:", "import", "bind:"))
+                except TypeError:
+                    return ops_since(
+                        self.conn, since, origin_only=self._origin_only)
             return deliver(
-                lambda since: ops_since(
-                    self.conn, since, origin_only=self._origin_only,
-                    local_origins=("proj:", "import")),
+                _ops,
                 self.book, self.peer, self.node_id,
                 lambda batch: self._send("op", dict(batch, ws=self.ws_id)),
                 exclude_origin=self.peer,

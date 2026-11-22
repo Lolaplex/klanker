@@ -137,9 +137,12 @@ def _ws_policy_supported() -> bool:
         Host.update_workspace).parameters
 
 
-@pytest.mark.skipif(
+_POLICY = pytest.mark.skipif(
     not _ws_policy_supported(),
     reason="agents-workspace without sync_policy fields (feat/sync-policy)")
+
+
+@_POLICY
 def test_sync_workspaces_excludes_local_policy(tmp_path, monkeypatch):
     """ws#43: sync_policy=local -> zero ops on the wire, ever."""
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
@@ -157,6 +160,18 @@ def test_sync_workspaces_excludes_local_policy(tmp_path, monkeypatch):
     assert str(b.id) not in m
 
 
+def _local_origins_supported() -> bool:
+    import inspect
+
+    from agents_store import ingest as _ing
+
+    return "local_origins" in inspect.signature(_ing.ops_since).parameters
+
+
+@pytest.mark.skipif(
+    not _local_origins_supported(),
+    reason="agents-store without ops_since(local_origins) "
+           "(feat/ingest-local-origins)")
 def test_msgs_project_and_sync(link, tmp_path):
     from klanker.msgsync import project_session
 
