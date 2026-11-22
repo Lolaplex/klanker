@@ -185,31 +185,33 @@ export const api = {
   // --- settings (localStorage) -------------------------------------------
 
   async loadSettings(): Promise<DesktopSettings> {
-    const s = load(LS_SETTINGS, { ...DEFAULT_SETTINGS });
-    if (caps.keyring) {
+    const s = load(LS_SETTINGS, { ...DEFAULT_SETTINGS }) as DesktopSettings & Record<string, unknown>;
+    let dirty = false;
+    for (const staleKey of ["openrouter_api_key", "openrouter_key_set", "lmstudio_base_url", "auto_start_local_serve"]) {
+      if (staleKey in s) {
+        delete s[staleKey];
+        dirty = true;
+      }
+    }
+    if (dirty) {
       try {
-        const key = await this.secretGet("openrouter");
-        s.openrouter_api_key = key || "";
-        s.openrouter_key_set = !!key;
+        localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
       } catch {}
     }
     return s;
   },
 
   async saveSettings(settings: DesktopSettings): Promise<DesktopSettings> {
-    if (caps.keyring) {
-      const key = settings.openrouter_api_key.trim();
-      try {
-        if (key) await this.secretSet("openrouter", key);
-      } catch {}
-      localStorage.setItem(
-        LS_SETTINGS,
-        JSON.stringify({ ...settings, openrouter_api_key: "", openrouter_key_set: !!key || settings.openrouter_key_set })
-      );
-      return settings;
-    }
-    localStorage.setItem(LS_SETTINGS, JSON.stringify(settings));
-    return settings;
+    const clean: DesktopSettings = {
+      provider: settings.provider,
+      model: settings.model,
+      workspace: settings.workspace,
+      recent_models: settings.recent_models,
+      favorites: settings.favorites,
+      autostart: settings.autostart,
+    };
+    localStorage.setItem(LS_SETTINGS, JSON.stringify(clean));
+    return clean;
   },
 
   // --- instances ------------------------------------------------------------
@@ -1149,11 +1151,12 @@ async function registrySave(inst: KlankerInstance): Promise<KlankerInstance> {
 }
 
 function lsWrite(inst: KlankerInstance): void {
+  const clean = stripSecrets(inst);
   const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
-  const arr = Array.isArray(ls) ? ls : [];
-  const idx = arr.findIndex((i) => i.id === inst.id);
-  if (idx >= 0) arr[idx] = inst;
-  else arr.push(inst);
+  const arr = Array.isArray(ls) ? ls.map(stripSecrets) : [];
+  const idx = arr.findIndex((i) => i.id === clean.id);
+  if (idx >= 0) arr[idx] = clean;
+  else arr.push(clean);
   localStorage.setItem(LS_INSTANCES, JSON.stringify(arr));
 }
 

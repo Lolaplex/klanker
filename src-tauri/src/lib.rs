@@ -21,16 +21,25 @@ pub(crate) fn desktop_host_dir() -> Result<PathBuf, String> {
 
 #[tauri::command]
 fn secret_get(account: String) -> Option<String> {
+    if !secrets::valid_account(&account) {
+        return None;
+    }
     secrets::get(&account)
 }
 
 #[tauri::command]
 fn secret_set(account: String, secret: String) -> Result<(), String> {
+    if !secrets::valid_account(&account) {
+        return Err("invalid secret account".into());
+    }
     secrets::set(&account, &secret)
 }
 
 #[tauri::command]
 fn secret_delete(account: String) -> Result<(), String> {
+    if !secrets::valid_account(&account) {
+        return Err("invalid secret account".into());
+    }
     secrets::delete(&account);
     Ok(())
 }

@@ -217,6 +217,88 @@ class TestKlanker(unittest.TestCase):
             self.assertFalse(state_file.exists())
             self.assertFalse((fake_home / ".klanker").exists())
 
+    def test_serve_stdout_redacts_token_when_non_tty_and_prints_when_tty(self):
+        import io
+        import os
+        import sys
+        import tempfile
+        import types
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from agents_workspace import Host
+        from klanker.__main__ import main as cli_main
+        from klanker.sensing import HostCapabilities
+
+        class _FakeOut(io.StringIO):
+            def __init__(self, tty: bool):
+                super().__init__()
+                self._tty = tty
+
+            def isatty(self):
+                return self._tty
+
+        with tempfile.TemporaryDirectory() as td:
+            fake_home = Path(td) / "home"
+            fake_home.mkdir()
+            host_dir = Path(td) / "host"
+            Host.open(host_dir).create("default")
+
+            fake_relay_pkg = types.ModuleType("agents_relay")
+            fake_relay_main_mod = types.ModuleType("agents_relay.__main__")
+            fake_relay_main_mod.main = lambda _argv: 0
+            fake_relay_pkg.__main__ = fake_relay_main_mod
+
+            caps = HostCapabilities(
+                os_name="test",
+                is_tty=False,
+                python_version="3.10.0",
+                suite_modules={"relay": True, "harness": False},
+                has_workspace=True,
+            )
+            base_env = {
+                k: v for k, v in os.environ.items()
+                if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "AGENTS_WORKSPACE")
+            }
+            base_env.update({
+                "AGENTS_HOST_DIR": str(host_dir),
+                "RELAY_HOST": "127.0.0.1",
+                "RELAY_PORT": "9124",
+                "AGENTS_NO_UPDATE_CHECK": "1",
+            })
+
+            non_tty = _FakeOut(False)
+            with patch.dict(os.environ, dict(base_env), clear=True), \
+                 patch("pathlib.Path.home", return_value=fake_home), \
+                 patch("klanker.nucleus.probe_host", return_value=caps), \
+                 patch("klanker.mgmt.install", return_value=True), \
+                 patch.dict(sys.modules, {
+                     "agents_relay": fake_relay_pkg,
+                     "agents_relay.__main__": fake_relay_main_mod,
+                 }), \
+                 redirect_stdout(non_tty):
+                rc = cli_main(["serve", "--no-telegram"])
+            self.assertEqual(rc, 0)
+            self.assertNotIn("?token=", non_tty.getvalue())
+            self.assertIn("token stored in host vault", non_tty.getvalue())
+
+            # Remove minted token env override before re-running on TTY to verify print behavior.
+            tty_out = _FakeOut(True)
+            (host_dir / "secrets" / "host.json").unlink(missing_ok=True)
+            with patch.dict(os.environ, dict(base_env), clear=True), \
+                 patch("pathlib.Path.home", return_value=fake_home), \
+                 patch("klanker.nucleus.probe_host", return_value=caps), \
+                 patch("klanker.mgmt.install", return_value=True), \
+                 patch.dict(sys.modules, {
+                     "agents_relay": fake_relay_pkg,
+                     "agents_relay.__main__": fake_relay_main_mod,
+                 }), \
+                 redirect_stdout(tty_out):
+                rc = cli_main(["serve", "--no-telegram"])
+            self.assertEqual(rc, 0)
+            self.assertIn("?token=", tty_out.getvalue())
+
     def test_send_verb_quotes_text(self):
         from klanker.remind import build_send_verb
 

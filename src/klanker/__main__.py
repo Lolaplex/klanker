@@ -625,10 +625,15 @@ def main(argv: list[str] | None = None) -> int:
             log.warning("management routes unavailable: agents-relay not importable")
 
         # Secure by default: no explicit token means an ephemeral one per serve,
-        # printed once Jupyter-style. --no-auth / RELAY_NO_AUTH=1 opts out.
+        # printed once Jupyter-style when interactive. Non-TTY output (e.g. serve.log)
+        # omits the query token so secrets never land in log files.
         url = _maybe_generate_web_token(getattr(args, "no_auth", False))
         if url:
-            print(f"klanker serve -> {url}", flush=True)
+            if sys.stdout.isatty():
+                print(f"klanker serve -> {url}", flush=True)
+            else:
+                safe_url = url.split("?", 1)[0]
+                print(f"klanker serve -> {safe_url} (token stored in host vault)", flush=True)
         elif not os.environ.get("RELAY_WEB_TOKEN"):
             print("klanker serve: warning — web auth disabled (--no-auth)", flush=True)
 

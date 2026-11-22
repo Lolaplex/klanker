@@ -3,9 +3,8 @@ import { FolderOpen, X } from "lucide-react";
 import { DesktopSettings, KlankerInstance } from "../types/klanker";
 import { pushSupported, subscribePush } from "../push";
 import { api } from "../services/api";
-import { LM_URL, ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
+import { ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
 import { ModelControl } from "./ModelControl";
-import { SecretField } from "./SecretField";
 
 interface SettingsPanelProps {
   settings: DesktopSettings;
@@ -37,8 +36,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onSave,
   onStar,
 }) => {
-  const [draft, setDraft] = useState<DesktopSettings>({ ...settings, openrouter_api_key: "" });
-  const [keyDraft, setKeyDraft] = useState("");
+  const [draft, setDraft] = useState<DesktopSettings>({ ...settings });
   const [pushBusy, setPushBusy] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
   const [recallOn, setRecallOn] = useState<boolean | null>(null);
@@ -108,8 +106,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       ...draft,
       provider,
       model: provider === "echo" ? "" : draft.model.trim(),
-      lmstudio_base_url: draft.lmstudio_base_url.trim() || LM_URL,
-      openrouter_api_key: keyDraft.trim(),
       workspace: draft.workspace.trim(),
     });
   };
@@ -183,28 +179,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </div>
           )}
 
-          {desktop && kind === "lmstudio" && (
-            <div>
-              <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
-                LM Studio base URL
-              </label>
-              <input
-                type="text"
-                value={draft.lmstudio_base_url}
-                onChange={(event) => setDraft({ ...draft, lmstudio_base_url: event.target.value })}
-                placeholder={LM_URL}
-                className={inputClass}
-              />
-            </div>
-          )}
-
-          {kind === "openrouter" && (
-            <SecretField
-              label="OpenRouter API key"
-              stored={settings.openrouter_key_set}
-              value={keyDraft}
-              onChange={setKeyDraft}
-            />
+          {desktop && kind !== "echo" && (
+            <p className="text-[10px] text-[#525252]">
+              Provider endpoints and API keys are managed on the host secret vault (<code className="text-[#737373]">~/.agents/secrets/host.json</code>).
+            </p>
           )}
 
           {kind !== "echo" && (

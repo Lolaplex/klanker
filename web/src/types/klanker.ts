@@ -17,14 +17,10 @@ export interface ProviderModelLists {
 
 export interface DesktopSettings {
   provider: string;
-  openrouter_api_key: string;
-  openrouter_key_set: boolean;
   model: string;
   workspace: string;
-  lmstudio_base_url: string;
   recent_models: ProviderModelLists;
   favorites: ProviderModelLists;
-  auto_start_local_serve: boolean;
   /** Launch the desktop app on OS login (tauri-plugin-autostart). */
   autostart: boolean;
 }
