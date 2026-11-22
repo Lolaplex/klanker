@@ -36,7 +36,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pickedPeer, setPickedPeer] = useState<DiscoveredPeer | null>(null);
-  const [discovering, setDiscovering] = useState(false);
   const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [name, setName] = useState("");
@@ -44,18 +43,27 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   const [secret, setSecret] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-scan when the modal opens.
+  // Scan on open, then keep scanning while the modal is up so peers
+  // pop in live. One scan at a time; a failed pass keeps the last good
+  // list instead of blanking it.
   useEffect(() => {
     if (!isOpen) return;
     let stop = false;
-    setDiscovering(true);
-    api
-      .discoverPeers()
-      .then((peers) => !stop && setOffers(peers))
-      .catch(() => !stop && setOffers([]))
-      .finally(() => !stop && setDiscovering(false));
+    let timer = 0;
+    const scan = async () => {
+      try {
+        const peers = await api.discoverPeers();
+        if (!stop) setOffers(peers);
+      } catch {
+        // keep previous offers
+      } finally {
+        if (!stop) timer = window.setTimeout(() => void scan(), 5000);
+      }
+    };
+    void scan();
     return () => {
       stop = true;
+      window.clearTimeout(timer);
     };
   }, [isOpen]);
 
@@ -71,17 +79,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     setUrl("");
     setSecret("");
     onClose();
-  };
-
-  const runDiscovery = async () => {
-    setDiscovering(true);
-    try {
-      setOffers(await api.discoverPeers());
-    } catch {
-      setOffers([]);
-    } finally {
-      setDiscovering(false);
-    }
   };
 
   const pick = (peer: DiscoveredPeer) => {
@@ -186,37 +183,29 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
           </form>
 
           <div className="border border-[#262626] rounded p-2">
-            <button
-              type="button"
-              onClick={runDiscovery}
-              disabled={discovering}
-              className="w-full flex items-center justify-center gap-1.5 min-h-9 px-2 py-1 text-[#a3a3a3] hover:text-white disabled:opacity-40"
-            >
-              <Radar className={`w-3 h-3 ${discovering ? "animate-pulse" : ""}`} />
-              <span>{discovering ? "scanning…" : "rescan network"}</span>
-            </button>
-            {offers !== null &&
-              (offers.length === 0 ? (
-                <p className="pt-2 text-[#525252] text-center">no discoveries</p>
-              ) : (
-                <div className="pt-2 space-y-1">
-                  {offers.map((peer) => (
-                    <button
-                      key={peer.endpoint}
-                      type="button"
-                      onClick={() => pick(peer)}
-                      className={`w-full text-left min-h-9 px-2 py-1.5 rounded transition-colors ${
-                        pickedPeer?.endpoint === peer.endpoint
-                          ? "bg-[#1f1f1f] text-white"
-                          : "text-[#a3a3a3] hover:bg-[#141414] hover:text-white"
-                      }`}
-                    >
-                      {peer.hostname}
-                      <span className="text-[#525252]"> {peer.endpoint.replace(/^https?:\/\//, "")}</span>
-                    </button>
-                  ))}
-                </div>
-              ))}
+            {offers && offers.length > 0 ? (
+              <div className="space-y-1">
+                {offers.map((peer) => (
+                  <button
+                    key={peer.endpoint}
+                    type="button"
+                    onClick={() => pick(peer)}
+                    className={`w-full text-left min-h-9 px-2 py-1.5 rounded transition-colors ${
+                      pickedPeer?.endpoint === peer.endpoint
+                        ? "bg-[#1f1f1f] text-white"
+                        : "text-[#a3a3a3] hover:bg-[#141414] hover:text-white"
+                    }`}
+                  >
+                    {peer.hostname}
+                    <span className="text-[#525252]"> {peer.endpoint.replace(/^https?:\/\//, "")}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center min-h-9 py-1" aria-label="Scanning for peers">
+                <Radar className="w-4 h-4 text-[#525252] animate-pulse" />
+              </div>
+            )}
           </div>
 
           <button
