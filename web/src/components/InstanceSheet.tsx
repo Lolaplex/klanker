@@ -236,7 +236,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end md:items-stretch md:justify-end">
+    <div className="fixed inset-0 z-[55] flex items-end md:items-stretch md:justify-end">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
       <div className="sheet-card relative w-full md:w-[420px] md:max-h-none bg-[#0a0a0a] rounded-t-2xl md:rounded-none border-t md:border-t-0 md:border-l border-[#262626] flex flex-col font-mono text-xs shadow-2xl">
         <div className="md:hidden shrink-0 pt-2 pb-1 flex justify-center">

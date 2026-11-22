@@ -1186,14 +1186,14 @@ export const api = {
   async redeemPairToken(
     inst: KlankerInstance,
     credential: string
-  ): Promise<{ ok: boolean; mode?: string; host_id?: string; error?: string }> {
+  ): Promise<{ ok: boolean; mode?: string; host_id?: string; token?: string; error?: string }> {
     const res = await fetch(`${base(inst)}/v1/pair/redeem`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: credential }),
     });
     const text = await res.text().catch(() => "");
-    let data: { ok?: boolean; mode?: string; host_id?: string; error?: string } = {};
+    let data: { ok?: boolean; mode?: string; host_id?: string; token?: string; error?: string } = {};
     try {
       data = JSON.parse(text);
     } catch {}
@@ -1204,6 +1204,7 @@ export const api = {
       ok: true,
       mode: data.mode,
       host_id: data.host_id,
+      token: data.token,
     };
   },
 

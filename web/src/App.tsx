@@ -803,7 +803,7 @@ export function App() {
           onSelectChat={(ws, p, id) => { selectChat(ws, p, id); setNavOpen(false); }}
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
-          onNewHost={() => { setIsNewModalOpen(true); setNavOpen(false); }}
+
           onInstanceSettings={(i) => { setInstanceSheetInst(i); setNavOpen(false); }}
           onWorkspaceSettings={(ws) => { setWsSettingsId(ws); setNavOpen(false); }}
           onDeleteWorkspace={async (ws) => {
@@ -1024,11 +1024,14 @@ export function App() {
           instance={activeInstance}
           workspace={selWs}
           persona={selPersona}
+          instances={inst.instances}
           rankedIds={rankedIds}
           modelNote={modelNote}
           loadingModels={loadingModels}
           onClose={() => setSettingsOpen(false)}
           onSave={handleSaveSettings}
+          onAddInstance={() => setIsNewModalOpen(true)}
+          onEditInstance={(i) => setInstanceSheetInst(i)}
           onStar={(provider, id) => {
             void updateSettings((current) => toggleFavorite(current, provider, id));
           }}
