@@ -37,6 +37,22 @@ export function pushSupported(): boolean {
 
 export type PushResult = { ok: true } | { ok: false; reason: string };
 
+/** The browser push subscription on this device; null when none/SW absent. */
+export async function getPushSubscription(): Promise<PushSubscription | null> {
+  if (!pushSupported()) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  if (!reg) return null;
+  return reg.pushManager.getSubscription();
+}
+
+/** Drop the device subscription. The relay prunes the stored endpoint on the
+ *  next send (404/410 cleanup) — there is no unsubscribe route. */
+export async function unsubscribePush(): Promise<boolean> {
+  const sub = await getPushSubscription();
+  if (!sub) return false;
+  return sub.unsubscribe();
+}
+
 /**
  * Probe the relay for its VAPID key, subscribe the active service worker and
  * POST the subscription back. Every failure returns a reason — no silent

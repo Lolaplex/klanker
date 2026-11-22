@@ -279,6 +279,13 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                     </div>
                                     {pOpen && (
                                       <div>
+                                        <button
+                                          type="button"
+                                          onClick={() => onNewChat(w.id, p.id)}
+                                          className="min-h-11 w-full text-left pl-12 pr-2 py-2 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
+                                        >
+                                          new chat
+                                        </button>
                                         {(sessions ?? []).map((s) => {
                                           const chatSelected = openChatId === s.chatId;
                                           return (
@@ -312,13 +319,6 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                             </div>
                                           );
                                         })}
-                                        <button
-                                          type="button"
-                                          onClick={() => onNewChat(w.id, p.id)}
-                                          className="min-h-11 w-full text-left pl-12 pr-2 py-2 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
-                                        >
-                                          new chat
-                                        </button>
                                       </div>
                                     )}
                                   </div>
