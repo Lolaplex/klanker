@@ -130,11 +130,52 @@ def _check_mcp() -> list[Check]:
     return checks
 
 
+def _secret_in_vault(name: str) -> bool:
+    try:
+        from agents_workspace import Host, secrets_host_file
+
+        host = Host.from_env()
+        for path in (secrets_host_file(host), host.secrets):
+            if not path.is_file():
+                continue
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and str(data.get(name) or "").strip():
+                return True
+        return False
+    except Exception:
+        return False
+
+
 def _check_provider_keys(env: Mapping[str, str]) -> Check:
-    have = [k for k in PROVIDER_KEYS if env.get(k, "").strip()]
+    have_env = [k for k in PROVIDER_KEYS if env.get(k, "").strip()]
+    have_vault = [
+        k for k in PROVIDER_KEYS if k not in have_env and _secret_in_vault(k)
+    ]
+    have = have_env + [f"{k} (host vault)" for k in have_vault]
     if have:
         return Check("tokens", "pass", f"{len(have)} provider key(s): {', '.join(have)}")
-    return Check("tokens", "warn", "no provider API key in env", f"set one of {', '.join(PROVIDER_KEYS)}")
+    return Check(
+        "tokens",
+        "warn",
+        "no provider API key in env or host vault",
+        f"set one of {', '.join(PROVIDER_KEYS)} "
+        "(env or `agents-workspace secret set <KEY>`)",
+    )
+
+
+def _check_llm_keys(env: Mapping[str, str]) -> Check:
+    """Explicit diagnostic when every LLM provider key is absent."""
+    providers = ("LLM_API_KEY", "OPENROUTER_API_KEY", "OPENAI_API_KEY")
+    for key in providers:
+        if env.get(key, "").strip() or _secret_in_vault(key):
+            return Check("llm.key", "pass", key)
+    return Check(
+        "llm.key",
+        "warn",
+        "no LLM provider key configured",
+        "set LLM_API_KEY/OPENROUTER_API_KEY in env or Host Vault "
+        "(Desktop `openrouter` users: `agents-workspace secret set OPENROUTER_API_KEY`)",
+    )
 
 
 def _check_github(caps: HostCapabilities, env: Mapping[str, str]) -> Check:
@@ -179,8 +220,11 @@ def _check_disk() -> Check:
 
 
 def _check_relay_secret(env: Mapping[str, str]) -> Check:
-    if env.get("RELAY_SECRET", "").strip() or env.get("GATEWAY_SECRET", "").strip():
-        return Check("relay.secret", "pass")
+    for key in ("RELAY_SECRET", "RELAY_WEB_TOKEN", "GATEWAY_SECRET"):
+        if env.get(key, "").strip():
+            return Check("relay.secret", "pass")
+        if _secret_in_vault(key):
+            return Check("relay.secret", "pass", f"{key} (host vault)")
     return Check("relay.secret", "warn", "no RELAY_SECRET", "set RELAY_SECRET to gate the HTTP API")
 
 
@@ -194,6 +238,7 @@ def collect_checks(caps: HostCapabilities | None = None, env: Mapping[str, str] 
     report.checks.append(_check_workspace())
     report.checks.extend(_check_mcp())
     report.checks.append(_check_provider_keys(env))
+    report.checks.append(_check_llm_keys(env))
     report.checks.append(_check_github(caps, env))
     report.checks.append(_check_agent_keys())
     report.checks.append(_check_disk())

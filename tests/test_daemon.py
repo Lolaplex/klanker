@@ -47,22 +47,26 @@ class DaemonTests(unittest.TestCase):
             with patch.object(
                 daemon, "relay_health", side_effect=lambda *a, **k: next(health)
             ), patch.object(
+                daemon, "discover_live_serve", return_value=None
+            ), patch.object(
                 daemon, "_spawn_detached", return_value=_FakeProc(pid=9876)
             ), patch.object(
                 daemon, "serve_state_path", return_value=state_file
             ), patch("time.sleep", return_value=None):
                 self.assertTrue(daemon.ensure_daemon("http://127.0.0.1:8787/"))
             data = json.loads(state_file.read_text(encoding="utf-8"))
-            self.assertEqual(
-                data,
-                {"pid": 9876, "port": 8787, "url": "http://127.0.0.1:8787"},
-            )
+            self.assertEqual(data["pid"], 9876)
+            self.assertEqual(data["port"], 8787)
+            self.assertEqual(data["url"], "http://127.0.0.1:8787")
+            self.assertIn("host_id", data)
 
     def test_ensure_daemon_parses_custom_and_default_port(self):
         with tempfile.TemporaryDirectory() as td:
             state_file = Path(td) / "run" / "serve.json"
             with patch.object(
                 daemon, "relay_health", side_effect=[False, True, False, True]
+            ), patch.object(
+                daemon, "discover_live_serve", return_value=None
             ), patch.object(
                 daemon, "_spawn_detached", return_value=_FakeProc(pid=2468)
             ), patch.object(
@@ -89,6 +93,113 @@ class DaemonTests(unittest.TestCase):
                      daemon, "serve_state_path", return_value=state_file
                  ), patch("time.sleep", return_value=None):
                 self.assertFalse(daemon.ensure_daemon("http://127.0.0.1:8787"))
+
+    def test_discover_live_serve_accepts_same_host_on_any_port(self):
+        """klanker#126: serve.json url + /health host_id match -> live url."""
+        import io
+        import urllib.request
+        with tempfile.TemporaryDirectory() as td:
+            from agents_workspace import Host
+
+            host = Host(dir=Path(td) / "host")
+            host.host_id()
+            host.run.mkdir(parents=True, exist_ok=True)
+            (host.run / "serve.json").write_text(
+                json.dumps(
+                    {
+                        "pid": 111,
+                        "port": 19123,
+                        "url": "http://127.0.0.1:19123",
+                        "host_id": host.host_id(),
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            class _Resp:
+                status = 200
+
+                def read(self):
+                    return json.dumps({"host_id": host.host_id()}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+            with patch.object(
+                daemon.urllib.request, "urlopen", return_value=_Resp()
+            ) as opener:
+                self.assertEqual(
+                    daemon.discover_live_serve(host), "http://127.0.0.1:19123"
+                )
+                opener.assert_called_once()
+                self.assertIn("/health", opener.call_args[0][0])
+
+    def test_discover_live_serve_rejects_foreign_host_id(self):
+        """Falsifying: host_id mismatch -> None, never attach foreign serve."""
+        with tempfile.TemporaryDirectory() as td:
+            from agents_workspace import Host
+
+            host = Host(dir=Path(td) / "host")
+            host.host_id()
+            host.run.mkdir(parents=True, exist_ok=True)
+            (host.run / "serve.json").write_text(
+                json.dumps(
+                    {
+                        "pid": 111,
+                        "port": 19123,
+                        "url": "http://127.0.0.1:19123",
+                        "host_id": "other-host",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            class _Resp:
+                status = 200
+
+                def read(self):
+                    return b'{"host_id": "other-host"}'
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    return False
+
+            with patch.object(daemon.urllib.request, "urlopen", return_value=_Resp()):
+                self.assertIsNone(daemon.discover_live_serve(host))
+
+    def test_discover_live_serve_none_without_state_or_health(self):
+        with tempfile.TemporaryDirectory() as td:
+            from agents_workspace import Host
+
+            host = Host(dir=Path(td) / "host")
+            self.assertIsNone(daemon.discover_live_serve(host))
+            host.run.mkdir(parents=True, exist_ok=True)
+            (host.run / "serve.json").write_text(
+                json.dumps(
+                    {"pid": 1, "port": 9, "url": "http://127.0.0.1:9"}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                daemon.urllib.request, "urlopen", side_effect=OSError("down")
+            ):
+                self.assertIsNone(daemon.discover_live_serve(host))
+
+    def test_ensure_daemon_reuses_live_serve_without_spawn(self):
+        """klanker#126: a running same-host serve on :19123 must not spawn."""
+        with patch.object(
+            daemon, "discover_live_serve", return_value="http://127.0.0.1:19123"
+        ), patch.object(daemon, "_spawn_detached") as spawn:
+            self.assertEqual(
+                daemon.ensure_daemon("http://127.0.0.1:8787"),
+                "http://127.0.0.1:19123",
+            )
+        spawn.assert_not_called()
 
     def test_release_pid_file_only_removes_own_pid(self):
         with tempfile.TemporaryDirectory() as td:

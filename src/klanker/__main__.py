@@ -586,7 +586,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-        entry_ws = Workspace.from_env()
+        entry_ws = host.resolve_entry_workspace()
         entry_ws.ensure()
         for _ws in Workspace.list_all():
             ensure_workspace_overlay(_ws)
@@ -655,6 +655,7 @@ def main(argv: list[str] | None = None) -> int:
             os.getpid(),
             bind_port,
             f"http://{bind_host}:{bind_port}",
+            host_id=str(host.host_id()),
         )
         try:
             return relay_main(sub_argv)
@@ -682,13 +683,19 @@ def main(argv: list[str] | None = None) -> int:
 
         url = getattr(args, "url", "http://127.0.0.1:8787") or "http://127.0.0.1:8787"
         if not getattr(args, "no_gateway", False) and _daemon._is_loopback(url):
-            if not _daemon.relay_health(url) and _daemon.ensure_daemon(url):
-                print(f"klanker daemon started at {url}")
+            live = _daemon.discover_live_serve()
+            if live:
+                url = live
             elif not _daemon.relay_health(url):
-                print(
-                    f"warning: no relay at {url} — agent tier unavailable",
-                    file=sys.stderr,
-                )
+                started = _daemon.ensure_daemon(url)
+                if started:
+                    url = started
+                    print(f"klanker daemon started at {url}")
+                else:
+                    print(
+                        f"warning: no relay at {url} — agent tier unavailable",
+                        file=sys.stderr,
+                    )
         return run_interactive_shell(
             plain=bool(getattr(args, "plain", False)),
             stream=bool(getattr(args, "stream", False)),
@@ -782,21 +789,17 @@ def main(argv: list[str] | None = None) -> int:
         from .shell.repl.loop import run_interactive_shell
 
         ensure_default_overlay()
-        url = _daemon.DEFAULT_RELAY_URL
+        url = _daemon.discover_live_serve() or _daemon.DEFAULT_RELAY_URL
         if not _daemon.relay_health(url):
-            if _daemon.ensure_daemon(url):
+            started = _daemon.ensure_daemon(url)
+            if started:
+                url = started
                 print(f"klanker daemon started at {url}")
             else:
                 print(
                     f"warning: no relay at {url} — agent tier unavailable",
                     file=sys.stderr,
                 )
-        elif getattr(args, "workspace", None):
-            print(
-                "warning: the running daemon keeps its own workspace settings; "
-                "`klanker stop` then retry to apply --workspace",
-                file=sys.stderr,
-            )
         rc = run_interactive_shell(
             user=user,
             provider=provider or "",

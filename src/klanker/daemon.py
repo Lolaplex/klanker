@@ -103,13 +103,68 @@ def _port_from_url(url: str, default: int = DEFAULT_RELAY_PORT) -> int:
         return default
 
 
-def write_serve_state(path: Path, pid: int, port: int, url: str) -> None:
-    """Persist serve state JSON ``{"pid", "port", "url"}`` atomically."""
+def write_serve_state(
+    path: Path, pid: int, port: int, url: str, host_id: str = ""
+) -> None:
+    """Persist serve state JSON ``{"pid", "port", "url", "host_id"}`` atomically."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps({"pid": int(pid), "port": int(port), "url": url}, indent=2) + "\n"
+    payload = json.dumps(
+        {
+            "pid": int(pid),
+            "port": int(port),
+            "url": url,
+            "host_id": str(host_id or ""),
+        },
+        indent=2,
+    ) + "\n"
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     tmp.write_text(payload, encoding="utf-8")
     os.replace(tmp, path)
+
+
+def _host_id_str(host=None) -> str:
+    try:
+        from agents_workspace import Host
+
+        return str((host or Host.from_env()).host_id())
+    except Exception:
+        return ""
+
+
+def discover_live_serve(host=None) -> str | None:
+    """Live same-host serve URL from ``serve.json`` + ``/health``, else None.
+
+    The ``host_id`` on ``/health`` (when the relay reports one) must match
+    this host — a serve owned by another ``AGENTS_HOST_DIR`` is not ours.
+    """
+    try:
+        from agents_workspace import Host, read_serve_state
+    except ImportError:
+        return None
+    if host is None:
+        try:
+            host = Host.from_env()
+        except Exception:
+            return None
+    try:
+        state = read_serve_state(host) or {}
+    except Exception:
+        return None
+    url = str(state.get("url") or "").strip()
+    if not url:
+        return None
+    base = url.rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{base}/health", timeout=1.5) as resp:
+            if resp.status != 200:
+                return None
+            health = json.loads(resp.read().decode("utf-8") or "{}")
+    except Exception:
+        return None
+    hid = str(health.get("host_id") or "").strip()
+    if hid and hid != _host_id_str(host):
+        return None
+    return base
 
 
 _legacy_pid_warned = False
@@ -185,27 +240,41 @@ def _spawn_detached(argv: list[str]) -> subprocess.Popen:
             log_fh.close()
 
 
-def ensure_daemon(url: str = DEFAULT_RELAY_URL, *, wait: float = 20.0) -> bool:
-    """Spawn ``klanker serve`` detached when the relay is down.
+def ensure_daemon(
+    url: str | None = DEFAULT_RELAY_URL, *, wait: float = 20.0
+) -> str | None:
+    """Live serve URL — spawn ``klanker serve`` detached when none runs.
 
-    Returns True once ``/health`` answers. Remote (non-loopback) URLs
-    are never spawned — they are managed on their own host.
+    A same-host serve already running (on ANY port, including one started
+    by the Desktop app) is reused via ``discover_live_serve`` before any
+    spawn. Remote (non-loopback) URLs are never spawned — they are
+    managed on their own host. Returns ``None`` when no live serve is
+    reachable after ``wait`` seconds.
     """
-    base = url.rstrip("/")
+    live = discover_live_serve()
+    if live:
+        return live
+    base = (url or DEFAULT_RELAY_URL).rstrip("/")
     if relay_health(base):
-        return True
+        return base
     if not _is_loopback(base):
-        return False
+        return None
     proc = _spawn_detached([sys.executable, "-m", "klanker", "serve"])
-    write_serve_state(serve_state_path(), proc.pid, _port_from_url(base), base)
+    write_serve_state(
+        serve_state_path(),
+        proc.pid,
+        _port_from_url(base),
+        base,
+        host_id=_host_id_str(),
+    )
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
         if relay_health(base):
-            return True
+            return base
         if proc.poll() is not None:
-            return False
+            return None
         time.sleep(0.4)
-    return relay_health(base)
+    return base if relay_health(base) else None
 
 
 def release_pid_file(path: Path, pid: int) -> None:

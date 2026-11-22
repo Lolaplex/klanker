@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import os
 import shlex
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -137,7 +138,15 @@ def telegram_refusal(*, no_telegram: bool) -> str | None:
     """Error text when Telegram would start without an allowlist or opt-in."""
     if not telegram_would_poll(no_telegram=no_telegram):
         return None
-    if allowlist_configured() or env_flag("KLANKER_TELEGRAM_OPEN"):
+    if env_flag("KLANKER_TELEGRAM_OPEN"):
+        warnings.warn(
+            "KLANKER_TELEGRAM_OPEN is deprecated; use "
+            "AGENTS_RELAY_ALLOW_ANYONE=1 (alias removed after one release)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return None
+    if allowlist_configured():
         return None
     return (
         "Refusing Telegram: TELEGRAM_ALLOWED_CHAT_IDS is empty. "
@@ -167,6 +176,12 @@ def apply_approval_env(*, telegram: bool = False) -> None:
     """
     del telegram
     if env_flag("KLANKER_TELEGRAM_OPEN"):
+        warnings.warn(
+            "KLANKER_TELEGRAM_OPEN is deprecated; use "
+            "AGENTS_RELAY_ALLOW_ANYONE=1 (alias removed after one release)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         # Relay denies an empty allowlist unless this is set. Do not override an export.
         os.environ.setdefault("AGENTS_RELAY_ALLOW_ANYONE", "1")
     raw_allowlist = os.environ.get("AGENTS_APPROVAL_ALLOWLIST", "").strip()

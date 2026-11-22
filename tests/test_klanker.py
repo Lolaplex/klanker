@@ -210,10 +210,10 @@ class TestKlanker(unittest.TestCase):
                 rc = cli_main(["serve", "--no-telegram"])
             self.assertEqual(rc, 0)
             self.assertEqual(observed["argv"], ["serve", "--no-telegram"])
-            self.assertEqual(
-                observed["state"],
-                {"pid": os.getpid(), "port": 9123, "url": "http://127.0.0.1:9123"},
-            )
+            self.assertEqual(observed["state"]["pid"], os.getpid())
+            self.assertEqual(observed["state"]["port"], 9123)
+            self.assertEqual(observed["state"]["url"], "http://127.0.0.1:9123")
+            self.assertTrue(observed["state"].get("host_id"))
             self.assertFalse(state_file.exists())
             self.assertFalse((fake_home / ".klanker").exists())
 
@@ -368,3 +368,23 @@ class TestKlanker(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestServeEntryWorkspace(unittest.TestCase):
+    """klanker#126: serve boot resolves entry workspace without crashing."""
+
+    def test_resolve_entry_workspace_multi_ws_no_default(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from agents_workspace import Host
+
+        with tempfile.TemporaryDirectory() as td:
+            host = Host(dir=Path(td) / "host")
+            host.create("alpha")
+            host.create("beta")
+            env = {"AGENTS_HOST_DIR": str(host.dir), "AGENTS_WORKSPACE": ""}
+            with patch.dict(os.environ, env, clear=False):
+                ws = Host.from_env().resolve_entry_workspace()
+        self.assertEqual(ws.id, "alpha")
