@@ -39,5 +39,17 @@ dev had it). With `KLANKER_DOCKERFILE` set, self-deploy builds the public
 that fresh base via `BASE_IMAGE`. The overlay pins its FROM to the build
 output, never to the registry tag.
 
-Open: whether self-deploy should be a harness schedule (`klanker cron`)
-or an on-demand agent verb — currently on-demand (`scripts/self-deploy.sh`).
+**Deploy decisions need a SHA check, not agent intuition.** Measured
+2026-11-22 on the Coolify deploy: the agent's emergent `POST
+/api/v1/deploy` calls queued up to three same-commit rebuilds in two
+minutes, and did not fire at all when merges landed outside an agent
+turn. `klanker drift` makes the watcher deterministic: installed
+`agents-*` SHAs vs `git ls-remote` tips, deploy only on real drift. On
+Coolify it calls the API from injected `COOLIFY_*` env — that is the
+portable self-deploy path for every host (a repo webhook per suite repo
+does not scale to thirteen). Where a webhook *does* cover the main repo
+(VPS), `KLANKER_DEPLOY_WEBHOOK` tells the agent not to double the build.
+
+Open: whether the drift watch should be a harness schedule (`klanker
+cron` manifest per host) or a routine — a bare scheduled verb fits the
+manifest shape already used for briefings.
