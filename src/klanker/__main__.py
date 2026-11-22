@@ -167,6 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 1b3. Pull suite packages to latest refs/releases
     update_p = sub.add_parser("update", help="Update all suite packages (git checkouts pull, installs upgrade)")
+
+    drift_p = sub.add_parser("drift", help="Suite drift check vs remote ref (--deploy triggers host deploy on drift)")
+    drift_p.add_argument("--ref", default="", help="Suite ref to compare (default: SUITE_REF or dev)")
+    drift_p.add_argument("--deploy", action="store_true", help="Trigger host deploy path on drift")
     update_p.add_argument("--check", action="store_true", help="Show the update plan without running it")
 
     # 1b4. Detached background runner
@@ -400,6 +404,7 @@ KNOWN_SUBCOMMANDS = {
     "audit",
     "doctor",
     "update",
+    "drift",
     "routine",
     "remote",
     "pair",
@@ -580,6 +585,16 @@ def main(argv: list[str] | None = None) -> int:
         from .suite_update import run as update_run
 
         return update_run(check=bool(getattr(args, "check", False)))
+
+    elif args.command == "drift":
+        from .drift import main as drift_main
+
+        drift_argv = []
+        if getattr(args, "ref", ""):
+            drift_argv += ["--ref", args.ref]
+        if getattr(args, "deploy", False):
+            drift_argv.append("--deploy")
+        return drift_main(drift_argv)
 
     elif args.command == "audit":
         if not nucleus.caps.has_traces:
