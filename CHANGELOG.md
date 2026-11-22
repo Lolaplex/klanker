@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Shared serve contract: `discover_live_serve()` reuses a live relay via `serve.json` + `/health.host_id`, `klanker serve` resolves the deterministic entry workspace, doctor checks Host Vault provider keys (#126).
+- Per-workspace dynamic turn prompt, workspace-scoped routines + `mgmt` endpoints, `:workspace` REPL switching with workdir propagation (#119).
+- `klanker remote list|add|rm` + `--remote <id>` backed by canonical `<host>/clients/remotes.json` + Host Vault `REMOTE_<ID>_TOKEN` (#129).
+- Web: live `localServePort` discovery, `klanker:serve-state` event + 10s `serveStatus()` poll, `inherit` default provider (#127); relay-backed `/v1/model` workspace picks + `WorkspaceSettingsModal` (#128); canonical `/v1/remotes` on Desktop, workspace-scoped approvals/traces, sidebar refresh, `cookie_warning` (#120).
+
+### Added
 - Chat-level provider+model picker: the chat toolbar's old model-only `<select>` (desktop-only, taxonomy-mapped) is replaced by a popover that picks provider AND model as a pair — real provider names straight from `/v1/providers`, including `acp.*` agent rows carrying their own probed model lists, plus freeform model entry, settings favorites/recent for mapped kinds, and a clear-to-inherit action. Visible on mobile too. Picks flow through `provider`/`model` on the turn request, so one thread can run `acp.devin:swe-2` while the instance stays on its default loop.
 - `src-tauri` `[[bin]]` name `Klanker`: debug builds now produce `Klanker.exe` matching `mainBinaryName`, so Windows firewall prompts (which display the file name when no version info exists) stop showing `klanker_desktop.exe`.
 - Mobile WebKit E2E suite (klanker#56): `web/playwright.config.ts` + `web/e2e/mobile.spec.ts` run the real built UI against a fully stubbed relay (`page.route`) on two mobile viewports — chat send/stream-receive, sidebar drawer, settings open/cancel, approval allow/deny. Icon-only header controls now carry `aria-label`s so the flows (and screen readers) have stable selectors.
