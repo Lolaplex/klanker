@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Radar, Settings2, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Link2, Plus, Settings2, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { KlankerMark } from "./KlankerMark";
 
@@ -360,8 +360,8 @@ export const KlankerList: React.FC<KlankerListProps> = ({
           onClick={onNewHost}
           className="flex h-12 w-full items-center justify-center gap-1.5 px-2.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] text-[#a3a3a3] hover:text-white rounded text-xs font-mono transition-colors"
         >
-          <Radar className="w-3.5 h-3.5" />
-          <span>Discover</span>
+          <Link2 className="w-3.5 h-3.5" />
+          <span>Connect</span>
         </button>
       </div>
     </aside>

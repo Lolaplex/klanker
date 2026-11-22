@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Unified connect flow (klanker#138): the sidebar "Discover" button is now "Connect" and the add sheet takes ONE field — a pair link `https://host/#pair=<token>` (scanned/pasted) or typed `CODE@host` — redeems it against `/v1/pair/redeem` and stores the returned remote secret (no more manual url+secret as the primary path; LAN scan stays, manual fields survive behind an "old relay" disclosure). Pair modal: remote mode QR now encodes the absolute pair link (was: bare code with no relay address), shows a copyable link, and warns when the link resolves to loopback (dead for other devices). New `pairLink.ts` parser + tests.
+
 ### Fixed
 - Web sidebar: the per-persona `new chat` row now renders first (above the session list) instead of last, so the newest action is always reachable without scrolling.
 - Web settings push toggle: the "Enable push on this relay" button gave no persistent state feedback — it stayed labeled "Enable" after a successful subscribe. It now hydrates from the real `PushManager` subscription, shows an enabled state line, and toggles to "Push on — disable" (unsubscribe is device-local; the relay prunes the dead endpoint on next send).

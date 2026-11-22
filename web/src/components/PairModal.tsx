@@ -3,6 +3,7 @@ import { RefreshCw, X } from "lucide-react";
 import type { KlankerInstance, PairCreateResult } from "../types/klanker";
 import { api } from "../services/api";
 import { encodeQrMatrix, qrSvgPath } from "../qr";
+import { isLoopbackOrigin } from "../pairLink";
 
 interface PairModalProps {
   instance: KlankerInstance;
@@ -16,11 +17,13 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const mint = async (targetMode: "web" | "remote") => {
     setBusy(true);
     setError(null);
     setCopied(false);
+    setCopiedLink(false);
     try {
       const res = await api.createPairCode(instance, targetMode, 60);
       setPair(res);
@@ -70,9 +73,10 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
     return pair.pair_url;
   }, [pair, instance.endpoint?.base_url, instance.base_url]);
 
+  const linkUrl = resolvedUrl.includes("#pair=") ? resolvedUrl : "";
   const qrData = useMemo(() => {
     if (!pair || secondsLeft <= 0) return null;
-    const payload = pair.mode === "web" && resolvedUrl ? resolvedUrl : pair.code;
+    const payload = linkUrl || pair.code;
     if (!payload) return null;
     try {
       const mat = encodeQrMatrix(payload);
@@ -81,7 +85,7 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
     } catch {
       return null;
     }
-  }, [pair, secondsLeft, resolvedUrl]);
+  }, [pair, secondsLeft, linkUrl]);
 
   const totalTtl = Math.max(1, pair?.expires_in || 60);
   const pct = Math.max(0, Math.min(100, Math.round((secondsLeft / totalTtl) * 100)));
@@ -149,6 +153,26 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
                   {copied ? "copied" : "copy"}
                 </button>
               </div>
+
+              {linkUrl && (
+                <div className="flex items-center justify-between gap-2 bg-[#121212] border border-[#262626] rounded px-3 py-2">
+                  <span className="text-[#737373] truncate text-[11px]">{linkUrl}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard?.writeText(linkUrl).then(() => setCopiedLink(true)).catch(() => {});
+                    }}
+                    className="px-2 py-1 border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white shrink-0"
+                  >
+                    {copiedLink ? "copied" : "copy link"}
+                  </button>
+                </div>
+              )}
+              {linkUrl && isLoopbackOrigin(linkUrl) && (
+                <p className="text-[10px] text-amber-500">
+                  link points at this device — pairing another device needs a reachable URL (tailnet/LAN), not loopback.
+                </p>
+              )}
 
               <div className="flex flex-col gap-1">
                 <div className="flex justify-between text-[11px] text-[#737373]">
