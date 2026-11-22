@@ -161,6 +161,7 @@ def test_sync_workspaces_excludes_local_policy(tmp_path, monkeypatch):
     assert m[str(a.id)]["hosts"] is None
 
 
+@_POLICY
 def test_sync_workspaces_host_allowlist(tmp_path, monkeypatch):
     """sync_hosts narrows hub fan-out to the listed devices (ws#43)."""
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
