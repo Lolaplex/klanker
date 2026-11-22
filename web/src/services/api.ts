@@ -1,4 +1,4 @@
-import {
+import type {
   DesktopBootstrap,
   DesktopSettings,
   DiscoveredPeer,
@@ -7,7 +7,7 @@ import {
   ProcessStatus,
   TracePage,
 } from "../types/klanker";
-import { DEFAULT_SETTINGS } from "../openrouterModels";
+import { DEFAULT_SETTINGS } from "../openrouterModels.ts";
 
 const LS_INSTANCES = "klanker.instances";
 const LS_INSTANCES_MIGRATED = "klanker.instances_migrated";
@@ -22,9 +22,19 @@ const LS_ACTIVE = "klanker.active";
  *  process, so the hardcoded registry URL cannot be trusted. */
 let localServePort = 8787;
 
+/** Loopback base URL for the managed local relay on its live port. */
+export function localRelayBaseUrl(port: number = localServePort): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+/** Update the managed-serve port (serve_status poll / klanker:serve-state). */
+export function setLocalServePort(port: number): void {
+  if (port > 0) localServePort = port;
+}
+
 const base = (inst: KlankerInstance): string =>
   inst.via === "relay"
-    ? `/v1/remote/${encodeURIComponent(inst.id)}`
+    ? `${caps.spawn ? localRelayBaseUrl() : ""}/v1/remote/${encodeURIComponent(inst.id)}`
     : inst.kind === "local" && caps.spawn
       ? `http://127.0.0.1:${localServePort}`
       : (inst.endpoint?.base_url || inst.base_url || "").replace(/\/+$/, "");
@@ -1087,7 +1097,7 @@ async function localRelayFetch(
       secretCache.get("relay.local") ||
       (await invoke<string | null>("secret_get", { account: "relay.local" }).catch(() => null)) ||
       "";
-    return await fetch(`http://127.0.0.1:8787${path}`, {
+    return await fetch(`${localRelayBaseUrl()}${path}`, {
       method,
       headers: {
         "Content-Type": "application/json",

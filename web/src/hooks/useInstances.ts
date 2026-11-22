@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KlankerInstance, ProcessStatus } from "../types/klanker";
-import { api, caps, localInstance, rememberSecret, secretAccount } from "../services/api";
+import { api, caps, localInstance, rememberSecret, secretAccount, serveToProcess, setLocalServePort } from "../services/api";
 import type { AuthState } from "../components/AuthGate";
 
 /**
@@ -58,6 +58,12 @@ export function useInstances(args: {
             boot.instance.secret = boot.secret;
             rememberSecret(secretAccount(boot.instance), boot.secret);
             setManagedId(boot.instance.id);
+            setHerd((prev) => ({ ...prev, [boot.instance.id]: boot.status }));
+            // localRelayRemotes() could not race the serve spawn above —
+            // now that bootstrap resolved, reload instances so relay
+            // remotes merged in by endpoint host are accurate.
+            const list = await api.listKlankers();
+            setInstances(list);
           } catch (e) {
             wsNoteRef.current(
               `local relay unavailable: ${e instanceof Error ? e.message : String(e)}`
@@ -91,6 +97,53 @@ export function useInstances(args: {
       void loadSettingsRef.current();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Serve lifecycle sync (desktop): "klanker:serve-state" Tauri event +
+  // a 10s serveStatus() poll keep localServePort and the managed health
+  // row accurate across Tray restarts and port changes.
+  useEffect(() => {
+    if (!caps.spawn) return;
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        // Runtime global only — no @tauri-apps dependency, PWA-safe.
+        const listen = (window as any).__TAURI__?.event?.listen;
+        if (typeof listen !== "function") return;
+        unlisten = await listen(
+          "klanker:serve-state",
+          (ev: { payload?: { port?: number; pid?: number; state?: string } }) => {
+            const p = ev.payload?.port;
+            if (p) setLocalServePort(p);
+            setHerd((prev) => ({
+              ...prev,
+              local: {
+                is_running: true,
+                pid: ev.payload?.pid,
+                port: p || 0,
+                state: (ev.payload?.state as ProcessStatus["state"]) || "running",
+              },
+            }));
+          }
+        );
+      } catch {
+        // No Tauri runtime (PWA) — polling below still covers state.
+      }
+    })();
+    const poll = () => {
+      void api
+        .serveStatus()
+        .then((st) => {
+          if (st.port) setLocalServePort(st.port);
+          setHerd((prev) => ({ ...prev, local: serveToProcess(st) }));
+        })
+        .catch(() => {});
+    };
+    const timer = window.setInterval(poll, 10_000);
+    return () => {
+      unlisten?.();
+      window.clearInterval(timer);
+    };
   }, []);
 
   // Health poll every 8s
