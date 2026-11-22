@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { FolderOpen, X } from "lucide-react";
 import { DesktopSettings, KlankerInstance } from "../types/klanker";
-import { pushSupported, subscribePush } from "../push";
+import { getPushSubscription, pushSupported, subscribePush, unsubscribePush } from "../push";
 import { api } from "../services/api";
 import { ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
 import { ModelControl } from "./ModelControl";
@@ -38,6 +38,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 }) => {
   const [draft, setDraft] = useState<DesktopSettings>({ ...settings });
   const [pushBusy, setPushBusy] = useState(false);
+  const [pushOn, setPushOn] = useState<boolean | null>(null);
   const [pushNote, setPushNote] = useState<string | null>(null);
   const [recallOn, setRecallOn] = useState<boolean | null>(null);
   const [recallNote, setRecallNote] = useState<string | null>(null);
@@ -73,17 +74,38 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const enablePush = async () => {
+  // Reflect the real browser subscription — the button is a state toggle,
+  // not a one-shot "enable" that looks identical before and after.
+  useEffect(() => {
+    if (!instance || !pushSupported()) return;
+    void getPushSubscription()
+      .then((sub) => setPushOn(!!sub))
+      .catch(() => setPushOn(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const togglePush = async () => {
     if (!instance) return;
     setPushBusy(true);
     setPushNote(null);
     try {
+      if (pushOn) {
+        const dropped = await unsubscribePush();
+        setPushOn(false);
+        setPushNote(
+          dropped
+            ? "Push off on this device — the relay drops the stored endpoint on the next send."
+            : "Push was already off."
+        );
+        return;
+      }
       const r = await subscribePush(instance, workspace, persona);
-      setPushNote(
-        r.ok
-          ? "Push enabled — reminders and approvals reach this device while the app is closed."
-          : `Push off: ${r.reason}`
-      );
+      if (r.ok) {
+        setPushOn(true);
+        setPushNote("Push enabled — reminders and approvals reach this device while the app is closed.");
+      } else {
+        setPushNote(`Push off: ${r.reason}`);
+      }
     } catch (e) {
       setPushNote(`Push failed: ${e instanceof Error ? e.message : e}`);
     } finally {
@@ -238,12 +260,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Notifications</div>
               <button
                 type="button"
-                disabled={pushBusy}
-                onClick={() => void enablePush()}
-                className="inline-flex min-h-9 items-center px-3 py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white disabled:opacity-50"
+                disabled={pushBusy || pushOn === null}
+                onClick={() => void togglePush()}
+                className={`inline-flex min-h-9 items-center px-3 py-1.5 border rounded text-[11px] transition-colors disabled:opacity-50 ${
+                  pushOn
+                    ? "bg-white text-black border-white hover:bg-[#e5e5e5]"
+                    : "bg-[#0a0a0a] border-[#262626] text-[#a3a3a3] hover:bg-[#141414] hover:text-white"
+                }`}
               >
-                {pushBusy ? "enabling…" : "Enable push on this relay"}
+                {pushBusy ? "…" : pushOn ? "Push on — disable" : "Enable push on this relay"}
               </button>
+              {pushOn && !pushNote && (
+                <p className="text-[10px] text-[#525252] mt-1">Push enabled — reminders and approvals reach this device while the app is closed.</p>
+              )}
               {pushNote && <p className="text-[10px] text-[#525252] mt-1">{pushNote}</p>}
             </div>
           )}

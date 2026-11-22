@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Web sidebar: the per-persona `new chat` row now renders first (above the session list) instead of last, so the newest action is always reachable without scrolling.
+- Web settings push toggle: the "Enable push on this relay" button gave no persistent state feedback — it stayed labeled "Enable" after a successful subscribe. It now hydrates from the real `PushManager` subscription, shows an enabled state line, and toggles to "Push on — disable" (unsubscribe is device-local; the relay prunes the dead endpoint on next send).
 - Hardened desktop `serve.rs` port-scan reclaim (`can_reclaim_by_port` requires an explicit non-empty matching `host_id` on `/health`), fast-pathed `turn.resolve_actor_did` when `.ed25519` keys are absent, made `klanker pair` refuse non-TTY stdout with exit `2` before minting credentials, set `RELAY_SECRET` alongside `RELAY_WEB_TOKEN` in `_maybe_generate_web_token`, added `AGENTS_NO_AUTOSPAWN` daemon guard (enabled in `tests/conftest.py`), and absorbed the IDE-grade approval UX note into `docs/ROADMAP.md` (`#80`).
 
 ### Added
