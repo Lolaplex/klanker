@@ -8,15 +8,73 @@ pub mod serve;
 pub mod tray;
 pub mod updater;
 
-use std::path::PathBuf;
+use serde_json::{Map, Value};
+use std::fs;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-/// Host root for desktop infra (`~/.agents`), deliberately ignoring
-/// `AGENTS_HOST_DIR` so tests and CI never hijack the desktop registry.
-pub(crate) fn desktop_host_dir() -> Result<PathBuf, String> {
+pub(crate) fn desktop_host_dir_with(env_override: Option<&str>) -> Result<PathBuf, String> {
+    if let Some(val) = env_override.map(str::trim).filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(val));
+    }
     dirs::home_dir()
         .map(|h| h.join(".agents"))
         .ok_or_else(|| "no home dir".to_string())
+}
+
+/// Canonical host root for Desktop & CLI (`AGENTS_HOST_DIR` or `~/.agents`).
+pub(crate) fn desktop_host_dir() -> Result<PathBuf, String> {
+    let raw = std::env::var("AGENTS_HOST_DIR").ok();
+    desktop_host_dir_with(raw.as_deref())
+}
+
+/// Read persistent `host_id` from `<host>/agents.json`, minting and atomically
+/// storing `host_<hex>` if absent while preserving existing fields.
+pub(crate) fn desktop_host_id_at(host_dir: &Path) -> Result<String, String> {
+    fs::create_dir_all(host_dir).map_err(|e| format!("create host dir: {e}"))?;
+    let agents_path = host_dir.join("agents.json");
+    let mut map: Map<String, Value> = if agents_path.exists() {
+        let raw = fs::read_to_string(&agents_path).unwrap_or_default();
+        if raw.trim().is_empty() {
+            Map::new()
+        } else {
+            serde_json::from_str::<Value>(&raw)
+                .ok()
+                .and_then(|v| v.as_object().cloned())
+                .unwrap_or_default()
+        }
+    } else {
+        Map::new()
+    };
+
+    if let Some(existing) = map
+        .get("host_id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(existing.to_string());
+    }
+
+    let minted = format!("host_{}", uuid::Uuid::new_v4().simple());
+    map.insert("host_id".to_string(), Value::String(minted.clone()));
+    let mut payload = serde_json::to_string_pretty(&Value::Object(map)).map_err(|e| e.to_string())?;
+    payload.push('\n');
+
+    let tmp = host_dir.join(format!(
+        ".agents.json.{}.{}.tmp",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    if let Err(err) = fs::write(&tmp, payload.as_bytes()) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("write agents.json temp: {err}"));
+    }
+    if let Err(err) = fs::rename(&tmp, &agents_path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("rename agents.json: {err}"));
+    }
+    Ok(minted)
 }
 
 #[tauri::command]
@@ -32,7 +90,15 @@ fn secret_set(account: String, secret: String) -> Result<(), String> {
     if !secrets::valid_account(&account) {
         return Err("invalid secret account".into());
     }
-    secrets::set(&account, &secret)
+    let trimmed = secret.trim();
+    secrets::set(&account, trimmed)?;
+    if account == secrets::relay_account("local") && !trimmed.is_empty() {
+        secrets::write_host_vault_secrets(&[
+            ("RELAY_WEB_TOKEN", trimmed),
+            ("RELAY_SECRET", trimmed),
+        ])?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -64,6 +130,9 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_mcp_bridge::init());
     builder
         .setup(|app| {
+            if let Ok(hd) = desktop_host_dir() {
+                secrets::migrate_legacy_openrouter_key(&hd);
+            }
             serve::init(app.handle());
             if let Err(err) = tray::setup_tray(app.handle()) {
                 eprintln!("tray setup failed: {err}");
