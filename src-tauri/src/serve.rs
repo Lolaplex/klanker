@@ -20,8 +20,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
+#[cfg(not(target_os = "windows"))]
+use std::os::unix::process::CommandExt;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -106,23 +108,136 @@ pub fn log_path(_app: &AppHandle) -> Result<PathBuf, String> {
 
 // --- health / process ----------------------------------------------------
 
-pub fn health_ok(port: u16) -> bool {
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct HealthProbe {
+    pub port: Option<u16>,
+    pub host_id: Option<String>,
+}
+
+fn probe(port: u16, request: &str) -> Option<String> {
     let addr = format!("127.0.0.1:{port}");
-    let Ok(mut s) = TcpStream::connect(&addr) else {
-        return false;
-    };
+    let mut s = TcpStream::connect(&addr).ok()?;
     let _ = s.set_read_timeout(Some(Duration::from_secs(3)));
     let _ = s.set_write_timeout(Some(Duration::from_secs(3)));
-    if s
-        .write_all(b"GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n")
-        .is_err()
-    {
+    s.write_all(request.as_bytes()).ok()?;
+    let mut out = Vec::with_capacity(1024);
+    let mut buf = [0u8; 512];
+    loop {
+        match s.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                out.extend_from_slice(&buf[..n]);
+                if out.len() >= 4096 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    (!out.is_empty()).then(|| String::from_utf8_lossy(&out).into_owned())
+}
+
+pub(crate) fn parse_health_response(raw: &str) -> Option<HealthProbe> {
+    let status_line = raw.lines().next()?;
+    if !(status_line.starts_with("HTTP/") && status_line.contains(" 200")) {
+        return None;
+    }
+    let body = raw
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b)
+        .or_else(|| raw.split_once("\n\n").map(|(_, b)| b))
+        .unwrap_or("")
+        .trim();
+    let mut parsed = HealthProbe::default();
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(obj) = val.as_object() {
+            parsed.host_id = obj
+                .get("host_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
+            parsed.port = obj
+                .get("port")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| u16::try_from(n).ok());
+        }
+    }
+    Some(parsed)
+}
+
+pub(crate) fn probe_health(port: u16) -> Option<HealthProbe> {
+    let raw = probe(port, "GET /health HTTP/1.0\r\nHost: localhost\r\n\r\n")?;
+    parse_health_response(&raw)
+}
+
+pub fn health_ok(port: u16) -> bool {
+    probe_health(port).is_some()
+}
+
+pub(crate) fn host_id_matches(health: &HealthProbe, expected_host_id: &str) -> bool {
+    match health.host_id.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(actual) => actual == expected_host_id,
+        None => true,
+    }
+}
+
+fn auth_ok(port: u16, token: &str) -> bool {
+    if token.trim().is_empty() {
         return false;
     }
-    let mut buf = [0u8; 512];
-    let n = s.read(&mut buf).unwrap_or(0);
-    let head = String::from_utf8_lossy(&buf[..n]);
-    head.starts_with("HTTP/") && head.contains(" 200")
+    let req = format!(
+        "GET /v1/workspaces HTTP/1.0\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\r\n"
+    );
+    probe(port, &req)
+        .and_then(|raw| raw.lines().next().map(|l| l.starts_with("HTTP/") && l.contains(" 200")))
+        .unwrap_or(false)
+}
+
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub(crate) fn parse_netstat_listen_pid(text: &str, port: u16) -> Option<u32> {
+    let suffix = format!(":{port}");
+    for line in text.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() >= 5
+            && cols[0].eq_ignore_ascii_case("TCP")
+            && cols[1].ends_with(&suffix)
+            && (cols[2] == "0.0.0.0:0" || cols[2] == "[::]:0")
+        {
+            if let Ok(pid) = cols[4].parse::<u32>() {
+                if pid > 0 {
+                    return Some(pid);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn pid_on_port(port: u16) -> Option<u32> {
+    #[cfg(target_os = "windows")]
+    {
+        let out = Command::new("netstat")
+            .args(["-ano", "-p", "tcp"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        parse_netstat_listen_pid(&String::from_utf8_lossy(&out.stdout), port)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let out = Command::new("lsof")
+            .args(["-nP", "-ti", &format!("tcp:{port}"), "-sTCP:LISTEN"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.trim().parse::<u32>().ok())
+            .next()
+    }
 }
 
 fn pid_alive(pid: u32) -> bool {
@@ -233,16 +348,28 @@ pub(crate) fn read_serve_state_at(
         .and_then(|raw| parse_legacy_pid(&raw))
 }
 
-pub(crate) fn write_serve_state_at(state_file: &Path, pid: u32, port: u16) -> Result<(), String> {
+pub(crate) fn write_serve_state_with_host_at(
+    state_file: &Path,
+    pid: u32,
+    port: u16,
+    host_id: Option<&str>,
+) -> Result<(), String> {
     let parent = state_file
         .parent()
         .ok_or_else(|| "invalid serve state path".to_string())?;
     fs::create_dir_all(parent).map_err(|e| format!("create run dir: {e}"))?;
-    let mut payload = serde_json::to_string_pretty(&serde_json::json!({
-        "pid": pid,
-        "port": port,
-    }))
-    .map_err(|e| e.to_string())?;
+    let mut obj = serde_json::Map::new();
+    obj.insert("pid".into(), serde_json::json!(pid));
+    obj.insert("port".into(), serde_json::json!(port));
+    obj.insert(
+        "url".into(),
+        serde_json::json!(format!("http://127.0.0.1:{port}")),
+    );
+    if let Some(hid) = host_id.map(str::trim).filter(|s| !s.is_empty()) {
+        obj.insert("host_id".into(), serde_json::json!(hid));
+    }
+    let mut payload = serde_json::to_string_pretty(&serde_json::Value::Object(obj))
+        .map_err(|e| e.to_string())?;
     payload.push('\n');
 
     let name = state_file
@@ -263,6 +390,11 @@ pub(crate) fn write_serve_state_at(state_file: &Path, pid: u32, port: u16) -> Re
         return Err(format!("rename serve state: {err}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn write_serve_state_at(state_file: &Path, pid: u32, port: u16) -> Result<(), String> {
+    write_serve_state_with_host_at(state_file, pid, port, None)
 }
 
 pub(crate) fn remove_serve_state_at(
@@ -306,9 +438,9 @@ fn read_pid_file(app: &AppHandle) -> Option<(u32, u16)> {
     read_serve_state_at(&state, legacy.as_deref())
 }
 
-fn write_pid_file(_app: &AppHandle, pid: u32, port: u16) {
+fn write_pid_file(_app: &AppHandle, pid: u32, port: u16, host_id: Option<&str>) {
     if let Ok(path) = state_path() {
-        let _ = write_serve_state_at(&path, pid, port);
+        let _ = write_serve_state_with_host_at(&path, pid, port, host_id);
     }
 }
 
@@ -441,6 +573,8 @@ fn spawn_klanker(
     // without a console. CREATE_NO_WINDOW hides it for our GUI parent.
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    #[cfg(not(target_os = "windows"))]
+    cmd.process_group(0);
 
     // Diagnose spawn failures in the same log the child would write to —
     // a silent death otherwise leaves only "respawned" markers behind.
@@ -479,24 +613,58 @@ fn spawn_klanker(
 
 // --- lifecycle -----------------------------------------------------------
 
+fn emit_serve_state(app: &AppHandle, st: &ServeStatus) {
+    crate::tray::update_tray_tooltip(app, st);
+    let _ = app.emit("klanker:serve-state", st);
+}
+
 fn sync_vault_to_keyring() {
-    if let Some(vault_tok) = crate::secrets::read_host_vault_secret("RELAY_WEB_TOKEN") {
+    let vault_tok = crate::secrets::read_host_vault_secret("RELAY_WEB_TOKEN")
+        .or_else(|| crate::secrets::read_host_vault_secret("RELAY_SECRET"));
+    if let Some(tok) = vault_tok {
         let account = crate::secrets::relay_account("local");
-        if crate::secrets::get(&account).as_deref() != Some(vault_tok.as_str()) {
-            let _ = crate::secrets::set(&account, &vault_tok);
+        if crate::secrets::get(&account).as_deref() != Some(tok.as_str()) {
+            let _ = crate::secrets::set(&account, &tok);
         }
     }
 }
 
-fn adopt_or_mark(s: &mut Serve, app: &AppHandle) {
-    // A serve is already answering on the port. If our recorded PID is
-    // still alive we spawned it earlier -> owned; otherwise foreign.
-    if let Some((pid, port)) = read_pid_file(app) {
+fn resolved_token() -> (String, Option<String>, Option<String>) {
+    let vault_tok = crate::secrets::read_host_vault_secret("RELAY_WEB_TOKEN")
+        .or_else(|| crate::secrets::read_host_vault_secret("RELAY_SECRET"));
+    let keyring_tok = crate::secrets::get(&crate::secrets::relay_account("local"));
+    let legacy_pin = dirs::home_dir().map(|h| h.join(".klanker").join("relay-secret"));
+    let token = resolve_serve_token(
+        vault_tok.clone(),
+        keyring_tok.clone(),
+        legacy_pin.as_deref(),
+    );
+    (token, vault_tok, keyring_tok)
+}
+
+fn persist_token(token: &str, vault_tok: Option<&str>, keyring_tok: Option<&str>) {
+    if keyring_tok != Some(token) {
+        let _ = crate::secrets::set(&crate::secrets::relay_account("local"), token);
+    }
+    if vault_tok != Some(token)
+        || crate::secrets::read_host_vault_secret("RELAY_SECRET").as_deref() != Some(token)
+    {
+        let _ = crate::secrets::write_host_vault_secrets(&[
+            ("RELAY_WEB_TOKEN", token),
+            ("RELAY_SECRET", token),
+        ]);
+    }
+}
+
+fn adopt_or_mark(s: &mut Serve, app: &AppHandle, live_port: u16) {
+    // A serve for this host is already answering on `live_port`. If our
+    // recorded PID matches an active klanker process -> owned; else external.
+    if let Some((pid, _)) = read_pid_file(app) {
         if pid_is_ours(pid) {
             sync_vault_to_keyring();
             s.state = "running".into();
             s.pid = Some(pid);
-            s.port = port;
+            s.port = live_port;
             s.owned = true;
             s.failed_spawns = 0;
             s.detail = None;
@@ -507,32 +675,43 @@ fn adopt_or_mark(s: &mut Serve, app: &AppHandle) {
     sync_vault_to_keyring();
     s.state = "running".into();
     s.pid = None;
-    s.port = DEFAULT_PORT;
+    s.port = live_port;
     s.owned = false;
     s.failed_spawns = 0;
-    s.detail = Some("foreign serve (not app-managed)".into());
+    s.detail = Some("external serve (not app-managed)".into());
 }
 
-fn pick_port() -> u16 {
-    if TcpListener::bind(("127.0.0.1", DEFAULT_PORT)).is_ok() {
+fn pick_port_excluding(avoid: &[u16]) -> u16 {
+    if !avoid.contains(&DEFAULT_PORT) && TcpListener::bind(("127.0.0.1", DEFAULT_PORT)).is_ok() {
         return DEFAULT_PORT;
     }
-    TcpListener::bind(("127.0.0.1", 0))
-        .map(|l| l.local_addr().map(|a| a.port()).unwrap_or(DEFAULT_PORT))
-        .unwrap_or(DEFAULT_PORT)
+    for _ in 0..8 {
+        if let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) {
+            if let Ok(addr) = listener.local_addr() {
+                let p = addr.port();
+                if !avoid.contains(&p) {
+                    return p;
+                }
+            }
+        }
+    }
+    DEFAULT_PORT
 }
 
-/// Data root for the managed local serve: the same host root `klanker
-/// serve` uses on the CLI — `AGENTS_HOST_DIR` or `~/.agents` (`desktop_host_dir()`).
-/// Sharing one stem means workspaces, personas, inbox and secrets are
-/// identical no matter who spawned the process.
-fn instance_host_dir(_app: &AppHandle) -> Result<PathBuf, String> {
-    let dir = match std::env::var_os("AGENTS_HOST_DIR").filter(|v| !v.is_empty()) {
-        Some(val) => PathBuf::from(val),
-        None => crate::desktop_host_dir()?,
-    };
-    fs::create_dir_all(&dir).map_err(|e| format!("create host dir: {e}"))?;
-    Ok(dir)
+fn candidate_ports(s: &Serve, app: &AppHandle) -> Vec<u16> {
+    let mut out = Vec::new();
+    if let Some((_, file_port)) = read_pid_file(app) {
+        if !out.contains(&file_port) {
+            out.push(file_port);
+        }
+    }
+    if s.port > 0 && !out.contains(&s.port) {
+        out.push(s.port);
+    }
+    if !out.contains(&DEFAULT_PORT) {
+        out.push(DEFAULT_PORT);
+    }
+    out
 }
 
 fn valid_ws_name(name: &str) -> bool {
@@ -596,19 +775,65 @@ pub(crate) fn resolve_serve_token(
 }
 
 fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeStatus, String> {
+    let host_dir = crate::desktop_host_dir()?;
+    fs::create_dir_all(&host_dir).map_err(|e| format!("create host dir: {e}"))?;
+    let expected_host_id = crate::desktop_host_id_at(&host_dir).ok();
+
     let state = app.state::<ServeState>();
     let mut s = state.0.lock().map_err(|e| e.to_string())?;
+    let candidates = candidate_ports(&s, app);
+    let mut foreign_ports: Vec<u16> = Vec::new();
 
-    if health_ok(s.port) || health_ok(DEFAULT_PORT) {
-        if !force_own {
-            adopt_or_mark(&mut s, app);
-            return Ok(ServeStatus::of(&s));
+    for port in candidates {
+        let Some(health) = probe_health(port) else {
+            continue;
+        };
+        if let Some(ref hid) = expected_host_id {
+            if !host_id_matches(&health, hid) {
+                foreign_ports.push(port);
+                continue;
+            }
         }
-        // Restart semantics: never adopt a foreign process — its token is
-        // not the keyring one, so linking would fail forever. Leave it
-        // running and spawn our own on a fresh port instead.
-        s.owned = false;
-        s.pid = None;
+        let (token, vault_tok, keyring_tok) = resolved_token();
+        if !force_own && auth_ok(port, &token) {
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
+            adopt_or_mark(&mut s, app, port);
+            let st = ServeStatus::of(&s);
+            emit_serve_state(app, &st);
+            return Ok(st);
+        }
+
+        // Strict 1-serve-per-device: same-host serve on `port` (force_own restart
+        // or token mismatch). Reclaim cleanly instead of spawning a 2nd instance.
+        let target_pid = read_pid_file(app)
+            .filter(|(pid, fport)| *fport == port && pid_alive(*pid))
+            .map(|(pid, _)| pid)
+            .or_else(|| pid_on_port(port));
+        if let Some(pid) = target_pid {
+            if pid_is_ours(pid) {
+                kill_tree(pid);
+                for _ in 0..40 {
+                    if !pid_alive(pid) && !health_ok(port) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(250));
+                }
+                remove_pid_file(app, Some(pid));
+                s.pid = None;
+                s.owned = false;
+            } else {
+                foreign_ports.push(port);
+            }
+        } else {
+            // Live same-host serve without discoverable PID — refuse duplicate spawn.
+            s.state = "lost".into();
+            s.owned = false;
+            s.port = port;
+            s.detail = Some("cannot reclaim same-host serve without PID".into());
+            let st = ServeStatus::of(&s);
+            emit_serve_state(app, &st);
+            return Ok(st);
+        }
     }
 
     // A booting child needs grace — python imports take seconds. Only
@@ -620,7 +845,9 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
             .unwrap_or(false);
         if let Some(pid) = s.pid {
             if pid_alive(pid) && !booted_long {
-                return Ok(ServeStatus::of(&s));
+                let st = ServeStatus::of(&s);
+                crate::tray::update_tray_tooltip(app, &st);
+                return Ok(st);
             }
         }
     }
@@ -641,47 +868,41 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
         if s.failed_spawns >= MAX_RESPAWNS {
             s.state = "lost".into();
             s.detail = Some("serve died repeatedly — restart manually".into());
-            return Ok(ServeStatus::of(&s));
+            let st = ServeStatus::of(&s);
+            emit_serve_state(app, &st);
+            return Ok(st);
         }
     }
 
     let Some((argv, version)) = find_klanker(app) else {
         s.state = "not_found".into();
-        s.detail = Some("klanker not found — install via `uv tool install klanker` or `pip install klanker`".into());
-        return Ok(ServeStatus::of(&s));
+        s.detail = Some(
+            "klanker not found — install via `uv tool install klanker` or `pip install klanker`"
+                .into(),
+        );
+        let st = ServeStatus::of(&s);
+        emit_serve_state(app, &st);
+        return Ok(st);
     };
     s.klanker_version = version;
 
-    let port = pick_port();
-    // Shared host bearer: check OS Keyring (`relay.local`) <-> host vault
-    // (`~/.agents/secrets/host.json` -> `RELAY_WEB_TOKEN`), fallback read-only
-    // to `~/.klanker/relay-secret`, else mint a fresh UUID. Sync into BOTH
-    // keyring and host vault; never write `~/.klanker/relay-secret`.
-    let vault_tok = crate::secrets::read_host_vault_secret("RELAY_WEB_TOKEN");
-    let keyring_tok = crate::secrets::get(&crate::secrets::relay_account("local"));
-    let legacy_pin = dirs::home_dir().map(|h| h.join(".klanker").join("relay-secret"));
-    let token = resolve_serve_token(
-        vault_tok.clone(),
-        keyring_tok.clone(),
-        legacy_pin.as_deref(),
-    );
+    let port = pick_port_excluding(&foreign_ports);
+    let (token, vault_tok, keyring_tok) = resolved_token();
     let log = log_path(app)?;
-    let host_dir = instance_host_dir(app)?;
     if !workdir.is_empty() {
         let _ = fs::create_dir_all(workdir);
     }
     match spawn_klanker(&argv, port, &token, &log, &host_dir, workdir) {
         Ok(pid) => {
-            if keyring_tok.as_deref() != Some(token.as_str()) {
-                let _ = crate::secrets::set(&crate::secrets::relay_account("local"), &token);
-            }
-            if vault_tok.as_deref() != Some(token.as_str()) {
-                let _ = crate::secrets::write_host_vault_secret("RELAY_WEB_TOKEN", &token);
-            }
-            write_pid_file(app, pid, port);
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
+            write_pid_file(app, pid, port, expected_host_id.as_deref());
             s.failed_spawns += 1;
             s.last_spawn = Some(Instant::now());
-            s.state = "starting".into();
+            s.state = if probe_health(port).is_some() {
+                "running".into()
+            } else {
+                "starting".into()
+            };
             s.pid = Some(pid);
             s.port = port;
             s.owned = true;
@@ -694,22 +915,51 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
             s.detail = Some(e);
         }
     }
-    Ok(ServeStatus::of(&s))
+    let st = ServeStatus::of(&s);
+    emit_serve_state(app, &st);
+    Ok(st)
 }
 
-fn status(app: &AppHandle) -> Result<ServeStatus, String> {
+fn status(app: &AppHandle) -> Result<(ServeStatus, bool), String> {
+    let expected_host_id = crate::desktop_host_dir()
+        .ok()
+        .and_then(|d| crate::desktop_host_id_at(&d).ok());
     let state = app.state::<ServeState>();
     let mut s = state.0.lock().map_err(|e| e.to_string())?;
-    if health_ok(s.port) || health_ok(DEFAULT_PORT) {
-        adopt_or_mark(&mut s, app);
-    } else if s.state == "running" || s.state == "starting" {
+    let prev = (s.state.clone(), s.port, s.owned, s.pid);
+
+    let mut handled = false;
+    for port in candidate_ports(&s, app) {
+        let Some(health) = probe_health(port) else {
+            continue;
+        };
+        if let Some(ref hid) = expected_host_id {
+            if !host_id_matches(&health, hid) {
+                continue;
+            }
+        }
+        handled = true;
+        let (token, vault_tok, keyring_tok) = resolved_token();
+        if auth_ok(port, &token) {
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
+            adopt_or_mark(&mut s, app, port);
+        } else {
+            s.state = "lost".into();
+            s.owned = false;
+            s.port = port;
+            s.detail = Some("auth token mismatch — restart respawns a serve we can reach".into());
+        }
+        break;
+    }
+    if !handled && (s.state == "running" || s.state == "starting") {
         let owned_dead = s.owned && s.pid.is_some() && !pid_alive(s.pid.unwrap_or(0));
         if owned_dead || !s.owned {
             s.state = "lost".into();
             s.detail = Some("serve stopped answering".into());
         }
     }
-    Ok(ServeStatus::of(&s))
+    let changed = (s.state.clone(), s.port, s.owned, s.pid) != prev;
+    Ok((ServeStatus::of(&s), changed))
 }
 
 fn kill_tree(pid: u32) {
@@ -724,8 +974,36 @@ fn kill_tree(pid: u32) {
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let pgid_arg = format!("-{pid}");
+        let pg_ok = Command::new("kill")
+            .args(["-TERM", &pgid_arg])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        if !pg_ok {
+            let _ = Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+        for _ in 0..12 {
+            if !pid_alive(pid) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        if pg_ok {
+            let _ = Command::new("kill")
+                .args(["-KILL", &pgid_arg])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
         let _ = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
+            .args(["-KILL", &pid.to_string()])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status();
@@ -757,20 +1035,11 @@ pub fn kill_owned(app: &AppHandle) {
 
 #[tauri::command]
 pub async fn serve_status(app: AppHandle) -> Result<ServeStatus, String> {
-    let st = status(&app)?;
-    // The frontend polls this every few seconds — reflect the state in
-    // the tray tooltip so hidden operation is still visible.
-    if let Some(tray) = app.tray_by_id("main") {
-        let tip = if st.state == "running" {
-            format!(
-                "Klanker — serve :{} ({})",
-                st.port,
-                if st.owned { "managed" } else { "external" }
-            )
-        } else {
-            format!("Klanker — serve {}", st.state)
-        };
-        let _ = tray.set_tooltip(Some(&tip));
+    let (st, changed) = status(&app)?;
+    if changed {
+        emit_serve_state(&app, &st);
+    } else {
+        crate::tray::update_tray_tooltip(&app, &st);
     }
     Ok(st)
 }
@@ -783,11 +1052,8 @@ pub async fn serve_ensure_local(app: AppHandle, workdir: Option<String>) -> Resu
 }
 
 /// Manual retry from the "server lost" state — resets the respawn budget.
-/// An owned serve is actually killed first: without that the health probe
-/// in `do_ensure` adopts the still-dying process and the "restart" becomes
-/// a no-op, so a new agents-relay build or changed env is never picked up.
-/// A foreign serve is never killed, but never adopted either — restart
-/// means "a serve we own", so a changed secret actually takes effect.
+/// Both owned and external same-host serves are stopped cleanly before respawn
+/// so at most one serve runs per host.
 #[tauri::command]
 pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
     let mut killed = None;
@@ -811,16 +1077,30 @@ pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<Se
             }
             std::thread::sleep(Duration::from_millis(250));
         }
+        remove_pid_file(&app, Some(pid));
     }
     do_ensure(&app, workdir.as_deref().unwrap_or(""), true)
 }
 
-/// Warm the state at app start: a live pid-file serve on its recorded
-/// port is still ours; a port answering without a pid file is foreign.
+/// Warm the state at app start: adopt recorded or canonical port serve ONLY
+/// when host_id and bearer token verify cleanly.
 pub fn init(app: &AppHandle) {
     app.manage(ServeState(Mutex::new(Serve::default())));
+    let expected_host_id = crate::desktop_host_dir()
+        .ok()
+        .and_then(|d| crate::desktop_host_id_at(&d).ok());
     if let Some((pid, port)) = read_pid_file(app) {
-        if pid_is_ours(pid) && health_ok(port) {
+        let host_ok = probe_health(port)
+            .map(|h| {
+                expected_host_id
+                    .as_deref()
+                    .map(|id| host_id_matches(&h, id))
+                    .unwrap_or(true)
+            })
+            .unwrap_or(false);
+        let (token, vault_tok, keyring_tok) = resolved_token();
+        if pid_is_ours(pid) && host_ok && auth_ok(port, &token) {
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
             let state = app.state::<ServeState>();
             if let Ok(mut s) = state.0.lock() {
                 s.state = "running".into();
@@ -830,13 +1110,23 @@ pub fn init(app: &AppHandle) {
             };
             return;
         }
-        remove_pid_file(app, Some(pid));
+        if !pid_alive(pid) {
+            remove_pid_file(app, Some(pid));
+        }
     }
-    if health_ok(DEFAULT_PORT) {
-        let state = app.state::<ServeState>();
-        if let Ok(mut s) = state.0.lock() {
-            adopt_or_mark(&mut s, app);
-        };
+    if let Some(health) = probe_health(DEFAULT_PORT) {
+        let host_ok = expected_host_id
+            .as_deref()
+            .map(|id| host_id_matches(&health, id))
+            .unwrap_or(true);
+        let (token, vault_tok, keyring_tok) = resolved_token();
+        if host_ok && auth_ok(DEFAULT_PORT, &token) {
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
+            let state = app.state::<ServeState>();
+            if let Ok(mut s) = state.0.lock() {
+                adopt_or_mark(&mut s, app, DEFAULT_PORT);
+            };
+        }
     }
 }
 
@@ -954,5 +1244,69 @@ mod tests {
         let minted = resolve_serve_token(None, None, Some(&missing_pin));
         assert!(!minted.is_empty());
         assert!(!missing_pin.exists());
+    }
+
+    #[test]
+    fn desktop_host_dir_honors_override_and_host_id_persists() {
+        let tmp = TempDir::new("hostid");
+        let custom = tmp.0.to_string_lossy().to_string();
+        assert_eq!(crate::desktop_host_dir_with(Some(&custom)).unwrap(), tmp.0);
+        assert_ne!(crate::desktop_host_dir_with(Some("   ")).unwrap(), tmp.0);
+
+        fs::write(tmp.0.join("agents.json"), r#"{"default_workspace":"work"}"#).unwrap();
+        let id1 = crate::desktop_host_id_at(&tmp.0).unwrap();
+        assert!(id1.starts_with("host_"));
+        let id2 = crate::desktop_host_id_at(&tmp.0).unwrap();
+        assert_eq!(id1, id2);
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(tmp.0.join("agents.json")).unwrap()).unwrap();
+        assert_eq!(saved["default_workspace"], "work");
+        assert_eq!(saved["host_id"], id1);
+    }
+
+    #[test]
+    fn health_probe_and_host_id_guard_refuse_mismatch() {
+        let ok_raw = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{\"ok\":true,\"host_id\":\"host_abc\",\"port\":9010}";
+        let parsed = parse_health_response(ok_raw).unwrap();
+        assert_eq!(parsed.host_id.as_deref(), Some("host_abc"));
+        assert_eq!(parsed.port, Some(9010));
+        assert!(host_id_matches(&parsed, "host_abc"));
+        assert!(!host_id_matches(&parsed, "host_other"));
+
+        // Legacy relay omitting host_id stays compatible.
+        let legacy_raw = "HTTP/1.1 200 OK\r\n\r\n{\"ok\":true}";
+        let legacy = parse_health_response(legacy_raw).unwrap();
+        assert!(host_id_matches(&legacy, "host_abc"));
+
+        assert!(parse_health_response("HTTP/1.1 500 ERR\r\n\r\n").is_none());
+    }
+
+    #[test]
+    fn serve_json_writes_url_and_host_id() {
+        let tmp = TempDir::new("serve-hid");
+        let state_file = tmp.0.join("run").join("serve.json");
+        write_serve_state_with_host_at(&state_file, 7777, 9444, Some("host_xyz")).unwrap();
+        let val: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&state_file).unwrap()).unwrap();
+        assert_eq!(val["pid"], 7777);
+        assert_eq!(val["port"], 9444);
+        assert_eq!(val["url"], "http://127.0.0.1:9444");
+        assert_eq!(val["host_id"], "host_xyz");
+        assert_eq!(read_serve_state_at(&state_file, None), Some((7777, 9444)));
+    }
+
+    #[test]
+    fn parse_netstat_listen_pid_is_locale_independent() {
+        let sample = "\
+Aktive Verbindungen
+  Proto  Lokale Adresse         Remoteadresse          Status           PID
+  TCP    127.0.0.1:19010        0.0.0.0:0              ABHÖREN         1111
+  TCP    127.0.0.1:9010         127.0.0.1:54321        HERGESTELLT     2222
+  TCP    127.0.0.1:9010         0.0.0.0:0              ABHÖREN         3333
+  TCP    [::1]:9011             [::]:0                 LISTENING       4444
+";
+        assert_eq!(parse_netstat_listen_pid(sample, 9010), Some(3333));
+        assert_eq!(parse_netstat_listen_pid(sample, 9011), Some(4444));
+        assert_eq!(parse_netstat_listen_pid(sample, 8787), None);
     }
 }

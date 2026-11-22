@@ -62,6 +62,21 @@ fn restart_serve(app: &AppHandle) {
     });
 }
 
+pub(crate) fn update_tray_tooltip(app: &AppHandle, st: &crate::serve::ServeStatus) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let tip = if st.state == "running" {
+            format!(
+                "Klanker — serve :{} ({})",
+                st.port,
+                if st.owned { "managed" } else { "external" }
+            )
+        } else {
+            format!("Klanker — serve {}", st.state)
+        };
+        let _ = tray.set_tooltip(Some(&tip));
+    }
+}
+
 fn register_hotkey(app: &AppHandle) {
     if let Err(err) = app
         .global_shortcut()

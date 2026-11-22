@@ -8,7 +8,8 @@ use std::sync::{Mutex, OnceLock};
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-pub const SERVICE: &str = "klanker-desktop";
+pub const SERVICE: &str = "agents-host";
+const LEGACY_SERVICE: &str = "klanker-desktop";
 
 pub fn relay_account(id: &str) -> String {
     format!("relay.{id}")
@@ -58,13 +59,29 @@ pub fn get(account: &str) -> Option<String> {
     if cfg!(test) {
         return None;
     }
-    let entry = keyring::Entry::new(SERVICE, account).ok()?;
-    let value = entry.get_password().ok()?.trim().to_string();
-    if value.is_empty() {
-        return None;
+    if let Ok(entry) = keyring::Entry::new(SERVICE, account) {
+        if let Ok(raw) = entry.get_password() {
+            let value = raw.trim().to_string();
+            if !value.is_empty() {
+                cache_set(account, &value);
+                return Some(value);
+            }
+        }
     }
-    cache_set(account, &value);
-    Some(value)
+    // 1-release fallback from legacy "klanker-desktop" keyring service + mirror forward.
+    if let Ok(legacy) = keyring::Entry::new(LEGACY_SERVICE, account) {
+        if let Ok(raw) = legacy.get_password() {
+            let value = raw.trim().to_string();
+            if !value.is_empty() {
+                cache_set(account, &value);
+                if let Ok(primary) = keyring::Entry::new(SERVICE, account) {
+                    let _ = primary.set_password(&value);
+                }
+                return Some(value);
+            }
+        }
+    }
+    None
 }
 
 pub fn present(account: &str) -> bool {
@@ -91,8 +108,10 @@ pub fn delete(account: &str) {
     if cfg!(test) {
         return;
     }
-    if let Ok(entry) = keyring::Entry::new(SERVICE, account) {
-        let _ = entry.delete_credential();
+    for svc in [SERVICE, LEGACY_SERVICE] {
+        if let Ok(entry) = keyring::Entry::new(svc, account) {
+            let _ = entry.delete_credential();
+        }
     }
 }
 
@@ -108,14 +127,9 @@ pub(crate) fn read_host_vault_secret_at(path: &Path, key: &str) -> Option<String
     (!value.is_empty()).then(|| value.to_string())
 }
 
-pub(crate) fn write_host_vault_secret_at(path: &Path, key: &str, value: &str) -> Result<(), String> {
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("empty secret key".into());
-    }
-    let value = value.trim();
-    if value.is_empty() {
-        return Err("empty secret value".into());
+pub(crate) fn write_host_vault_secrets_at(path: &Path, pairs: &[(&str, &str)]) -> Result<(), String> {
+    if pairs.is_empty() {
+        return Ok(());
     }
     let parent = path
         .parent()
@@ -141,7 +155,18 @@ pub(crate) fn write_host_vault_secret_at(path: &Path, key: &str, value: &str) ->
         Map::new()
     };
 
-    map.insert(key.to_string(), Value::String(value.to_string()));
+    for &(raw_key, raw_value) in pairs {
+        let key = raw_key.trim();
+        if key.is_empty() {
+            return Err("empty secret key".into());
+        }
+        let value = raw_value.trim();
+        if value.is_empty() {
+            return Err("empty secret value".into());
+        }
+        map.insert(key.to_string(), Value::String(value.to_string()));
+    }
+
     let mut payload =
         serde_json::to_string_pretty(&Value::Object(map)).map_err(|e| e.to_string())?;
     payload.push('\n');
@@ -187,18 +212,65 @@ pub(crate) fn write_host_vault_secret_at(path: &Path, key: &str, value: &str) ->
     Ok(())
 }
 
-/// Read a host-scoped secret from `~/.agents/secrets/host.json`.
+pub(crate) fn write_host_vault_secret_at(path: &Path, key: &str, value: &str) -> Result<(), String> {
+    write_host_vault_secrets_at(path, &[(key, value)])
+}
+
+/// Read a host-scoped secret from `<host>/secrets/host.json`.
 pub fn read_host_vault_secret(key: &str) -> Option<String> {
     host_vault_path()
         .ok()
         .and_then(|path| read_host_vault_secret_at(&path, key))
 }
 
-/// Atomically write a host-scoped secret into `~/.agents/secrets/host.json`,
+/// Atomically write a host-scoped secret into `<host>/secrets/host.json`,
 /// preserving any existing keys.
 pub fn write_host_vault_secret(key: &str, value: &str) -> Result<(), String> {
     let path = host_vault_path()?;
     write_host_vault_secret_at(&path, key, value)
+}
+
+/// Atomically write multiple host-scoped secrets in a single vault update.
+pub fn write_host_vault_secrets(pairs: &[(&str, &str)]) -> Result<(), String> {
+    let path = host_vault_path()?;
+    write_host_vault_secrets_at(&path, pairs)
+}
+
+/// One-time migration: copy orphan legacy keyring `"klanker-desktop" / "openrouter"`
+/// into `<host>/secrets/host.json` (`OPENROUTER_API_KEY`) when absent.
+pub(crate) fn migrate_legacy_openrouter_key_at(
+    vault_path: &Path,
+    legacy_key: Option<&str>,
+) -> bool {
+    let Some(trimmed) = legacy_key.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    if read_host_vault_secret_at(vault_path, "OPENROUTER_API_KEY").is_some() {
+        return false;
+    }
+    write_host_vault_secret_at(vault_path, "OPENROUTER_API_KEY", trimmed).is_ok()
+}
+
+pub fn migrate_legacy_openrouter_key(host_dir: &Path) {
+    if cfg!(test) {
+        return;
+    }
+    let Ok(legacy) = keyring::Entry::new(LEGACY_SERVICE, "openrouter") else {
+        return;
+    };
+    let Ok(raw) = legacy.get_password() else {
+        return;
+    };
+    let trimmed = raw.trim().to_string();
+    if trimmed.is_empty() {
+        let _ = legacy.delete_credential();
+        return;
+    }
+    let vault_path = host_dir.join("secrets").join("host.json");
+    if migrate_legacy_openrouter_key_at(&vault_path, Some(&trimmed)) {
+        let _ = set("OPENROUTER_API_KEY", &trimmed);
+    }
+    let _ = legacy.delete_credential();
 }
 
 #[cfg(test)]
@@ -296,5 +368,50 @@ mod tests {
         assert!(!valid_account("relay.a\\b"));
         assert!(!valid_account("relay.has space"));
         assert!(!valid_account(&format!("relay.{}", "a".repeat(256))));
+    }
+
+    #[test]
+    fn migrate_legacy_openrouter_key_preserves_existing_and_moves_missing() {
+        let tmp = TempDir::new("mig-or");
+        let vault = tmp.0.join("secrets").join("host.json");
+
+        // Blank/absent legacy key does nothing.
+        assert!(!migrate_legacy_openrouter_key_at(&vault, None));
+        assert!(!migrate_legacy_openrouter_key_at(&vault, Some("   ")));
+        assert!(!vault.exists());
+
+        // Migrates when OPENROUTER_API_KEY is absent in host vault.
+        assert!(migrate_legacy_openrouter_key_at(&vault, Some("  sk-or-v1-legacy  ")));
+        assert_eq!(
+            read_host_vault_secret_at(&vault, "OPENROUTER_API_KEY").as_deref(),
+            Some("sk-or-v1-legacy")
+        );
+
+        // Existing vault key must NOT be clobbered.
+        write_host_vault_secret_at(&vault, "OPENROUTER_API_KEY", "sk-or-v1-current").unwrap();
+        assert!(!migrate_legacy_openrouter_key_at(&vault, Some("sk-or-v1-legacy")));
+        assert_eq!(
+            read_host_vault_secret_at(&vault, "OPENROUTER_API_KEY").as_deref(),
+            Some("sk-or-v1-current")
+        );
+    }
+
+    #[test]
+    fn write_host_vault_secrets_updates_multiple_keys_atomically() {
+        let tmp = TempDir::new("multi-vault");
+        let vault = tmp.0.join("secrets").join("host.json");
+        write_host_vault_secrets_at(
+            &vault,
+            &[("RELAY_WEB_TOKEN", "tok-new"), ("RELAY_SECRET", "tok-new")],
+        )
+        .unwrap();
+        assert_eq!(
+            read_host_vault_secret_at(&vault, "RELAY_WEB_TOKEN").as_deref(),
+            Some("tok-new")
+        );
+        assert_eq!(
+            read_host_vault_secret_at(&vault, "RELAY_SECRET").as_deref(),
+            Some("tok-new")
+        );
     }
 }
