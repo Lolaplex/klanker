@@ -384,32 +384,48 @@ export const api = {
       // The local relay /v1/remotes registry is canonical on Desktop too.
       // File-registry remote rows migrate up once (endpoint host wins —
       // relay rows are never dropped), then the list renders only relay.
+      // Migration runs only against a CONFIRMED canonical read — a null
+      // (unreachable) or refused relay must never promote keyring secrets
+      // into the vault (klanker#144).
       const relay = await localRelayRemotes();
-      const relayHosts = new Set((relay?.remotes || []).map((m) => hostKey(m)).filter(Boolean));
-      const migrated = new Set<string>();
-      for (const i of fileRows) {
-        const host = hostKey(i);
-        if (host && relayHosts.has(host)) {
-          migrated.add(host);
-          continue;
+      let after = relay;
+      const keptFileRows: typeof fileRows = [];
+      if (relay !== null) {
+        const relayHosts = new Set((relay.remotes || []).map((m) => hostKey(m)).filter(Boolean));
+        for (const i of fileRows) {
+          const host = hostKey(i);
+          if (host && relayHosts.has(host)) continue;
+          await hydrateSecret(i);
+          try {
+            const wrote = await localRelayRemotes("POST", {
+              id: i.id,
+              base_url: i.endpoint?.base_url || i.base_url || "",
+              label: i.name,
+              // Keyring secret travels over loopback once so the relay can
+              // inject it on proxy turns — it is never written to disk here.
+              secret: i.secret || i.endpoint?.secret || "",
+            });
+            if (wrote === null) {
+              keptFileRows.push(i);
+              continue;
+            }
+          } catch {
+            keptFileRows.push(i);
+            continue;
+          }
+          if (host) relayHosts.add(host);
         }
-        await hydrateSecret(i);
-        await localRelayRemotes("POST", {
-          id: i.id,
-          base_url: i.endpoint?.base_url || i.base_url || "",
-          label: i.name,
-          // Keyring secret travels over loopback once so the relay can
-          // inject it on proxy turns — it is never written to disk here.
-          secret: i.secret || i.endpoint?.secret || "",
-        });
-        if (host) relayHosts.add(host);
+        if (fileRows.length || keptFileRows.length) {
+          after = (await localRelayRemotes()) ?? relay;
+        }
       }
-      const after = migrated.size || fileRows.length ? await localRelayRemotes() : relay;
       const fileByHost = new Map(fileRows.map((i) => [hostKey(i), i] as const));
       list = [local];
       const now = new Date().toISOString();
+      const rendered = new Set<string>();
       for (const m of after?.remotes || []) {
         const host = hostKey(m);
+        if (host) rendered.add(host);
         const f = host ? fileByHost.get(host) : undefined;
         list.push({
           id: m.id,
@@ -429,6 +445,14 @@ export const api = {
           created_at: f?.created_at || now,
           updated_at: now,
         });
+      }
+      // Unmigrated file rows stay visible as direct remote entries — the
+      // relay registry being unreachable or refusing must not hide
+      // instances that can still be called directly.
+      for (const i of relay === null ? fileRows : keptFileRows) {
+        const host = hostKey(i);
+        if (host && rendered.has(host)) continue;
+        list.push({ ...i, kind: "remote", updated_at: now });
       }
     } else if (list.length === 0) {
       list = [localInstance()];
@@ -456,12 +480,17 @@ export const api = {
         next.id = uniqueSlug(inst.slug || inst.name, list.map((i) => i.id));
         next.slug = next.slug || next.id;
       }
-      await localRelayRemotes("POST", {
+      const saved = await localRelayRemotes("POST", {
         id: next.id,
         base_url: next.endpoint?.base_url || next.base_url || "",
         label: next.name,
         secret: (next.secret || next.endpoint?.secret || "").trim(),
       });
+      // Fail loud (klanker#144): an unreachable or refusing relay must not
+      // leave the instance "saved" outside the canonical registry.
+      if (saved === null) {
+        throw new Error("local relay unreachable — remote not saved");
+      }
       return {
         ...stripSecrets(next),
         via: "relay",
@@ -1639,20 +1668,33 @@ async function localRelayFetch(
 
 /** Managed local relay `/v1/remotes` — the canonical remote graph shared
  *  with PWA clients of this host. The desktop file registry mirrors into
- *  it so an instance added on either surface appears on both (#60). */
+ *  it so an instance added on either surface appears on both (#60).
+ *  Returns null only when the relay is unreachable (network). An HTTP
+ *  error — above all a 401 credential mismatch — throws loudly: silent
+ *  nulls here are how stale keyring secrets got promoted into the
+ *  canonical vault (klanker#144). */
 async function localRelayRemotes(
   method: "GET" | "POST" | "DELETE" = "GET",
   body?: Record<string, unknown>,
   id?: string
 ): Promise<{ remotes?: { id: string; base_url: string; label: string; has_secret: boolean }[] } | null> {
   const res = await localRelayFetch(`/v1/remotes${id ? `/${encodeURIComponent(id)}` : ""}`, method, body);
-  if (!res?.ok) return null;
+  if (res === null) return null;
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`local relay /v1/remotes ${method} failed: ${res.status} ${detail.slice(0, 200)}`);
+  }
   return method === "GET" ? await res.json() : {};
 }
 
+/** POST /v1/remotes on the same-origin relay (PWA path). false = relay
+ *  unreachable (offline fallback is legitimate); an HTTP error throws —
+ *  a refused write must never fall back to localStorage silently
+ *  (klanker#144). */
 async function remoteSave(inst: KlankerInstance): Promise<boolean> {
+  let r: Response;
   try {
-    const r = await fetch("/v1/remotes", {
+    r = await fetch("/v1/remotes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1662,10 +1704,14 @@ async function remoteSave(inst: KlankerInstance): Promise<boolean> {
         secret: inst.secret || inst.endpoint?.secret || "",
       }),
     });
-    return r.ok;
   } catch {
     return false;
   }
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(`remote save refused: ${r.status} ${detail.slice(0, 200)}`);
+  }
+  return true;
 }
 
 /** Persist an instance; returns the stored form (secrets stripped). */
