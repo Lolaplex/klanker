@@ -125,3 +125,20 @@ def test_scrub_tombstone_propagates(link):
     link.a.conn.commit()
     link.a.drain(); link.pump()
     assert _view(link.b.store, e) == {}
+
+
+def test_sync_workspaces_excludes_local_policy(tmp_path, monkeypatch):
+    """ws#43: sync_policy=local -> zero ops on the wire, ever."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    a = host.create("a")
+    b = host.create("b")
+    host.update_workspace(str(b.id), sync_policy="local")
+    from klanker.wssync import sync_workspaces
+
+    m = sync_workspaces()
+    assert str(a.id) in m
+    assert str(b.id) not in m

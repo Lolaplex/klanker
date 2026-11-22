@@ -133,8 +133,9 @@ class SyncRuntime:
         def op_handler(device_id: str, payload: dict) -> None:
             ws_id = str(payload.get("ws") or "")
             w = self._hub_worker(device_id, ws_id)
-            if w is not None:
-                w.on_op(payload)
+            if w is None:
+                return  # unknown or local-policy ws: never ingest, never fan out
+            w.on_op(payload)
             hub.broadcast("op", payload, skip={device_id})
 
         def ack_handler(device_id: str, payload: dict) -> None:
@@ -186,6 +187,21 @@ class SyncRuntime:
             out = [w for ws in self._client_workers.values() for w in ws]
             out.extend(self._hub_workers.values())
             return out
+
+
+def sync_workspaces() -> dict:
+    """ws_id -> ws dir for workspaces allowed to emit ops.
+
+    `sync_policy=local` workspaces never appear on the wire (ws#43):
+    no spoke workers, no hub-side ingest, no fan-out.
+    """
+    from agents_workspace import Workspace
+
+    return {
+        str(ws.id): ws.dir
+        for ws in Workspace.list_all()
+        if getattr(ws, "sync_policy", "synced") != "local"
+    }
 
 
 def _try_drain(w: WsSync) -> None:
