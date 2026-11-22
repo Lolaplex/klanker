@@ -127,6 +127,19 @@ def test_scrub_tombstone_propagates(link):
     assert _view(link.b.store, e) == {}
 
 
+def _ws_policy_supported() -> bool:
+    """agents-workspace feat/sync-policy fields present?"""
+    import inspect
+
+    from agents_workspace import Host
+
+    return "sync_policy" in inspect.signature(
+        Host.update_workspace).parameters
+
+
+@pytest.mark.skipif(
+    not _ws_policy_supported(),
+    reason="agents-workspace without sync_policy fields (feat/sync-policy)")
 def test_sync_workspaces_excludes_local_policy(tmp_path, monkeypatch):
     """ws#43: sync_policy=local -> zero ops on the wire, ever."""
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
