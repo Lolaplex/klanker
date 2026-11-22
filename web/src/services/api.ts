@@ -6,6 +6,7 @@ import type {
   PendingApproval,
   ProcessStatus,
   TracePage,
+  WorkspaceRow,
 } from "../types/klanker";
 import { DEFAULT_SETTINGS } from "../openrouterModels.ts";
 
@@ -410,9 +411,77 @@ export const api = {
 
   // --- workspaces / personas ----------------------------------------------
 
-  async listWorkspaces(inst: KlankerInstance): Promise<{ id: string; label?: string }[]> {
+  async listWorkspaces(inst: KlankerInstance): Promise<WorkspaceRow[]> {
     const r = await req<{ workspaces?: any[] }>(inst, "/v1/workspaces", { headers: headers(inst) });
-    return (r.workspaces || []).map((w) => ({ id: w.id || w, label: w.label || w.name || w.id || w }));
+    return (r.workspaces || []).map((w) => ({
+      id: w.id || w,
+      label: w.label || w.name || w.id || w,
+      workdir: typeof w === "object" ? w.workdir : undefined,
+      workdir_lock: typeof w === "object" ? w.workdir_lock : undefined,
+      browser_profile: typeof w === "object" ? w.browser_profile : undefined,
+      approval_mode: typeof w === "object" ? w.approval_mode : undefined,
+    }));
+  },
+
+  /** PATCH /v1/workspaces/<id> — workspace config lives on the relay; no
+   *  secrets may ever appear in `patch`. */
+  async updateWorkspace(
+    inst: KlankerInstance,
+    id: string,
+    patch: {
+      label?: string;
+      workdir?: string | null;
+      workdir_lock?: boolean;
+      browser_profile?: string | null;
+      approval_mode?: "off" | "ask" | "strict" | null;
+    }
+  ): Promise<WorkspaceRow | null> {
+    const r = await req<{ workspace?: any }>(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: headers(inst, true),
+        body: JSON.stringify(patch),
+      }
+    );
+    const w = r.workspace;
+    if (!w || typeof w !== "object") return null;
+    return {
+      id: w.id || id,
+      label: w.label || w.name || w.id || id,
+      workdir: w.workdir,
+      workdir_lock: w.workdir_lock,
+      browser_profile: w.browser_profile,
+      approval_mode: w.approval_mode,
+    };
+  },
+
+  /** Per-workspace provider/model pick, stored on the relay. */
+  async getModelPick(inst: KlankerInstance, workspace: string): Promise<{ provider: string; model: string }> {
+    const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+    try {
+      const r = await req<{ provider?: string; model?: string }>(inst, `/v1/model${q}`, {
+        headers: headers(inst),
+      });
+      return { provider: r.provider || "", model: r.model || "" };
+    } catch {
+      return { provider: "", model: "" };
+    }
+  },
+
+  async setModelPick(
+    inst: KlankerInstance,
+    workspace: string,
+    provider: string,
+    model: string
+  ): Promise<{ provider: string; model: string }> {
+    const r = await jsonReq<{ provider?: string; model?: string }>(inst, `/v1/model`, {
+      workspace: workspace || undefined,
+      provider: provider || undefined,
+      model: model || undefined,
+    });
+    return { provider: r.provider || "", model: r.model || "" };
   },
 
   async createWorkspace(inst: KlankerInstance, id: string): Promise<string> {

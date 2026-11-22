@@ -40,6 +40,7 @@ import {
 import { reconcileChat } from "./chatSync";
 import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
+import { WorkspaceSettingsModal } from "./components/WorkspaceSettingsModal";
 import { useKeyboardViewport } from "./hooks/useKeyboardViewport";
 import { useInstances } from "./hooks/useInstances";
 import { usePersistChats } from "./hooks/usePersistChats";
@@ -78,6 +79,7 @@ export function App() {
   const [wsNote, setWsNote] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const [wsSettingsId, setWsSettingsId] = useState<string | null>(null);
 
   const { kbBox, idleH } = useKeyboardViewport();
 
@@ -210,6 +212,25 @@ export function App() {
     },
     []
   );
+
+  // Workspace-scoped model pick lives on the relay (/v1/model) — seed the
+  // chat pick from it so choices survive reloads and sync across clients.
+  useEffect(() => {
+    const inst = activeInstance;
+    if (!inst || !selKey) return;
+    let stop = false;
+    void api
+      .getModelPick(inst, selWs)
+      .then((pick) => {
+        if (stop || (!pick.provider && !pick.model)) return;
+        setChatPicks((prev) => (prev[selKey] ? prev : { ...prev, [selKey]: pick }));
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selKey]);
 
   const { remoteActive } = useChatSync({
     activeInstance,
@@ -696,6 +717,7 @@ export function App() {
           onDeleteChat={deleteChat}
           onNewHost={() => { setIsNewModalOpen(true); setNavOpen(false); }}
           onInstanceSettings={(i) => { setInstanceSheetInst(i); setNavOpen(false); }}
+          onWorkspaceSettings={(ws) => { setWsSettingsId(ws); setNavOpen(false); }}
           onDeleteWorkspace={async (ws) => {
             const inst0 = activeInstance;
             if (!inst0 || !(await dialogs.confirm(`Archive workspace "${ws}"? (restorable from trash)`, { danger: true }))) return;
@@ -819,14 +841,20 @@ export function App() {
                 sendHold={sendHold}
                 providers={chatProviders}
                 pick={chatPicks[selKey]}
-                onPick={(p) =>
+                onPick={(p) => {
                   setChatPicks((prev) => {
                     const next = { ...prev };
                     if (p.provider || p.model) next[selKey] = p;
                     else delete next[selKey];
                     return next;
-                  })
-                }
+                  });
+                  // Persist the workspace-scoped pick on the relay.
+                  if (activeInstance) {
+                    void api
+                      .setModelPick(activeInstance, selWs, p.provider || "", p.model || "")
+                      .catch(() => {});
+                  }
+                }}
                 modelRecent={(() => {
                   const kind = choiceOf(activeInstance) === "inherit" ? windowKind(settings) : choiceOf(activeInstance);
                   return kind === "openrouter" || kind === "lmstudio"
@@ -893,6 +921,16 @@ export function App() {
           instance={activeInstance}
           workspace={selWs}
           onClose={() => setManageOpen(false)}
+        />
+      )}
+      {wsSettingsId && activeInstance && (
+        <WorkspaceSettingsModal
+          instance={activeInstance}
+          workspace={tree.workspaces.find((w) => w.id === wsSettingsId) ?? { id: wsSettingsId }}
+          onSaved={(row) => {
+            tree.setWorkspaces((tree.workspaces || []).map((w) => (w.id === row.id ? { ...w, ...row } : w)));
+          }}
+          onClose={() => setWsSettingsId(null)}
         />
       )}
       <DialogHost />

@@ -34,3 +34,36 @@ test("desktopLocalInstance follows the live port", () => {
 test("default provider is inherit, not echo", () => {
   assert.equal(DEFAULT_SETTINGS.provider, "inherit");
 });
+const remoteInst = {
+  id: "r1",
+  kind: "remote",
+  workspace: "C:\\some\\workdir", // a path, never a ws id — must not leak
+  endpoint: { base_url: "http://h:1" },
+} as any;
+
+function captureFetch(): { urls: string[] } {
+  const urls: string[] = [];
+  (globalThis as any).fetch = async (u: string) => {
+    urls.push(u);
+    return { ok: true, text: async () => '{"approvals":[],"lines":[]}' };
+  };
+  return { urls };
+}
+
+
+test("updateWorkspace PATCHes the workspace route", async () => {
+  const { urls } = captureFetch();
+  await api.updateWorkspace(remoteInst, "ws2", { label: "L", workdir_lock: true });
+  assert.equal(urls[0], "http://h:1/v1/workspaces/ws2");
+});
+
+test("setModelPick POSTs workspace-scoped pick", async () => {
+  const bodies: string[] = [];
+  (globalThis as any).fetch = async (u: string, init: any) => {
+    bodies.push(String(init?.body || ""));
+    return { ok: true, text: async () => '{"provider":"openai.default","model":"m"}' };
+  };
+  const r = await api.setModelPick(remoteInst, "ws2", "openai.default", "m");
+  assert.equal(r.provider, "openai.default");
+  assert.ok(bodies[0].includes('"workspace":"ws2"'));
+});

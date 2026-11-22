@@ -103,3 +103,12 @@ export interface PendingApproval {
   tool: string;
   summary: string;
 }
+
+export interface WorkspaceRow {
+  id: string;
+  label?: string;
+  workdir?: string;
+  workdir_lock?: boolean;
+  browser_profile?: string;
+  approval_mode?: "off" | "ask" | "strict" | string;
+}

@@ -39,6 +39,7 @@ interface KlankerListProps {
   onNewWorkspace: () => void;
   onInstanceSettings: (instance: KlankerInstance) => void;
   onDeleteWorkspace: (ws: string) => void;
+  onWorkspaceSettings: (ws: string) => void;
   onNewPersona: (ws: string) => void;
   onDeletePersona: (ws: string, persona: string) => void;
 }
@@ -78,6 +79,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
   onNewWorkspace,
   onInstanceSettings,
   onDeleteWorkspace,
+  onWorkspaceSettings,
   onNewPersona,
   onDeletePersona,
 }) => {
@@ -224,6 +226,15 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                             >
                               {chevron(wsOpen)}
                               <span className="truncate">{w.label || w.id}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onWorkspaceSettings(w.id)}
+                              title="Workspace settings"
+                              aria-label="Workspace settings"
+                              className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-[#525252] opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity"
+                            >
+                              <Settings2 className="w-3 h-3" />
                             </button>
                             <button
                               type="button"
