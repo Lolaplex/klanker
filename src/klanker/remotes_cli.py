@@ -12,6 +12,8 @@ import getpass
 import json
 import re
 import sys
+import urllib.error
+import urllib.request
 from typing import Any
 
 _SAFE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -123,5 +125,138 @@ def cmd_remote(args: Any) -> int:
         print(f"removed remote {rid}")
         return 0
 
-    print("usage: klanker remote list|add|rm", file=sys.stderr)
+    if op == "pair":
+        return _cmd_remote_pair(args)
+
+    print("usage: klanker remote list|add|pair|rm", file=sys.stderr)
     return 2
+
+
+def _cmd_remote_pair(args: Any) -> int:
+    from agents_relay.remotes import upsert_remote, validate_remote_base_url
+
+    name = str(getattr(args, "name", "") or "").strip()
+    rid = str(getattr(args, "id", "") or "").strip() or _slug(name)
+    if not rid or not _SAFE_ID.match(rid):
+        print(f"Error: invalid remote id: {rid!r}", file=sys.stderr)
+        return 2
+    try:
+        base_url = validate_remote_base_url(getattr(args, "url", "") or "")
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    code = str(getattr(args, "code", "") or "").strip()
+    if not code:
+        if sys.stdin.isatty():
+            code = getpass.getpass("pairing code (XXXX-XXXX): ").strip()
+        else:
+            print("Error: pairing code is required in non-TTY mode", file=sys.stderr)
+            return 2
+    if not code:
+        print("Error: pairing code is required", file=sys.stderr)
+        return 2
+
+    req_body = json.dumps({"code": code, "mode": "remote"}).encode("utf-8")
+    req = urllib.request.Request(
+        f"{base_url.rstrip('/')}/v1/pair/redeem",
+        data=req_body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:200]
+        print(f"Error: pairing rejected ({exc.code}): {detail}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Error: pairing failed: {exc}", file=sys.stderr)
+        return 1
+
+    if not isinstance(data, dict) or not data.get("ok") or data.get("mode") != "remote":
+        print("Error: server did not authorize remote pairing", file=sys.stderr)
+        return 1
+    token = str(data.get("token") or "").strip()
+    if not token:
+        print("Error: pairing response missing token", file=sys.stderr)
+        return 1
+
+    row, err = upsert_remote(
+        _relay_config(),
+        {"id": rid, "base_url": base_url, "label": name, "secret": token},
+    )
+    if row is None:
+        print(f"Error: {err}", file=sys.stderr)
+        return 2
+    host_id = str(data.get("host_id") or "").strip() or "-"
+    print(f"paired remote {row['id']} -> {row['base_url']} (host_id={host_id}, token stored in host vault)")
+    return 0
+
+
+def cmd_pair(args: Any) -> int:
+    """Mint a single-use pairing code / QR URL against the running local serve."""
+    from agents_workspace import resolve_relay_token
+
+    from .daemon import discover_live_serve
+    from .qr import render_qr_unicode
+
+    live_url = discover_live_serve()
+    if not live_url:
+        print("Error: no live local klanker serve found (start with 'klanker serve')", file=sys.stderr)
+        return 1
+    try:
+        token = resolve_relay_token()
+    except Exception:
+        token = ""
+    if not token:
+        print("Error: relay bearer token unavailable in host vault", file=sys.stderr)
+        return 1
+
+    mode = "remote" if getattr(args, "remote", False) else "web"
+    try:
+        ttl = int(getattr(args, "ttl", 60) or 60)
+    except (TypeError, ValueError):
+        ttl = 60
+
+    req = urllib.request.Request(
+        f"{live_url.rstrip('/')}/v1/pair/create",
+        data=json.dumps({"mode": mode, "ttl_sec": ttl}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:200]
+        print(f"Error: failed to create pairing ({exc.code}): {detail}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"Error: failed to create pairing: {exc}", file=sys.stderr)
+        return 1
+
+    if not sys.stdout.isatty():
+        print("pairing created: [REDACTED] (run on an interactive TTY to view code/QR)")
+        print("warning: pairing credentials redacted because stdout is not a TTY", file=sys.stderr)
+        return 0
+
+    code = str(data.get("code") or "").strip()
+    pair_url = str(data.get("pair_url") or "").strip()
+    if pair_url.startswith("/"):
+        pair_url = f"{live_url.rstrip('/')}{pair_url}"
+    expires_in = int(data.get("expires_in") or ttl)
+
+    print(f"pairing mode={mode} expires_in={expires_in}s")
+    if code:
+        print(f"code: {code}")
+    if mode == "web" and pair_url:
+        print(f"url:  {pair_url}")
+        print(render_qr_unicode(pair_url))
+    elif code:
+        print(render_qr_unicode(code))
+    return 0

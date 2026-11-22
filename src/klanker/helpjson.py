@@ -47,6 +47,10 @@ READ_VERBS = frozenset(
         "tail",
         "playbook",
         "snapshot",
+        "view",
+        "pane",
+        "domains",
+        "query",
     }
 )
 
@@ -74,6 +78,8 @@ PACKAGES: tuple[dict[str, Any], ...] = (
     {"alias": "browser", "module": "agents_browser", "read_only": False},
     {"alias": "keys", "module": "agents_keys", "read_only": True},
     {"alias": "vand", "module": "vand", "read_only": False},
+    {"alias": "store", "module": "agents_store", "read_only": False},
+    {"alias": "voice", "module": "agents_voice", "read_only": False},
 )
 
 _POS = re.compile(r"[A-Z][A-Z0-9_]*")

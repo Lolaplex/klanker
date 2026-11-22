@@ -23,6 +23,9 @@ def _args(**kw):
         token="",
         token_stdin=False,
         prompt=False,
+        code="",
+        remote=False,
+        ttl=60,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -146,6 +149,113 @@ class RemoteCliTests(unittest.TestCase):
                 ensure.assert_not_called()
                 self.assertEqual(gw.remote_id, "box2")
                 self.assertEqual(gw.base_url, "https://box2.example")
+
+    def test_pair_cli_redacts_non_tty_and_prints_qr_on_tty(self):
+        import importlib
+        from agents_workspace import write_secret
+
+        daemon = importlib.import_module("klanker.daemon")
+
+        class _FakeOut(io.StringIO):
+            def __init__(self, tty: bool):
+                super().__init__()
+                self._tty = tty
+
+            def isatty(self):
+                return self._tty
+
+        class _FakeResp:
+            def __init__(self, payload: dict):
+                self._raw = json.dumps(payload).encode("utf-8")
+
+            def read(self):
+                return self._raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            host_dir = str(Path(td) / "host")
+            with patch.dict(os.environ, {"AGENTS_HOST_DIR": host_dir}, clear=False):
+                write_secret("RELAY_WEB_TOKEN", "vault-tok-1", scope="host")
+                payload = {
+                    "ok": True,
+                    "mode": "web",
+                    "code": "ABCD-EFGH",
+                    "pair_url": "/#pair=secret-pair-tok",
+                    "expires_in": 60,
+                }
+                non_tty = _FakeOut(False)
+                err_buf = io.StringIO()
+                with patch.object(daemon, "discover_live_serve", return_value="http://127.0.0.1:8787"), patch(
+                    "urllib.request.urlopen", return_value=_FakeResp(payload)
+                ), redirect_stdout(non_tty), patch("sys.stderr", err_buf):
+                    rc_non = remotes_cli.cmd_pair(_args())
+                self.assertEqual(rc_non, 0, f"stderr={err_buf.getvalue()!r} stdout={non_tty.getvalue()!r}")
+                self.assertNotIn("ABCD-EFGH", non_tty.getvalue())
+                self.assertNotIn("secret-pair-tok", non_tty.getvalue())
+                self.assertIn("REDACTED", non_tty.getvalue())
+
+                tty_out = _FakeOut(True)
+                with patch.object(daemon, "discover_live_serve", return_value="http://127.0.0.1:8787"), patch(
+                    "urllib.request.urlopen", return_value=_FakeResp(payload)
+                ), redirect_stdout(tty_out):
+                    rc_tty = remotes_cli.cmd_pair(_args())
+                self.assertEqual(rc_tty, 0)
+                self.assertIn("ABCD-EFGH", tty_out.getvalue())
+                self.assertIn("http://127.0.0.1:8787/#pair=secret-pair-tok", tty_out.getvalue())
+
+    def test_remote_pair_redeems_into_host_vault_without_secret_in_remotes_json(self):
+        class _FakeResp:
+            def __init__(self, payload: dict):
+                self._raw = json.dumps(payload).encode("utf-8")
+
+            def read(self):
+                return self._raw
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+        with tempfile.TemporaryDirectory() as td:
+            host_dir = str(Path(td) / "host")
+            with patch.dict(os.environ, {"AGENTS_HOST_DIR": host_dir}, clear=False):
+                out = io.StringIO()
+                with patch(
+                    "urllib.request.urlopen",
+                    return_value=_FakeResp(
+                        {
+                            "ok": True,
+                            "mode": "remote",
+                            "host_id": "host_remote_1",
+                            "token": "paired-secret-xyz",
+                        }
+                    ),
+                ), redirect_stdout(out):
+                    rc = remotes_cli.cmd_remote(
+                        _args(
+                            remote_cmd="pair",
+                            name="Studio Box",
+                            url="https://studio.example.ts.net",
+                            code="WXYZ-2345",
+                        )
+                    )
+                self.assertEqual(rc, 0)
+                self.assertNotIn("paired-secret-xyz", out.getvalue())
+                self.assertIn("token stored in host vault", out.getvalue())
+
+                store = Path(host_dir) / "clients" / "remotes.json"
+                data = json.loads(store.read_text(encoding="utf-8"))
+                row = data["remotes"]["studio-box"]
+                self.assertNotIn("secret", row)
+                self.assertNotIn("token", row)
+                vault = json.loads((Path(host_dir) / "secrets" / "host.json").read_text(encoding="utf-8"))
+                self.assertEqual(vault["REMOTE_STUDIO-BOX_TOKEN"], "paired-secret-xyz")
 
 
 if __name__ == "__main__":

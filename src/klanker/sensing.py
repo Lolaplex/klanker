@@ -25,6 +25,8 @@ SUITE_MODULES = {
     "calendar": "agents_calendar",
     "sync": "agents_sync",
     "vand": "vand",
+    "store": "agents_store",
+    "voice": "agents_voice",
 }
 
 
@@ -82,6 +84,14 @@ class HostCapabilities:
     @property
     def has_sync(self) -> bool:
         return self.suite_modules.get("sync", False)
+
+    @property
+    def has_store(self) -> bool:
+        return self.suite_modules.get("store", False)
+
+    @property
+    def has_voice(self) -> bool:
+        return self.suite_modules.get("voice", False)
 
     def summary(self) -> dict[str, object]:
         return {

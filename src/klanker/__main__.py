@@ -374,6 +374,15 @@ def build_parser() -> argparse.ArgumentParser:
     remote_add.add_argument("--prompt", action="store_true", help="Ask for the token via getpass")
     remote_rm = remote_sub.add_parser("rm", help="Remove a remote and its vault token")
     remote_rm.add_argument("id", help="Remote id")
+    remote_pair = remote_sub.add_parser("pair", help="Pair a remote host using a single-use code")
+    remote_pair.add_argument("name", help="Display name (also default id slug)")
+    remote_pair.add_argument("url", help="Remote base URL (http/https)")
+    remote_pair.add_argument("code", nargs="?", default="", help="One-time pairing code")
+    remote_pair.add_argument("--id", default="", help="Explicit remote id slug")
+
+    pair_p = sub.add_parser("pair", help="Create a single-use 60s pairing code/QR for Web or remote CLI")
+    pair_p.add_argument("--remote", action="store_true", help="Mint a remote CLI pairing code")
+    pair_p.add_argument("--ttl", type=int, default=60, help="Validity window in seconds (15-120)")
 
     return parser
 
@@ -392,6 +401,7 @@ KNOWN_SUBCOMMANDS = {
     "update",
     "routine",
     "remote",
+    "pair",
     "evidence",
     "persona",
     "workspace",
@@ -690,6 +700,11 @@ def main(argv: list[str] | None = None) -> int:
         from .remotes_cli import cmd_remote
 
         return cmd_remote(args)
+
+    elif args.command == "pair":
+        from .remotes_cli import cmd_pair
+
+        return cmd_pair(args)
 
     elif args.command == "evidence":
         from .evidence import run_evidence
