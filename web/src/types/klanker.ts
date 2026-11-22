@@ -23,6 +23,9 @@ export interface ProviderRow {
   configurable?: boolean;
   /** ACP agent command on file-managed acp-agent manifests. */
   command?: string;
+  url?: string;
+  url_env?: string;
+  key_env?: string;
   /** Probe/config error reported by the relay (e.g. missing agent command). */
   error?: string;
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Pencil, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import type { KlankerInstance, ProviderRow } from "../types/klanker";
 import { api } from "../services/api";
 import { dialogs } from "../services/dialogs";
@@ -22,6 +22,8 @@ export function ProvidersPanel({
   const [stale, setStale] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  /** Name being edited — env acp rows get overridden by a file manifest. */
+  const [editing, setEditing] = useState("");
   const [probeBusy, setProbeBusy] = useState<string | null>(null);
   const [probeOut, setProbeOut] = useState<Record<string, string>>({});
   const [form, setForm] = useState({
@@ -85,6 +87,7 @@ export function ProvidersPanel({
         });
       }
       setAdding(false);
+      setEditing("");
       setForm({ name: "", url: "", key_env: "LLM_API_KEY", model: "", kind: "openai_compat", command: "" });
       load();
       onChanged?.();
@@ -98,6 +101,20 @@ export function ProvidersPanel({
     } finally {
       setBusy(false);
     }
+  };
+
+  const edit = (row: ProviderRow) => {
+    setEditing(row.name);
+    setAdding(true);
+    setNote(null);
+    setForm({
+      name: row.name,
+      kind: row.kind === "acp-agent" ? "acp-agent" : "openai_compat",
+      command: row.command || "",
+      url: row.url || "",
+      key_env: row.key_env || "LLM_API_KEY",
+      model: row.model || "",
+    });
   };
 
   const statusOf = (row: ProviderRow): { text: string; cls: string } => {
@@ -118,6 +135,7 @@ export function ProvidersPanel({
           type="button"
           onClick={() => {
             setAdding((v) => !v);
+            if (adding) setEditing("");
             setNote(null);
           }}
           className="inline-flex h-9 w-9 items-center justify-center text-[#737373] hover:text-white"
@@ -217,7 +235,7 @@ export function ProvidersPanel({
             disabled={busy || !form.name.trim() || (form.kind === "acp-agent" && !form.command.trim()) || (form.kind !== "acp-agent" && !form.url.trim())}
             className="w-full px-4 py-3 md:py-2.5 bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded-xl text-[11px] transition-colors"
           >
-            {busy ? "adding…" : "Add provider"}
+            {busy ? "saving…" : editing ? "Save provider" : "Add provider"}
           </button>
         </div>
       )}
@@ -233,6 +251,9 @@ export function ProvidersPanel({
         rows.map((row) => {
           const st = statusOf(row);
           const deletable = row.source === "file";
+          // env acp rows are editable: POST writes a file manifest whose
+          // command wins over AGENTS_ACP_CMD* (delete restores the env row).
+          const editable = deletable || (row.source === "env" && row.kind === "acp-agent");
           return (
             <div key={row.name} className="border border-[#262626] bg-[#101010] rounded-xl p-3">
               <div className="flex items-start justify-between gap-2">
@@ -251,6 +272,15 @@ export function ProvidersPanel({
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    title={deletable ? "edit" : editable ? "override env row with a file manifest" : "managed by host env — edit on the host"}
+                    onClick={() => edit(row)}
+                    disabled={!editable}
+                    className="inline-flex h-9 w-9 items-center justify-center text-[#737373] hover:text-white disabled:opacity-30 disabled:hover:text-[#737373]"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   <button
                     type="button"
                     title="probe"
