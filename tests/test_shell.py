@@ -54,5 +54,45 @@ class ShellDispatchTests(unittest.TestCase):
         self.assertEqual(state.cwd.resolve(), Path(target).resolve())
 
 
+class GatewayClientPrefsTests(unittest.TestCase):
+    def test_cli_flags_beat_prefs_and_never_store_secret(self):
+        import json
+        import tempfile
+        from klanker.shell.repl.loop import _gateway_client
+
+        with tempfile.TemporaryDirectory() as td:
+            prefs = Path(td) / "prefs.json"
+            prefs.write_text(
+                json.dumps(
+                    {
+                        "base_url": "http://127.0.0.1:9999",
+                        "secret": "legacy-secret",
+                        "workspace": "stale-ws",
+                        "persona": "saved-persona",
+                        "project": "saved-project",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch("klanker.shell.repl.loop._repl_prefs_path", return_value=prefs):
+                gw = _gateway_client(
+                    url="http://127.0.0.1:8888",
+                    secret="runtime-secret",
+                    user="local",
+                    project="",
+                    provider="",
+                    persona="default",
+                    session="",
+                    workspace="cli-ws",
+                )
+            self.assertEqual(gw.base_url, "http://127.0.0.1:8888")
+            self.assertEqual(gw.workspace, "cli-ws")
+            self.assertEqual(gw.persona, "saved-persona")
+            self.assertEqual(gw.project, "saved-project")
+            gw._save_prefs()
+            persisted = json.loads(prefs.read_text(encoding="utf-8"))
+            self.assertNotIn("secret", persisted)
+
+
 if __name__ == "__main__":
     unittest.main()

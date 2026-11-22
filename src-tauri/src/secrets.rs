@@ -9,10 +9,23 @@ use std::sync::{Mutex, OnceLock};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 pub const SERVICE: &str = "klanker-desktop";
-pub const OPENROUTER: &str = "openrouter";
 
 pub fn relay_account(id: &str) -> String {
     format!("relay.{id}")
+}
+
+/// Accounts accessible from the Tauri webview IPC commands (`secret_get`/`set`/`delete`).
+/// Restricts key access strictly to scoped `relay.<id|host>` accounts without path traversal.
+pub fn valid_account(account: &str) -> bool {
+    let Some(suffix) = account.strip_prefix("relay.") else {
+        return false;
+    };
+    !suffix.is_empty()
+        && suffix.len() <= 255
+        && !account.contains("..")
+        && !suffix.starts_with('.')
+        && !suffix.contains(['/', '\\'])
+        && suffix.chars().all(|c| c.is_ascii_graphic())
 }
 
 fn cache() -> &'static Mutex<HashMap<String, String>> {
@@ -270,5 +283,18 @@ mod tests {
         assert_eq!(read_host_vault_secret_at(&vault, "RELAY_WEB_TOKEN"), None);
         assert!(write_host_vault_secret_at(&vault, "RELAY_WEB_TOKEN", "tok").is_err());
         assert_eq!(fs::read_to_string(&vault).unwrap(), "{not json");
+    }
+
+    #[test]
+    fn valid_account_allows_relay_and_rejects_arbitrary_or_traversal() {
+        assert!(valid_account("relay.local"));
+        assert!(valid_account("relay.vps.tailnet.ts.net:8787"));
+        assert!(!valid_account("openrouter"));
+        assert!(!valid_account("relay."));
+        assert!(!valid_account("relay..local"));
+        assert!(!valid_account("relay.a/b"));
+        assert!(!valid_account("relay.a\\b"));
+        assert!(!valid_account("relay.has space"));
+        assert!(!valid_account(&format!("relay.{}", "a".repeat(256))));
     }
 }

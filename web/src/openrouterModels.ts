@@ -6,14 +6,10 @@ export const DEFAULT_WORKSPACE = "";
 
 export const DEFAULT_SETTINGS: DesktopSettings = {
   provider: "echo",
-  openrouter_api_key: "",
-  openrouter_key_set: false,
   model: "",
   workspace: DEFAULT_WORKSPACE,
-  lmstudio_base_url: LM_URL,
   recent_models: { openrouter: [], lmstudio: [] },
   favorites: { openrouter: [], lmstudio: [] },
-  auto_start_local_serve: true,
   autostart: false,
 };
 
@@ -81,7 +77,6 @@ export function providerLabel(kind: ProviderKind): string {
 export function withChoice(
   inst: KlankerInstance,
   choice: ProviderChoice,
-  settings: DesktopSettings,
   model: string
 ): KlankerInstance {
   if (choice === "inherit" || choice === "echo") {
@@ -100,7 +95,7 @@ export function withChoice(
     ...inst,
     provider: "lmstudio",
     model: model.trim(),
-    base_url: base && !isOpenRouterUrl(base) ? base : settings.lmstudio_base_url.trim() || LM_URL,
+    base_url: base && !isOpenRouterUrl(base) ? base : LM_URL,
   };
 }
 

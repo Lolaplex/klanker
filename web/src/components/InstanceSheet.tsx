@@ -171,7 +171,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
     const carry = choice === "lmstudio" || choice === "openrouter";
     const modelForNext =
       next === "echo" || next === "inherit" ? "" : carry ? formData.model : windowKind(settings) === next ? settings.model : "";
-    const saved = withChoice(draftRef.current, next, settings, modelForNext);
+    const saved = withChoice(draftRef.current, next, modelForNext);
     writeForm(saved);
     save(saved);
   };
@@ -179,7 +179,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   const commitModel = (id: string) => {
     if (choice !== "lmstudio" && choice !== "openrouter") return;
     const trimmed = id.trim();
-    const saved = withChoice(draftRef.current, choice, settings, trimmed);
+    const saved = withChoice(draftRef.current, choice, trimmed);
     writeForm(saved);
     if (sameChoice(instance, choice, trimmed)) return;
     save(saved);

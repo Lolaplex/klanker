@@ -52,8 +52,6 @@ function loadedSettings(loaded: DesktopSettings): DesktopSettings {
   return {
     ...DEFAULT_SETTINGS,
     ...loaded,
-    openrouter_api_key: "",
-    openrouter_key_set: Boolean(loaded.openrouter_key_set || loaded.openrouter_api_key),
     recent_models: normalizeLists(loaded.recent_models, 8),
     favorites: normalizeLists(loaded.favorites, 0),
   };
@@ -388,11 +386,9 @@ export function App() {
           ...current,
           provider,
           model: provider === "echo" ? "" : next.model.trim(),
-          lmstudio_base_url: next.lmstudio_base_url.trim() || current.lmstudio_base_url,
-          openrouter_api_key: next.openrouter_api_key.trim(),
-          openrouter_key_set: Boolean(next.openrouter_api_key.trim()) || current.openrouter_key_set,
+          workspace: next.workspace.trim(),
+          autostart: next.autostart,
         };
-        merged.autostart = next.autostart;
         return provider === "echo" ? merged : rememberModel(merged, provider, merged.model);
       });
       if (caps.spawn) {
