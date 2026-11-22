@@ -702,9 +702,29 @@ def main(argv: list[str] | None = None) -> int:
             f"http://{bind_host}:{bind_port}",
             host_id=str(host.host_id()),
         )
+
+        # Workspace sync: bind every ws store.db to the channel op/ack
+        # frames — spoke drains via hub links, hub ingests + fans out.
+        _sync_rt = None
+        try:
+            from agents_relay import channel as _ch, channel_client as _cc
+
+            from .wssync import SyncRuntime
+
+            _sync_rt = SyncRuntime()
+            _ws_map = {str(ws.id): ws.dir for ws in Workspace.list_all()}
+            _sync_rt.attach_hub(_ch.hub(), _ws_map, str(host.host_id()))
+            _cc.on_client(lambda c: _sync_rt.attach_client(
+                c, [(ws_id, d) for ws_id, d in _ws_map.items()]))
+            _sync_rt.start()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("workspace sync unavailable: %s", exc)
+
         try:
             return relay_main(sub_argv)
         finally:
+            if _sync_rt is not None:
+                _sync_rt.stop()
             _daemon.release_pid_file(state_path, os.getpid())
 
     elif args.command == "routine":
