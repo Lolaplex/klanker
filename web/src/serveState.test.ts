@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 };
 (globalThis as any).document = { hidden: false, hasFocus: () => true };
 
-const { api, localInstance, desktopLocalInstance, localRelayBaseUrl, setLocalServePort } =
+const { api, localInstance, desktopLocalInstance, localRelayBaseUrl, setLocalServePort, ensureLocalServePort } =
   await import("./services/api.ts");
 const { DEFAULT_SETTINGS } = await import("./openrouterModels.ts");
 
@@ -37,6 +37,77 @@ test("default provider is inherit, not echo", () => {
 
 test("same-origin localInstance is kind local", () => {
   assert.equal(localInstance().kind, "local");
+});
+
+// --- host_id pinning + silent repoint (foreign serve must not be adopted) ---
+
+function withStores<T>(
+  store: Record<string, string>,
+  fetchImpl: (url: string, init?: unknown) => Promise<unknown>,
+  fn: () => Promise<T>
+): Promise<T> {
+  (globalThis as any).localStorage = {
+    getItem: (k: string) => store[k] ?? null,
+    setItem: (k: string, v: string) => {
+      store[k] = v;
+    },
+    removeItem: (k: string) => {
+      delete store[k];
+    },
+  };
+  const origFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = fetchImpl;
+  return fn().finally(() => {
+    (globalThis as any).fetch = origFetch;
+  });
+}
+
+function healthResponders(map: Record<number, unknown>) {
+  return async (url: string): Promise<unknown> => {
+    const m = url.match(/127\.0\.0\.1:(\d+)/);
+    const port = m ? Number(m[1]) : 0;
+    const spec = map[port] as { host_id?: string } | undefined;
+    if (!spec) throw new Error("conn refused");
+    return { ok: true, json: async () => spec };
+  };
+}
+
+test("repoints off a foreign-host serve to the pinned host", async () => {
+  const store: Record<string, string> = {
+    "klanker.host_id": "host_real",
+    "klanker.serve_ports": "[55327]",
+  };
+  const fetchImpl = healthResponders({
+    8787: { host_id: "host_phantom" },
+    55327: { host_id: "host_real" },
+  });
+  await withStores(store, fetchImpl, async () => {
+    setLocalServePort(8787);
+    const port = await ensureLocalServePort();
+    assert.equal(port, 55327);
+    assert.equal(localRelayBaseUrl(), "http://127.0.0.1:55327");
+    setLocalServePort(8787);
+  });
+});
+
+test("returns null when no candidate serves the pinned host", async () => {
+  const store: Record<string, string> = { "klanker.host_id": "host_real" };
+  const fetchImpl = healthResponders({ 8787: { host_id: "host_phantom" } });
+  await withStores(store, fetchImpl, async () => {
+    setLocalServePort(8787);
+    assert.equal(await ensureLocalServePort(), null);
+    setLocalServePort(8787);
+  });
+});
+
+test("keeps the port when the pinned host answers", async () => {
+  const store: Record<string, string> = { "klanker.host_id": "host_real" };
+  const fetchImpl = healthResponders({ 8787: { host_id: "host_real" } });
+  await withStores(store, fetchImpl, async () => {
+    setLocalServePort(8787);
+    assert.equal(await ensureLocalServePort(), 8787);
+    setLocalServePort(8787);
+  });
 });
 
 const remoteInst = {

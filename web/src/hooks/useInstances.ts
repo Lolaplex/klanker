@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KlankerInstance, ProcessStatus } from "../types/klanker";
-import { api, caps, localInstance, rememberSecret, secretAccount, serveToProcess, setLocalServePort } from "../services/api";
+import { api, caps, ensureLocalServePort, localInstance, rememberSecret, secretAccount, serveToProcess, setLocalServePort } from "../services/api";
 import type { AuthState } from "../components/AuthGate";
 
 /**
@@ -147,10 +147,22 @@ export function useInstances(args: {
     };
   }, []);
 
-  // Health poll every 8s
+  // Health poll every 8s — first repoint the managed serve silently when
+  // the last-known port answers with a foreign host_id or nothing at all.
   useEffect(() => {
     let stop = false;
     const tick = async () => {
+      const hasLocal = instancesRef.current.some((i) => i.kind === "local");
+      if (hasLocal) {
+        const port = await ensureLocalServePort();
+        if (stop) return;
+        if (port === null) {
+          setHerd((prev) => ({
+            ...prev,
+            local: { ...(prev.local || {}), is_running: false, state: "lost" },
+          }));
+        }
+      }
       for (const inst of instancesRef.current) {
         const st = await api.getGatewayStatus(inst);
         if (stop) return;

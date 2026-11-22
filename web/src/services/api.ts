@@ -39,6 +39,122 @@ export function setLocalServePort(port: number): void {
   if (port > 0) localServePort = port;
 }
 
+const LS_HOST_ID = "klanker.host_id";
+const LS_SERVE_PORTS = "klanker.serve_ports";
+
+function storedPorts(): number[] {
+  try {
+    const raw = localStorage.getItem(LS_SERVE_PORTS);
+    const list = raw ? (JSON.parse(raw) as unknown[]) : [];
+    return list.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
+  } catch {
+    return [];
+  }
+}
+
+function rememberServePort(port: number): void {
+  if (port <= 0) return;
+  const list = [port, ...storedPorts().filter((p) => p !== port)].slice(0, 5);
+  try {
+    localStorage.setItem(LS_SERVE_PORTS, JSON.stringify(list));
+  } catch {}
+}
+
+export function pinnedHostId(): string {
+  try {
+    return (localStorage.getItem(LS_HOST_ID) || "").trim();
+  } catch {
+    return "";
+  }
+}
+
+function pinHostId(hostId: string): void {
+  try {
+    localStorage.setItem(LS_HOST_ID, hostId.trim());
+  } catch {}
+}
+
+async function fetchHealth(port: number, timeoutMs = 2500): Promise<{ host_id: string } | null> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(localRelayBaseUrl(port) + "/health", { signal: ctrl.signal });
+    clearTimeout(t);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { host_id?: string };
+    return { host_id: String(data.host_id || "") };
+  } catch {
+    return null;
+  }
+}
+
+/** Ensure localServePort points at a serve of OUR host, never a foreign one.
+ *
+ * A stale or foreign serve on the last-known port (e.g. a leaked test serve
+ * with a different host) must not be adopted — we repoint to whichever
+ * candidate port answers /health with the pinned host_id. The pin is only
+ * set once the loopback bearer actually authenticates, so a foreign serve
+ * can never seed the pin. No UI, no user step: silent self-heal. */
+export async function ensureLocalServePort(): Promise<number | null> {
+  const pinned = pinnedHostId();
+  const secret = secretCache.get("relay.local") || "";
+
+  const authOk = async (port: number): Promise<boolean> => {
+    if (!secret) return false;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 2500);
+      const res = await fetch(`${localRelayBaseUrl(port)}/v1/auth/status`, {
+        headers: { Authorization: `Bearer ${secret}` },
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const matches = async (port: number): Promise<boolean> => {
+    const h = await fetchHealth(port);
+    if (!h) return false;
+    if (pinned) return h.host_id === pinned;
+    return authOk(port);
+  };
+
+  if (await matches(localServePort)) {
+    if (!pinned) {
+      const h = await fetchHealth(localServePort);
+      if (h?.host_id) pinHostId(h.host_id);
+    }
+    rememberServePort(localServePort);
+    return localServePort;
+  }
+
+  const candidates: number[] = [];
+  if (caps.spawn) {
+    try {
+      const st = await api.serveStatus();
+      if (st.port) candidates.push(st.port);
+    } catch {}
+  }
+  candidates.push(localServePort, ...storedPorts(), 8787);
+
+  for (const port of [...new Set(candidates)]) {
+    if (port === localServePort) continue;
+    if (await matches(port)) {
+      localServePort = port;
+      if (!pinned) {
+        const h = await fetchHealth(port);
+        if (h?.host_id) pinHostId(h.host_id);
+      }
+      rememberServePort(port);
+      return port;
+    }
+  }
+  return null;
+}
+
 const base = (inst: KlankerInstance): string =>
   inst.via === "relay"
     ? `${caps.spawn ? localRelayBaseUrl() : ""}/v1/remote/${encodeURIComponent(inst.id)}`
