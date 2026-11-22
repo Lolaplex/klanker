@@ -26,6 +26,9 @@ export interface ProviderRow {
   url?: string;
   url_env?: string;
   key_env?: string;
+  /** ACP agent: auth methods advertised at initialize + probe auth flag. */
+  auth_methods?: string[];
+  auth_required?: boolean;
   /** Probe/config error reported by the relay (e.g. missing agent command). */
   error?: string;
 }
