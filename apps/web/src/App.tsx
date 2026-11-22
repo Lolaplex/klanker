@@ -479,9 +479,8 @@ export function App() {
     }
   };
 
-  const handleCreate = (draft: KlankerInstance) => {
-    void handleSaveInstance({ ...draft, provider: "" }).catch(() => undefined);
-  };
+  const handleCreate = (draft: KlankerInstance) =>
+    handleSaveInstance({ ...draft, provider: "" });
 
 
   const handleDeleteInstance = async (id: string) => {

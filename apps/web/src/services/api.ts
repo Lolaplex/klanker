@@ -529,7 +529,7 @@ export const api = {
     if (isTauri()) {
       // Canonical store is the relay; the file delete only cleans any
       // legacy `instances/<id>/instance.json` left from pre-#120 installs.
-      void localRelayRemotes("DELETE", undefined, id);
+      localRelayRemotes("DELETE", undefined, id).catch(() => undefined);
       try {
         await invoke("instance_delete", { id });
       } catch {}
@@ -551,10 +551,10 @@ export const api = {
       if (inst && inst.kind !== "local") {
         const host = hostKey(inst);
         if (host) {
-          const relay = await localRelayRemotes();
+          const relay = await localRelayRemotes().catch(() => null);
           const ids = new Set([id]);
           for (const m of relay?.remotes || []) if (hostKey(m) === host) ids.add(m.id);
-          for (const rid of ids) void localRelayRemotes("DELETE", undefined, rid);
+          for (const rid of ids) localRelayRemotes("DELETE", undefined, rid).catch(() => undefined);
         }
       }
     }
