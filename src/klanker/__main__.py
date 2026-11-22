@@ -596,14 +596,13 @@ def main(argv: list[str] | None = None) -> int:
         telegram_on = telegram_would_poll(no_telegram=bool(getattr(args, "no_telegram", False)))
         apply_approval_env(telegram=telegram_on)
 
-        # If LOOP_CMD is default and harness is present, inject Klanker's dynamic system prompt.
+        # If LOOP_CMD is default and harness is present, klanker.turn builds
+        # the system prompt per turn for the request's workspace — no frozen
+        # entry-workspace prompt is baked into the command here.
         # klanker.turn installs argv shims, then runs runner.loop.
         note_custom_loop_cmd()
         if "LOOP_CMD" not in os.environ and nucleus.caps.has_harness:
-            from .prompt import save_system_prompt
-
-            prompt_file = save_system_prompt(nucleus.caps, workspace=entry_ws)
-            os.environ["LOOP_CMD"] = f"{sys.executable} -m klanker.turn --system {prompt_file.as_posix()}"
+            os.environ["LOOP_CMD"] = f"{sys.executable} -m klanker.turn"
 
         if nucleus.caps.has_harness:
             from .routine import start_ticker
@@ -707,6 +706,7 @@ def main(argv: list[str] | None = None) -> int:
             persona=getattr(args, "persona", "default") or "default",
             session=getattr(args, "session", "") or "",
             workspace=getattr(args, "workspace", "") or "",
+            workdir=os.environ.get("AGENTS_WORKDIR", "") or "",
             no_gateway=bool(getattr(args, "no_gateway", False)),
         )
 
@@ -804,6 +804,7 @@ def main(argv: list[str] | None = None) -> int:
             user=user,
             provider=provider or "",
             workspace=getattr(args, "workspace", "") or "",
+            workdir=os.environ.get("AGENTS_WORKDIR", "") or "",
         )
         if _daemon.relay_health(url):
             print(f"\ndaemon still running at {url} — `klanker stop` to halt")

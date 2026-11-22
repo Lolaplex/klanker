@@ -107,5 +107,21 @@ def save_system_prompt(
     name = f"klanker_prompt_{ws.id}.txt" if ws.id else "klanker_prompt.txt"
     prompt_file = run_dir / name
     prompt_text = build_system_prompt(caps)
-    prompt_file.write_text(prompt_text, encoding="utf-8")
+    # Atomic: concurrent turns in one workspace never read a half-written file.
+    import os
+    import tempfile
+
+    fd, tmp = tempfile.mkstemp(
+        prefix=f".{prompt_file.name}.", dir=str(run_dir), suffix=".tmp"
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(prompt_text)
+        os.replace(tmp, prompt_file)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return prompt_file

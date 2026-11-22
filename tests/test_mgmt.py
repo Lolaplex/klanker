@@ -131,3 +131,59 @@ class MgmtRecallTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MgmtRoutineScopeTests(unittest.TestCase):
+    """klanker#119: /v1/klanker/routines is scoped (workspace, name)."""
+
+    def test_no_cross_workspace_leak(self):
+        import os
+        from agents_workspace import Host
+
+        with tempfile.TemporaryDirectory() as td:
+            host = Host(dir=Path(td) / "host")
+            ws_a = host.create("ws-a")
+            ws_b = host.create("ws-b")
+            by_id = {"ws-a": ws_a, "ws-b": ws_b, "": ws_a}
+            with patch.dict(
+                os.environ, {"AGENTS_HOST_DIR": str(host.dir)}, clear=False
+            ), patch(
+                "klanker.mgmt._resolve_ws", side_effect=lambda ref: by_id[ref]
+            ):
+                h = FakeHandler(
+                    "/v1/klanker/routines",
+                    {
+                        "name": "daily",
+                        "prompt": "do x",
+                        "cron": "*/5 * * * *",
+                        "workspace": "ws-a",
+                    },
+                )
+                mgmt._dispatch(h, "POST")
+                self.assertEqual(h.status, 200)
+                self.assertTrue((ws_a.schedules / "daily.json").is_file())
+                self.assertFalse((ws_b.schedules / "daily.json").is_file())
+
+                h = FakeHandler("/v1/klanker/routines?workspace=ws-b")
+                mgmt._dispatch(h, "GET")
+                self.assertEqual(h.written["routines"], [])
+
+                h = FakeHandler("/v1/klanker/routines?workspace=ws-a")
+                mgmt._dispatch(h, "GET")
+                self.assertEqual(len(h.written["routines"]), 1)
+
+                h = FakeHandler(
+                    "/v1/klanker/routines/daily",
+                    {"action": "remove", "workspace": "ws-b"},
+                )
+                mgmt._dispatch(h, "POST")
+                self.assertEqual(h.status, 404)
+                self.assertTrue((ws_a.schedules / "daily.json").is_file())
+
+                h = FakeHandler(
+                    "/v1/klanker/routines/daily",
+                    {"action": "remove", "workspace": "ws-a"},
+                )
+                mgmt._dispatch(h, "POST")
+                self.assertEqual(h.status, 200)
+                self.assertFalse((ws_a.schedules / "daily.json").exists())

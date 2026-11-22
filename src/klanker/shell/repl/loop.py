@@ -37,6 +37,7 @@ def _gateway_client(
     persona: str,
     session: str,
     workspace: str = "",
+    workdir: str = "",
 ) -> GatewayClient:
     from agents_relay.client import GatewayClient
 
@@ -63,14 +64,12 @@ def _gateway_client(
         persona=persona if "persona" in explicit else "",
         project=project.strip() if "project" in explicit else "",
         workspace=workspace,
+        workdir=(workdir or "").strip(),
         prefs_path=_repl_prefs_path(),
     )
     if session:
         client.session = session
-    try:
-        client.load_prefs(explicit=explicit)
-    except TypeError:
-        client.load_prefs()
+    client.load_prefs(explicit=explicit)
     if not client.persona:
         client.persona = persona
     if project or not client.project:
@@ -90,6 +89,7 @@ def run_interactive_shell(
     persona: str = "default",
     session: str = "",
     workspace: str = "",
+    workdir: str = "",
     no_gateway: bool = False,
 ) -> int:
     gateway = None
@@ -104,6 +104,7 @@ def run_interactive_shell(
                 persona=persona,
                 session=session,
                 workspace=workspace,
+                workdir=workdir,
             )
         except ImportError:
             pass
