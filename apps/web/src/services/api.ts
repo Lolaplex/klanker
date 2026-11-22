@@ -3,9 +3,11 @@ import type {
   DesktopSettings,
   DiscoveredPeer,
   KlankerInstance,
+  ModelPick,
   PairCreateResult,
   PendingApproval,
   ProcessStatus,
+  ProviderRow,
   RelayCapabilities,
   RelayEvent,
   StoreListResult,
@@ -13,8 +15,9 @@ import type {
   TracePage,
   WorkspaceRow,
 } from "../types/klanker";
-import { DEFAULT_SETTINGS } from "../openrouterModels.ts";
 import { parseSseChunk, parseStoreListResponse } from "../relayEvents.ts";
+
+const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false };
 
 const LS_INSTANCES = "klanker.instances";
 const LS_INSTANCES_MIGRATED = "klanker.instances_migrated";
@@ -276,6 +279,11 @@ async function req<T = any>(
     try {
       msg = JSON.parse(body).error || JSON.parse(body).detail || body;
     } catch {}
+    if (/^\s*</.test(msg)) {
+      // stdlib send_error renders HTML — keep its <p> detail, not the tags.
+      const m = /<p>([^<]+)<\/p>/i.exec(msg) || /<title>([^<]+)<\/title>/i.exec(msg);
+      msg = m ? m[1] : msg.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    }
     throw new Error(`${res.status}${msg ? `: ${String(msg).slice(0, 300)}` : ""}`);
   }
   try {
@@ -354,11 +362,7 @@ export const api = {
 
   async saveSettings(settings: DesktopSettings): Promise<DesktopSettings> {
     const clean: DesktopSettings = {
-      provider: settings.provider,
-      model: settings.model,
       workspace: settings.workspace,
-      recent_models: settings.recent_models,
-      favorites: settings.favorites,
       autostart: settings.autostart,
     };
     localStorage.setItem(LS_SETTINGS, JSON.stringify(clean));
@@ -380,32 +384,48 @@ export const api = {
       // The local relay /v1/remotes registry is canonical on Desktop too.
       // File-registry remote rows migrate up once (endpoint host wins —
       // relay rows are never dropped), then the list renders only relay.
+      // Migration runs only against a CONFIRMED canonical read — a null
+      // (unreachable) or refused relay must never promote keyring secrets
+      // into the vault (klanker#144).
       const relay = await localRelayRemotes();
-      const relayHosts = new Set((relay?.remotes || []).map((m) => hostKey(m)).filter(Boolean));
-      const migrated = new Set<string>();
-      for (const i of fileRows) {
-        const host = hostKey(i);
-        if (host && relayHosts.has(host)) {
-          migrated.add(host);
-          continue;
+      let after = relay;
+      const keptFileRows: typeof fileRows = [];
+      if (relay !== null) {
+        const relayHosts = new Set((relay.remotes || []).map((m) => hostKey(m)).filter(Boolean));
+        for (const i of fileRows) {
+          const host = hostKey(i);
+          if (host && relayHosts.has(host)) continue;
+          await hydrateSecret(i);
+          try {
+            const wrote = await localRelayRemotes("POST", {
+              id: i.id,
+              base_url: i.endpoint?.base_url || i.base_url || "",
+              label: i.name,
+              // Keyring secret travels over loopback once so the relay can
+              // inject it on proxy turns — it is never written to disk here.
+              secret: i.secret || i.endpoint?.secret || "",
+            });
+            if (wrote === null) {
+              keptFileRows.push(i);
+              continue;
+            }
+          } catch {
+            keptFileRows.push(i);
+            continue;
+          }
+          if (host) relayHosts.add(host);
         }
-        await hydrateSecret(i);
-        await localRelayRemotes("POST", {
-          id: i.id,
-          base_url: i.endpoint?.base_url || i.base_url || "",
-          label: i.name,
-          // Keyring secret travels over loopback once so the relay can
-          // inject it on proxy turns — it is never written to disk here.
-          secret: i.secret || i.endpoint?.secret || "",
-        });
-        if (host) relayHosts.add(host);
+        if (fileRows.length || keptFileRows.length) {
+          after = (await localRelayRemotes()) ?? relay;
+        }
       }
-      const after = migrated.size || fileRows.length ? await localRelayRemotes() : relay;
       const fileByHost = new Map(fileRows.map((i) => [hostKey(i), i] as const));
       list = [local];
       const now = new Date().toISOString();
+      const rendered = new Set<string>();
       for (const m of after?.remotes || []) {
         const host = hostKey(m);
+        if (host) rendered.add(host);
         const f = host ? fileByHost.get(host) : undefined;
         list.push({
           id: m.id,
@@ -425,6 +445,14 @@ export const api = {
           created_at: f?.created_at || now,
           updated_at: now,
         });
+      }
+      // Unmigrated file rows stay visible as direct remote entries — the
+      // relay registry being unreachable or refusing must not hide
+      // instances that can still be called directly.
+      for (const i of relay === null ? fileRows : keptFileRows) {
+        const host = hostKey(i);
+        if (host && rendered.has(host)) continue;
+        list.push({ ...i, kind: "remote", updated_at: now });
       }
     } else if (list.length === 0) {
       list = [localInstance()];
@@ -452,12 +480,17 @@ export const api = {
         next.id = uniqueSlug(inst.slug || inst.name, list.map((i) => i.id));
         next.slug = next.slug || next.id;
       }
-      await localRelayRemotes("POST", {
+      const saved = await localRelayRemotes("POST", {
         id: next.id,
         base_url: next.endpoint?.base_url || next.base_url || "",
         label: next.name,
         secret: (next.secret || next.endpoint?.secret || "").trim(),
       });
+      // Fail loud (klanker#144): an unreachable or refusing relay must not
+      // leave the instance "saved" outside the canonical registry.
+      if (saved === null) {
+        throw new Error("local relay unreachable — remote not saved");
+      }
       return {
         ...stripSecrets(next),
         via: "relay",
@@ -496,7 +529,7 @@ export const api = {
     if (isTauri()) {
       // Canonical store is the relay; the file delete only cleans any
       // legacy `instances/<id>/instance.json` left from pre-#120 installs.
-      void localRelayRemotes("DELETE", undefined, id);
+      localRelayRemotes("DELETE", undefined, id).catch(() => undefined);
       try {
         await invoke("instance_delete", { id });
       } catch {}
@@ -518,10 +551,10 @@ export const api = {
       if (inst && inst.kind !== "local") {
         const host = hostKey(inst);
         if (host) {
-          const relay = await localRelayRemotes();
+          const relay = await localRelayRemotes().catch(() => null);
           const ids = new Set([id]);
           for (const m of relay?.remotes || []) if (hostKey(m) === host) ids.add(m.id);
-          for (const rid of ids) void localRelayRemotes("DELETE", undefined, rid);
+          for (const rid of ids) localRelayRemotes("DELETE", undefined, rid).catch(() => undefined);
         }
       }
     }
@@ -639,16 +672,25 @@ export const api = {
     };
   },
 
-  /** Per-workspace provider/model pick, stored on the relay. */
-  async getModelPick(inst: KlankerInstance, workspace: string): Promise<{ provider: string; model: string }> {
-    const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+  /** Effective pick for a chat: session override when `session` is given,
+   *  else the workspace last-used pick. `scope` names the source — older
+   *  relays omit it and behave as "workspace". Stored on the relay. */
+  async getModelPick(inst: KlankerInstance, workspace: string, session = ""): Promise<{ provider: string; model: string; scope: "session" | "workspace" }> {
+    const params = new URLSearchParams();
+    if (workspace) params.set("workspace", workspace);
+    if (session) params.set("session", session);
+    const q = params.toString() ? `?${params}` : "";
     try {
-      const r = await req<{ provider?: string; model?: string }>(inst, `/v1/model${q}`, {
+      const r = await req<{ provider?: string; model?: string; scope?: string }>(inst, `/v1/model${q}`, {
         headers: headers(inst),
       });
-      return { provider: r.provider || "", model: r.model || "" };
+      return {
+        provider: r.provider || "",
+        model: r.model || "",
+        scope: r.scope === "session" ? "session" : "workspace",
+      };
     } catch {
-      return { provider: "", model: "" };
+      return { provider: "", model: "", scope: "workspace" };
     }
   },
 
@@ -656,12 +698,15 @@ export const api = {
     inst: KlankerInstance,
     workspace: string,
     provider: string,
-    model: string
+    model: string,
+    session = ""
   ): Promise<{ provider: string; model: string }> {
     const r = await jsonReq<{ provider?: string; model?: string }>(inst, `/v1/model`, {
       workspace: workspace || undefined,
       provider: provider || undefined,
       model: model || undefined,
+      session: session || undefined,
+      clear: provider ? undefined : true,
     });
     return { provider: r.provider || "", model: r.model || "" };
   },
@@ -734,23 +779,137 @@ export const api = {
     );
   },
 
-  /** Provider manifests known to the host loop (relay#14). */
-  async listProviders(
-    inst: KlankerInstance
-  ): Promise<{ name: string; kind?: string; model?: string; when?: string; models?: string[] }[]> {
+  /** Provider manifests known to the host loop. Successful fetches are
+   *  cached per instance so an offline host still shows its last rows
+   *  (marked via `stale`). */
+  async listProviders(inst: KlankerInstance): Promise<{ rows: ProviderRow[]; stale: boolean }> {
+    const cacheKey = `klanker.providers.${inst.id}`;
     try {
       const r = await req<{ providers?: any[] }>(inst, "/v1/providers", { headers: headers(inst) });
-      return (r.providers || []).map((p) => ({
-        name: String(p.name || ""),
-        kind: p.kind,
-        model: p.model,
-        when: p.when,
-        models: Array.isArray(p.models)
-          ? p.models.filter((m: unknown) => typeof m === "string" && m)
-          : undefined,
-      })).filter((p) => p.name);
+      const rows = (r.providers || [])
+        .map((p) => ({
+          name: String(p.name || ""),
+          kind: p.kind,
+          model: p.model,
+          when: p.when,
+          models: Array.isArray(p.models)
+            ? p.models.filter((m: unknown) => typeof m === "string" && m)
+            : undefined,
+          modes: Array.isArray(p.modes) ? p.modes : undefined,
+          source: p.source,
+          configurable: p.configurable,
+          command: p.command,
+          error: p.error,
+        }))
+        .filter((p) => p.name);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(rows));
+      } catch {}
+      return { rows, stale: false };
+    } catch {
+      const cached = this.cachedProviders(inst);
+      return { rows: cached, stale: cached.length > 0 };
+    }
+  },
+
+  /** Last fetched provider rows for this instance; [] when never seen. */
+  cachedProviders(inst: KlankerInstance): ProviderRow[] {
+    try {
+      const raw = localStorage.getItem(`klanker.providers.${inst.id}`);
+      const list = raw ? (JSON.parse(raw) as ProviderRow[]) : [];
+      return Array.isArray(list) ? list.filter((p) => p && p.name) : [];
     } catch {
       return [];
+    }
+  },
+
+  /** POST /v1/providers — writes a manifest under <host>/providers
+   *  (agents-relay#36). Throws on env-managed name collisions. */
+  async addProvider(
+    inst: KlankerInstance,
+    body: {
+      name: string;
+      kind?: string;
+      url?: string;
+      url_env?: string;
+      key_env?: string;
+      model?: string;
+      models?: string[];
+      command?: string;
+    }
+  ): Promise<ProviderRow> {
+    const r = await jsonReq<{ provider?: ProviderRow }>(inst, "/v1/providers", body);
+    return r.provider || ({ name: body.name } as ProviderRow);
+  },
+
+  async deleteProvider(inst: KlankerInstance, name: string): Promise<void> {
+    await req(inst, `/v1/providers/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: headers(inst),
+    });
+  },
+
+  /** GET /v1/providers/<name>/probe — health/auth status for the settings
+   *  test button. Missing on older relays → null. */
+  async probeProvider(
+    inst: KlankerInstance,
+    name: string
+  ): Promise<{ status?: string; detail?: string; models?: string[]; modes?: string[] } | null> {
+    try {
+      return await req(inst, `/v1/providers/${encodeURIComponent(name)}/probe`, {
+        headers: headers(inst),
+      });
+    } catch {
+      return null;
+    }
+  },
+
+  /** Host-side {provider,model} stars (agents-relay#39). Older relays 404 —
+   *  localStorage keeps the stars per instance in that case. */
+  async listFavorites(inst: KlankerInstance): Promise<ModelPick[]> {
+    const cacheKey = `klanker.favorites.${inst.id}`;
+    try {
+      const r = await req<{ favorites?: ModelPick[] }>(inst, "/v1/favorites", {
+        headers: headers(inst),
+      });
+      const rows = (r.favorites || []).filter((f) => f && f.provider);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(rows));
+      } catch {}
+      return rows;
+    } catch {
+      try {
+        const raw = localStorage.getItem(cacheKey);
+        const list = raw ? (JSON.parse(raw) as ModelPick[]) : [];
+        return Array.isArray(list) ? list.filter((f) => f && f.provider) : [];
+      } catch {
+        return [];
+      }
+    }
+  },
+
+  async starFavorite(inst: KlankerInstance, provider: string, model: string, star: boolean): Promise<ModelPick[]> {
+    const cacheKey = `klanker.favorites.${inst.id}`;
+    try {
+      const r = await jsonReq<{ favorites?: ModelPick[] }>(inst, "/v1/favorites", {
+        provider,
+        model,
+        star,
+      });
+      const rows = (r.favorites || []).filter((f) => f && f.provider);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(rows));
+      } catch {}
+      return rows;
+    } catch {
+      const rows = await this.listFavorites(inst);
+      const next = star
+        ? [{ provider, model }, ...rows.filter((f) => !(f.provider === provider && f.model === model))]
+        : rows.filter((f) => !(f.provider === provider && f.model === model));
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(next));
+      } catch {}
+      return next;
     }
   },
 
@@ -1509,20 +1668,33 @@ async function localRelayFetch(
 
 /** Managed local relay `/v1/remotes` — the canonical remote graph shared
  *  with PWA clients of this host. The desktop file registry mirrors into
- *  it so an instance added on either surface appears on both (#60). */
+ *  it so an instance added on either surface appears on both (#60).
+ *  Returns null only when the relay is unreachable (network). An HTTP
+ *  error — above all a 401 credential mismatch — throws loudly: silent
+ *  nulls here are how stale keyring secrets got promoted into the
+ *  canonical vault (klanker#144). */
 async function localRelayRemotes(
   method: "GET" | "POST" | "DELETE" = "GET",
   body?: Record<string, unknown>,
   id?: string
 ): Promise<{ remotes?: { id: string; base_url: string; label: string; has_secret: boolean }[] } | null> {
   const res = await localRelayFetch(`/v1/remotes${id ? `/${encodeURIComponent(id)}` : ""}`, method, body);
-  if (!res?.ok) return null;
+  if (res === null) return null;
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`local relay /v1/remotes ${method} failed: ${res.status} ${detail.slice(0, 200)}`);
+  }
   return method === "GET" ? await res.json() : {};
 }
 
+/** POST /v1/remotes on the same-origin relay (PWA path). false = relay
+ *  unreachable (offline fallback is legitimate); an HTTP error throws —
+ *  a refused write must never fall back to localStorage silently
+ *  (klanker#144). */
 async function remoteSave(inst: KlankerInstance): Promise<boolean> {
+  let r: Response;
   try {
-    const r = await fetch("/v1/remotes", {
+    r = await fetch("/v1/remotes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1532,10 +1704,14 @@ async function remoteSave(inst: KlankerInstance): Promise<boolean> {
         secret: inst.secret || inst.endpoint?.secret || "",
       }),
     });
-    return r.ok;
   } catch {
     return false;
   }
+  if (!r.ok) {
+    const detail = await r.text().catch(() => "");
+    throw new Error(`remote save refused: ${r.status} ${detail.slice(0, 200)}`);
+  }
+  return true;
 }
 
 /** Persist an instance; returns the stored form (secrets stripped). */

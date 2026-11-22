@@ -5,8 +5,8 @@ __pycache__
 .pytest_cache
 .env
 *.env
-web/node_modules
-web/dist
+apps/web/node_modules
+apps/web/dist
 src/klanker/_web
 dist
 build

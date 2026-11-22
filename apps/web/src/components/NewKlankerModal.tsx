@@ -7,7 +7,7 @@ import { parseBareCode, parsePairInput } from "../pairLink";
 interface NewKlankerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (instance: KlankerInstance) => void;
+  onSave: (instance: KlankerInstance) => void | Promise<void>;
 }
 
 function blankInstance(name: string): KlankerInstance {
@@ -121,7 +121,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
       } catch {}
       const inst = blankInstance(instName || "remote");
       inst.endpoint = { base_url: target.origin, secret: res.token };
-      onSave(inst);
+      await onSave(inst);
       close();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -130,17 +130,25 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     }
   };
 
-  const handleManual = (e: React.FormEvent) => {
+  const handleManual = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = name.trim();
-    if (!trimmed) return;
+    if (!trimmed || busy) return;
     const inst = blankInstance(trimmed);
     inst.endpoint = {
       base_url: url.trim().replace(/\/+$/, ""),
       secret: secret.trim() || undefined,
     };
-    onSave(inst);
-    close();
+    setBusy(true);
+    setError(null);
+    try {
+      await onSave(inst);
+      close();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

@@ -74,7 +74,7 @@ Dev lock-step, Docker images, NAS self-deploy: [INSTALL.md](INSTALL.md).
 </p>
 
 All captures are the real `klanker serve` dashboard — no mockups. The
-Tauri desktop app (`src-tauri/`) is a thin shell over the same `web/` UI.
+Tauri desktop app (`apps/desktop/`) is a thin shell over the same `apps/web/` UI.
 
 ## Architecture
 
@@ -85,7 +85,7 @@ Tauri desktop app (`src-tauri/`) is a thin shell over the same `web/` UI.
                     │ REPL  │ serve    │ chat     │ cron
                     ▼       ▼          ▼          ▼
         ┌─────────────┐  ┌──────────────────────────────┐
-        │ src-tauri   │  │ agents-relay — I/O           │
+        │ apps/       │  │ agents-relay — I/O           │
         │ desktop app │  │ /v1/* HTTP, Telegram, PWA    │
         └─────────────┘  └───────┬──────────────────┬───┘
                                 ▼                  ▼
@@ -116,7 +116,7 @@ and the overlay.
 | Observability | Append-only JSONL event log, turn reconstruction | `agents-traces` |
 | I/O gateway | `/v1/turn`, `/v1/inject`, `/v1/chat/stream`, Telegram long-poll | `agents-relay` |
 | Tools & feelers | Jailed execution, CalDAV, CDP browser, DID keys | `agents-terminal`, `agents-calendar`, `agents-browser`, `agents-keys` |
-| Surfaces | PWA chat console; Tauri thin-shell desktop app | `web/`, `src-tauri/` |
+| Surfaces | PWA chat console; Tauri thin-shell desktop app | `apps/web/`, `apps/desktop/` |
 
 ## Feature matrix
 
@@ -128,12 +128,12 @@ and the overlay.
 | HTTP + Telegram + PWA gateway | `klanker serve` | landed |
 | Scheduled care flows, reminders, routines | `klanker cron`, `remind`, `routine` | landed |
 | Multi-workspace, per-persona sessions | `--workspace`, `/v1/workspaces` | landed |
-| PWA: streaming chat, workspace tree, export MD/JSON | `web/` on `klanker serve` | landed |
-| Management UI: skills, routines, memory | `web/` Manage panel | landed |
+| PWA: streaming chat, workspace tree, export MD/JSON | `apps/web/` on `klanker serve` | landed |
+| Management UI: skills, routines, memory | `apps/web/` Manage panel | landed |
 | Approval gate (`ask`/`strict`) | harness + relay channel | landed |
 | Auto-recall memory + repo per turn | `recall.enabled` / `AGENTS_RECALL`, Settings toggle (`/v1/klanker/recall`) | landed |
 | Self-equipping feelers | on demand via `mcp.terminal` | landed |
-| Windows desktop app + tray | `src-tauri/` thin shell over `web/` | in progress |
+| Windows desktop app + tray | `apps/desktop/` thin shell over `apps/web/` | in progress |
 | Cross-device live turn streaming | `GET /v1/runs/stream` fan-out | landed |
 | Web push (VAPID) | `/v1/push/vapid-key`, `/v1/push/subscribe` | endpoints + client landed; send path pending |
 
@@ -203,7 +203,7 @@ External schedulers: remove external `runner.schedule tick` cron jobs —
 
 ## PWA, approvals, MCP
 
-- **PWA:** `klanker serve` serves `web/` at `/` behind the minted
+- **PWA:** `klanker serve` serves `apps/web/` at `/` behind the minted
   `?token=` URL. `RELAY_WEB_USER` (default `web`) namespaces web
   sessions; set `RELAY_SECRET` if header-authed CLI clients remain.
 - **Approvals:** unset `AGENTS_APPROVAL_MODE` runs mutating tools

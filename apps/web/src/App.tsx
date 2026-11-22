@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
-import { ChatConsole, type ChatPick, type ChatProviderRow } from "./components/ChatConsole";
+import { ChatConsole, type ChatPick } from "./components/ChatConsole";
 import { InstanceSheet } from "./components/InstanceSheet";
 import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
@@ -10,22 +10,14 @@ import {
   DesktopSettings,
   KlankerInstance,
   ChatMessage,
+  ModelPick,
+  ProviderRow,
 } from "./types/klanker";
 import { api, caps, notify } from "./services/api";
 import { dialogs } from "./services/dialogs";
 import { DialogHost } from "./components/DialogHost";
 import { createDeltaQueue } from "./chatPersist";
 import type { SessionRow } from "./components/KlankerList";
-import {
-  choiceOf,
-  DEFAULT_SETTINGS,
-  fetchOpenRouterModels,
-  ModelProvider,
-  normalizeLists,
-  rememberModel,
-  toggleFavorite,
-  windowKind,
-} from "./openrouterModels";
 import {
   ChatBucket,
   TurnBusy,
@@ -52,13 +44,10 @@ import { useChatSync } from "./hooks/useChatSync";
 import { useApprovals } from "./hooks/useApprovals";
 import { useRelayCompat } from "./hooks/useRelayCompat";
 
+const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false };
+
 function loadedSettings(loaded: DesktopSettings): DesktopSettings {
-  return {
-    ...DEFAULT_SETTINGS,
-    ...loaded,
-    recent_models: normalizeLists(loaded.recent_models, 8),
-    favorites: normalizeLists(loaded.favorites, 0),
-  };
+  return { ...DEFAULT_SETTINGS, ...loaded };
 }
 
 export function App() {
@@ -71,13 +60,12 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [instanceSheetInst, setInstanceSheetInst] = useState<KlankerInstance | null>(null);
-  const [rankedIds, setRankedIds] = useState<string[]>([]);
-  const [modelNote, setModelNote] = useState<string | null>(null);
-  const [loadingModels, setLoadingModels] = useState(false);
   const [selWs, setSelWs] = useState("");
   // Per-chat provider+model override, keyed by "<inst> <ws> <persona>"; absent = instance default.
   const [chatPicks, setChatPicks] = useState<Record<string, ChatPick>>({});
-  const [chatProviders, setChatProviders] = useState<ChatProviderRow[]>([]);
+  const [chatProviders, setChatProviders] = useState<ProviderRow[]>([]);
+  const [providersStale, setProvidersStale] = useState(false);
+  const [chatFavorites, setChatFavorites] = useState<ModelPick[]>([]);
   const [selPersona, setSelPersona] = useState("");
   const [wsNote, setWsNote] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -99,7 +87,6 @@ export function App() {
   turnBusyRef.current = turnBusy;
   const settingsRef = useRef(settings);
   const settingsWrite = useRef(Promise.resolve());
-  const modelsFetched = useRef(false);
   const saveGen = useRef(0);
   // Buffered SSE deltas: one setChats per frame instead of one per token.
   const deltaFlush = useRef<() => void>(() => undefined);
@@ -270,24 +257,29 @@ export function App() {
     []
   );
 
-  // Workspace-scoped model pick lives on the relay (/v1/model) — seed the
-  // chat pick from it so choices survive reloads and sync across clients.
+  // Model pick lives on the relay (/v1/model): a session-scoped pick
+  // always wins; the workspace last-used pick only seeds chats that don't
+  // have their own selection yet.
   useEffect(() => {
     const inst = activeInstance;
     if (!inst || !selKey) return;
     let stop = false;
     void api
-      .getModelPick(inst, selWs)
+      .getModelPick(inst, selWs, openChat?.session || "")
       .then((pick) => {
         if (stop || (!pick.provider && !pick.model)) return;
-        setChatPicks((prev) => (prev[selKey] ? prev : { ...prev, [selKey]: pick }));
+        setChatPicks((prev) =>
+          pick.scope === "session" || !prev[selKey]
+            ? { ...prev, [selKey]: { provider: pick.provider, model: pick.model } }
+            : prev
+        );
       })
       .catch(() => {});
     return () => {
       stop = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selKey]);
+  }, [selKey, openChat?.session]);
 
   const { remoteActive } = useChatSync({
     activeInstance,
@@ -437,61 +429,43 @@ export function App() {
           )
         );
       }
-      const provider = saved.provider.trim().toLowerCase() as ModelProvider;
-      const model = provider === "lmstudio" || provider === "openrouter" ? saved.model.trim() : "";
-      if (model) {
-        await updateSettings((current) => rememberModel(current, provider, model));
-      }
     } catch (e) {
       console.error("Failed to save instance:", e);
       throw e;
     }
   };
 
-  const ensureModels = useCallback(() => {
-    if (modelsFetched.current) return;
-    modelsFetched.current = true;
-    setLoadingModels(true);
-    void fetchOpenRouterModels()
-      .then((result) => {
-        setRankedIds(result.field ? result.ids : []);
-        setModelNote(result.error);
-      })
-      .finally(() => setLoadingModels(false));
-  }, []);
-
   const openSettings = () => {
     setSettingsOpen(true);
-    ensureModels();
   };
 
-  // Real provider rows (incl. acp.* agents + their model lists) for the chat picker.
+  // Provider rows (incl. acp.* agents + models) + host-side favorites for
+  // the unified picker. Stale rows keep an offline host pickable.
+  const refreshProviders = useCallback(() => {
+    const inst = activeInstance;
+    if (!inst) return;
+    void api.listProviders(inst).then((r) => {
+      setChatProviders(r.rows);
+      setProvidersStale(r.stale);
+    });
+    void api.listFavorites(inst).then(setChatFavorites);
+  }, [activeInstance?.id]);
+
   useEffect(() => {
     setChatProviders([]);
-    if (!activeInstance) return;
-    let live = true;
-    void api.listProviders(activeInstance).then((rows) => {
-      if (live) setChatProviders(rows);
-    });
-    return () => {
-      live = false;
-    };
+    setChatFavorites([]);
+    setProvidersStale(false);
+    refreshProviders();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInstance?.id]);
 
   const handleSaveSettings = async (next: DesktopSettings) => {
-    const provider: ModelProvider | "echo" =
-      next.provider === "lmstudio" || next.provider === "openrouter" ? next.provider : "echo";
     try {
-      await updateSettings((current) => {
-        const merged: DesktopSettings = {
-          ...current,
-          provider,
-          model: provider === "echo" ? "" : next.model.trim(),
-          workspace: next.workspace.trim(),
-          autostart: next.autostart,
-        };
-        return provider === "echo" ? merged : rememberModel(merged, provider, merged.model);
-      });
+      await updateSettings((current) => ({
+        ...current,
+        workspace: next.workspace.trim(),
+        autostart: next.autostart,
+      }));
       if (caps.spawn) {
         try {
           await api.autostartSet(next.autostart);
@@ -505,18 +479,8 @@ export function App() {
     }
   };
 
-  const rememberTurnModel = (instance: KlankerInstance) => {
-    const choice = choiceOf(instance);
-    const kind = choice === "inherit" ? windowKind(settingsRef.current) : choice;
-    if (kind !== "lmstudio" && kind !== "openrouter") return;
-    const model = (choice === "inherit" ? instance.model.trim() || settingsRef.current.model : instance.model).trim();
-    if (!model) return;
-    void updateSettings((current) => rememberModel(current, kind, model));
-  };
-
-  const handleCreate = (draft: KlankerInstance) => {
-    void handleSaveInstance({ ...draft, provider: "inherit" }).catch(() => undefined);
-  };
+  const handleCreate = (draft: KlankerInstance) =>
+    handleSaveInstance({ ...draft, provider: "" });
 
 
   const handleDeleteInstance = async (id: string) => {
@@ -575,7 +539,6 @@ export function App() {
     }
     const chatId = chat.id;
     const session = chat.session || mintSessionId();
-    rememberTurnModel(inst0);
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -622,22 +585,12 @@ export function App() {
     deltaFlush.current = () => deltas.flush();
 
     try {
-      const choice = choiceOf(inst0);
-      // Provider = raw host manifest name; ""/"inherit" = host default (env).
-      // Do not gate on `choice` — real manifest names (acp.cursor,
-      // scripted.tool) map to "inherit" in the UI taxonomy and were silently
-      // dropped before reaching the relay.
-      const instProvider = inst0.provider.trim();
-      const baseProvider = instProvider && instProvider !== "inherit" ? instProvider : "";
+      // Provider = raw host manifest name (acp.devin, lmstudio.local, …);
+      // "" = host default. The relay resolves session pick > ws pick > env.
       const pick = chatPicks[selKey];
-      const provider = pick?.provider.trim() || baseProvider;
-      // A chat pick wins outright: pick.provider set + model "" = provider default.
-      const model = (pick && (pick.provider || pick.model)
-        ? pick.model
-        : choice === "inherit"
-          ? inst0.model.trim() || settingsRef.current.model
-          : inst0.model
-      ).trim();
+      const instProvider = inst0.provider.trim();
+      const provider = pick?.provider.trim() || (instProvider !== "inherit" ? instProvider : "");
+      const model = (pick && (pick.provider || pick.model) ? pick.model : inst0.model).trim();
       const stream = api.streamChat(inst0, {
         text,
         run: busy.run,
@@ -944,6 +897,16 @@ export function App() {
                     sendHold={sendHold}
                     providers={chatProviders}
                     pick={chatPicks[selKey]}
+                    favorites={chatFavorites}
+                    providersStale={providersStale}
+                    onStar={(p, star) => {
+                      if (activeInstance) {
+                        void api
+                          .starFavorite(activeInstance, p.provider, p.model, star)
+                          .then(setChatFavorites)
+                          .catch(() => {});
+                      }
+                    }}
                     onPick={(p) => {
                       setChatPicks((prev) => {
                         const next = { ...prev };
@@ -951,19 +914,14 @@ export function App() {
                         else delete next[selKey];
                         return next;
                       });
-                      // Persist the workspace-scoped pick on the relay.
+                      // Session pick wins server-side; the ws pick stays the
+                      // last-used seed for new chats.
                       if (activeInstance) {
                         void api
-                          .setModelPick(activeInstance, selWs, p.provider || "", p.model || "")
+                          .setModelPick(activeInstance, selWs, p.provider || "", p.model || "", openChat?.session || "")
                           .catch(() => {});
                       }
                     }}
-                    modelRecent={(() => {
-                      const kind = choiceOf(activeInstance) === "inherit" ? windowKind(settings) : choiceOf(activeInstance);
-                      return kind === "openrouter" || kind === "lmstudio"
-                        ? [...new Set([...settings.favorites[kind], ...settings.recent_models[kind]])].filter(Boolean)
-                        : [];
-                    })()}
                     pending={approvals.pending}
                     deciding={approvals.deciding}
                     decideError={approvals.decideError}
@@ -997,19 +955,12 @@ export function App() {
         <InstanceSheet
           instance={inst.instances.find((i) => i.id === instanceSheetInst.id) ?? instanceSheetInst}
           status={inst.herd[instanceSheetInst.id] ?? null}
-          settings={settings}
-          rankedIds={rankedIds}
-          modelNote={modelNote}
-          loadingModels={loadingModels}
-          onNeedModels={ensureModels}
           onSave={handleSaveInstance}
-          onStar={(provider, id) => {
-            void updateSettings((current) => toggleFavorite(current, provider, id));
-          }}
           onDelete={(id) => {
             handleDeleteInstance(id);
             setInstanceSheetInst(null);
           }}
+          onProvidersChanged={refreshProviders}
           activeWorkspace={selWs}
           onOpenSession={(ws, persona, session) => {
             setInstanceSheetInst(null);
@@ -1025,16 +976,10 @@ export function App() {
           workspace={selWs}
           persona={selPersona}
           instances={inst.instances}
-          rankedIds={rankedIds}
-          modelNote={modelNote}
-          loadingModels={loadingModels}
           onClose={() => setSettingsOpen(false)}
           onSave={handleSaveSettings}
           onAddInstance={() => setIsNewModalOpen(true)}
           onEditInstance={(i) => setInstanceSheetInst(i)}
-          onStar={(provider, id) => {
-            void updateSettings((current) => toggleFavorite(current, provider, id));
-          }}
         />
       )}
       {manageOpen && activeInstance && (

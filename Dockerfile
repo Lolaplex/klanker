@@ -3,9 +3,9 @@
 FROM node:22-alpine AS web
 RUN corepack enable
 WORKDIR /web
-COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
+COPY apps/web/package.json apps/web/pnpm-lock.yaml apps/web/pnpm-workspace.yaml ./
 RUN pnpm config set dangerouslyAllowAllBuilds true && pnpm install --frozen-lockfile
-COPY web ./
+COPY apps/web ./
 RUN pnpm build
 
 FROM python:3.12-slim

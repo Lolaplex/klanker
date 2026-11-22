@@ -12,7 +12,6 @@ import assert from "node:assert/strict";
 
 const { api, localInstance, desktopLocalInstance, localRelayBaseUrl, setLocalServePort, ensureLocalServePort } =
   await import("./services/api.ts");
-const { DEFAULT_SETTINGS } = await import("./openrouterModels.ts");
 
 test("localRelayBaseUrl reflects the live serve port", () => {
   assert.equal(localRelayBaseUrl(9090), "http://127.0.0.1:9090");
@@ -29,10 +28,6 @@ test("desktopLocalInstance follows the live port", () => {
   assert.equal(inst.kind, "local");
   assert.equal(inst.endpoint?.base_url, "http://127.0.0.1:9601");
   setLocalServePort(8787);
-});
-
-test("default provider is inherit, not echo", () => {
-  assert.equal(DEFAULT_SETTINGS.provider, "inherit");
 });
 
 test("same-origin localInstance is kind local", () => {

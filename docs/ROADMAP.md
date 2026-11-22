@@ -2,8 +2,8 @@
 
 ## Direction (fixed)
 
-- **One UI**: `web/` is the single frontend source of truth. Desktop =
-  thin Tauri 2 shell (`src-tauri/`, ~1.5k LOC) that renders the web
+- **One UI**: `apps/web/` is the single frontend source of truth. Desktop =
+  thin Tauri 2 shell (`apps/desktop/src-tauri/`, ~1.5k LOC) that renders the web
   bundle and adds OS glue only: tray, hotkey, keyring, serve
   lifecycle, provisioning, updater. NO standalone desktop logic.
 - The old full desktop app (window-model, ~4k LOC Rust,
@@ -26,7 +26,7 @@ done must name commit/file evidence.
 ## Wave map (Nov 2025)
 
 Done waves 1-2: suite cards (harness/relay/workspace/traces/terminal),
-klanker CLI commands, `web/` UI cards, thin desktop shell (#57, #58,
+klanker CLI commands, `apps/web/` UI cards, thin desktop shell (#57, #58,
 #60, #62, #63, #76, #78 — all verified on dev).
 
 Open now:
