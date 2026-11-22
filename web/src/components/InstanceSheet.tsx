@@ -29,6 +29,8 @@ interface InstanceSheetProps {
   onDelete: (id: string) => void;
   /** Job id is its goal-session id — open it as a chat. */
   onOpenSession?: (ws: string, persona: string, session: string) => void;
+  /** Active workspace selection — scopes traces reads. */
+  activeWorkspace?: string;
   onClose: () => void;
 }
 
@@ -49,6 +51,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   onStar,
   onDelete,
   onOpenSession,
+  activeWorkspace = "",
   onClose,
 }) => {
   const [formData, setFormData] = useState<KlankerInstance>(instance);
@@ -294,7 +297,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
 
         {tab === "traces" ? (
           <div className="flex-1 min-h-0 overflow-hidden">
-            <TracesPanel instance={instance} />
+            <TracesPanel instance={instance} workspace={activeWorkspace} />
           </div>
         ) : tab === "jobs" ? (
           <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-3">

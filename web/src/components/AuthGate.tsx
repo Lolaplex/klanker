@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api, localInstance } from "../services/api";
 
 export type AuthState = "checking" | "needed" | "ok";
@@ -9,6 +9,22 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
   const [loginToken, setLoginToken] = useState("");
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
+  const [cookieWarning, setCookieWarning] = useState<string | null>(null);
+
+  // The relay reports an actionable warning when the session cookie was
+  // minted under a different scheme/host (X-Forwarded-Proto mismatch).
+  useEffect(() => {
+    let stop = false;
+    void fetch("/v1/auth/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        if (!stop && s?.cookie_warning) setCookieWarning(String(s.cookie_warning));
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, []);
 
   const submitLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,6 +54,7 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
             className="bg-[#0a0a0a] border border-[#262626] px-3 py-2 outline-none focus:border-[#525252]"
           />
           {loginError && <div className="text-red-500">{loginError}</div>}
+          {cookieWarning && <div className="text-amber-500">{cookieWarning}</div>}
           <button
             type="submit"
             disabled={loginBusy}

@@ -45,6 +45,8 @@ export function useSidebarTree(args: {
     }
   });
   const titleFetches = useRef(new Set<string>());
+  const workspacesRef = useRef(workspaces);
+  workspacesRef.current = workspaces;
   const instId = activeInstance?.id;
 
   const expandWs = (ws: string) => {
@@ -79,6 +81,36 @@ export function useSidebarTree(args: {
     })();
     return () => {
       stop = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instId, status?.state]);
+
+  // Persona rows are not a permanent cache: remote edits (routines,
+  // other clients) must surface. Re-pull on tab visibility, window focus,
+  // and every 30s while visible.
+  useEffect(() => {
+    const inst = activeInstance;
+    if (!inst || status?.state !== "running") return;
+    const refresh = () => {
+      for (const ws of workspacesRef.current) {
+        void api
+          .listPersonas(inst, ws.id)
+          .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws.id]: rows })))
+          .catch(() => {});
+      }
+    };
+    const onVisible = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) refresh();
+    }, 30_000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instId, status?.state]);

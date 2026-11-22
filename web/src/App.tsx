@@ -149,7 +149,7 @@ export function App() {
 
   const herdStatus = activeInstance ? inst.herd[activeInstance.id] ?? null : null;
 
-  const approvals = useApprovals({ activeInstance, status: herdStatus });
+  const approvals = useApprovals({ activeInstance, status: herdStatus, workspaceId: selWs });
   const relayCompat = useRelayCompat({ activeInstance, managedId: inst.managedId, herd: inst.herd });
 
   const tree = useSidebarTree({
@@ -893,6 +893,7 @@ export function App() {
             handleDeleteInstance(id);
             setInstanceSheetInst(null);
           }}
+          activeWorkspace={selWs}
           onOpenSession={(ws, persona, session) => {
             setInstanceSheetInst(null);
             selectChat(ws, persona, session);

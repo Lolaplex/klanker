@@ -34,6 +34,11 @@ test("desktopLocalInstance follows the live port", () => {
 test("default provider is inherit, not echo", () => {
   assert.equal(DEFAULT_SETTINGS.provider, "inherit");
 });
+
+test("same-origin localInstance is kind local", () => {
+  assert.equal(localInstance().kind, "local");
+});
+
 const remoteInst = {
   id: "r1",
   kind: "remote",
@@ -50,20 +55,18 @@ function captureFetch(): { urls: string[] } {
   return { urls };
 }
 
-
-test("updateWorkspace PATCHes the workspace route", async () => {
+test("pendingApproval appends workspace only when explicit", async () => {
   const { urls } = captureFetch();
-  await api.updateWorkspace(remoteInst, "ws2", { label: "L", workdir_lock: true });
-  assert.equal(urls[0], "http://h:1/v1/workspaces/ws2");
+  await api.pendingApproval(remoteInst, "ws2");
+  assert.equal(urls[0], "http://h:1/v1/approvals?workspace=ws2");
+  await api.pendingApproval(remoteInst);
+  assert.equal(urls[1], "http://h:1/v1/approvals");
 });
 
-test("setModelPick POSTs workspace-scoped pick", async () => {
-  const bodies: string[] = [];
-  (globalThis as any).fetch = async (u: string, init: any) => {
-    bodies.push(String(init?.body || ""));
-    return { ok: true, text: async () => '{"provider":"openai.default","model":"m"}' };
-  };
-  const r = await api.setModelPick(remoteInst, "ws2", "openai.default", "m");
-  assert.equal(r.provider, "openai.default");
-  assert.ok(bodies[0].includes('"workspace":"ws2"'));
+test("readRecentTraces scopes by workspace id, never inst.workspace", async () => {
+  const { urls } = captureFetch();
+  await api.readRecentTraces(remoteInst, "ws2", 7);
+  assert.equal(urls[0], "http://h:1/v1/traces?limit=7&workspace=ws2");
+  await api.readRecentTraces(remoteInst, "", 7);
+  assert.equal(urls[1], "http://h:1/v1/traces?limit=7");
 });
