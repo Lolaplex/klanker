@@ -94,7 +94,7 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
   const pct = Math.max(0, Math.min(100, Math.round((secondsLeft / totalTtl) * 100)));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
       <div
         className="w-full max-w-sm bg-[#0a0a0a] border border-[#262626] rounded-lg font-mono text-xs flex flex-col"
         onClick={(e) => e.stopPropagation()}

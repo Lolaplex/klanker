@@ -144,7 +144,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="modal-card flex flex-col bg-[#0a0a0a] border border-[#262626] w-full max-w-sm rounded-lg shadow-2xl overflow-hidden font-mono text-xs">
         <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
           <span className="text-white font-semibold tracking-wider">CONNECT</span>
