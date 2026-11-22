@@ -105,5 +105,5 @@ every PR commit — local hooks are bypassable, CI is not.
 ## Roadmap
 
 `docs/ROADMAP.md` holds the current direction (thin Tauri shell over
-web/, card-verification rule, wave map). Read it before starting
+apps/web/, card-verification rule, wave map). Read it before starting
 board work — board status does not equal code truth.

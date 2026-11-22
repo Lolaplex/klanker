@@ -1,0 +1,14 @@
+{
+  "name": "klanker-desktop",
+  "private": true,
+  "author": "Lolaplex",
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.2.0"
+  }
+}

@@ -17,14 +17,14 @@ vision/
 .cursor/rules/user-rules.mdc
 CLAUDE.md
 
-web/node_modules/
-web/dist/
-web/test-results/
-web/playwright-report/
+apps/web/node_modules/
+apps/web/dist/
+apps/web/test-results/
+apps/web/playwright-report/
 src/klanker/_web/
 
 # Tauri desktop shell
-src-tauri/target/
-src-tauri/gen/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
 node_modules/
 *.tsbuildinfo

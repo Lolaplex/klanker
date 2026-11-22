@@ -1,6 +1,6 @@
 """Vendored dashboard assets.
 
-`scripts/vendor-web.py` copies `web/dist` into `src/klanker/_web` before a
+`scripts/vendor-web.py` copies `apps/web/dist` into `src/klanker/_web` before a
 wheel build, so `pip install klanker` ships the static dashboard without any
 node dependency. `klanker serve` points `AGENTS_RELAY_WEB_DIR` at it when the
 env var is unset.
