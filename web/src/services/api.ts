@@ -639,19 +639,24 @@ export const api = {
   },
 
   /** Effective pick for a chat: session override when `session` is given,
-   *  else the workspace last-used pick. Stored on the relay. */
-  async getModelPick(inst: KlankerInstance, workspace: string, session = ""): Promise<{ provider: string; model: string }> {
+   *  else the workspace last-used pick. `scope` names the source — older
+   *  relays omit it and behave as "workspace". Stored on the relay. */
+  async getModelPick(inst: KlankerInstance, workspace: string, session = ""): Promise<{ provider: string; model: string; scope: "session" | "workspace" }> {
     const params = new URLSearchParams();
     if (workspace) params.set("workspace", workspace);
     if (session) params.set("session", session);
     const q = params.toString() ? `?${params}` : "";
     try {
-      const r = await req<{ provider?: string; model?: string }>(inst, `/v1/model${q}`, {
+      const r = await req<{ provider?: string; model?: string; scope?: string }>(inst, `/v1/model${q}`, {
         headers: headers(inst),
       });
-      return { provider: r.provider || "", model: r.model || "" };
+      return {
+        provider: r.provider || "",
+        model: r.model || "",
+        scope: r.scope === "session" ? "session" : "workspace",
+      };
     } catch {
-      return { provider: "", model: "" };
+      return { provider: "", model: "", scope: "workspace" };
     }
   },
 

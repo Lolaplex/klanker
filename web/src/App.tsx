@@ -257,24 +257,29 @@ export function App() {
     []
   );
 
-  // Workspace-scoped model pick lives on the relay (/v1/model) — seed the
-  // chat pick from it so choices survive reloads and sync across clients.
+  // Model pick lives on the relay (/v1/model): a session-scoped pick
+  // always wins; the workspace last-used pick only seeds chats that don't
+  // have their own selection yet.
   useEffect(() => {
     const inst = activeInstance;
     if (!inst || !selKey) return;
     let stop = false;
     void api
-      .getModelPick(inst, selWs)
+      .getModelPick(inst, selWs, openChat?.session || "")
       .then((pick) => {
         if (stop || (!pick.provider && !pick.model)) return;
-        setChatPicks((prev) => (prev[selKey] ? prev : { ...prev, [selKey]: pick }));
+        setChatPicks((prev) =>
+          pick.scope === "session" || !prev[selKey]
+            ? { ...prev, [selKey]: { provider: pick.provider, model: pick.model } }
+            : prev
+        );
       })
       .catch(() => {});
     return () => {
       stop = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selKey]);
+  }, [selKey, openChat?.session]);
 
   const { remoteActive } = useChatSync({
     activeInstance,
