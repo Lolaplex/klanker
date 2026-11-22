@@ -197,6 +197,14 @@ def _cmd_remote_pair(args: Any) -> int:
 
 def cmd_pair(args: Any) -> int:
     """Mint a single-use pairing code / QR URL against the running local serve."""
+    if not sys.stdout.isatty():
+        print(
+            "Error: refusing to mint pairing credentials on non-TTY stdout "
+            "(re-run in an interactive terminal)",
+            file=sys.stderr,
+        )
+        return 2
+
     from agents_workspace import resolve_relay_token
 
     from .daemon import discover_live_serve
@@ -239,11 +247,6 @@ def cmd_pair(args: Any) -> int:
     except Exception as exc:
         print(f"Error: failed to create pairing: {exc}", file=sys.stderr)
         return 1
-
-    if not sys.stdout.isatty():
-        print("pairing created: [REDACTED] (run on an interactive TTY to view code/QR)")
-        print("warning: pairing credentials redacted because stdout is not a TTY", file=sys.stderr)
-        return 0
 
     code = str(data.get("code") or "").strip()
     pair_url = str(data.get("pair_url") or "").strip()

@@ -63,6 +63,7 @@ def _maybe_generate_web_token(no_auth: bool) -> str:
         except OSError as exc:
             log.warning("failed to persist RELAY_WEB_TOKEN to host vault: %s", exc)
     os.environ["RELAY_WEB_TOKEN"] = token
+    os.environ.setdefault("RELAY_SECRET", token)
     bind_host = os.environ.get("RELAY_HOST", "127.0.0.1")
     port = os.environ.get("RELAY_PORT", "8787")
     return f"http://{bind_host}:{port}/?token={token}"

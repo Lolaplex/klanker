@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Hardened desktop `serve.rs` port-scan reclaim (`can_reclaim_by_port` requires an explicit non-empty matching `host_id` on `/health`), fast-pathed `turn.resolve_actor_did` when `.ed25519` keys are absent, made `klanker pair` refuse non-TTY stdout with exit `2` before minting credentials, set `RELAY_SECRET` alongside `RELAY_WEB_TOKEN` in `_maybe_generate_web_token`, added `AGENTS_NO_AUTOSPAWN` daemon guard (enabled in `tests/conftest.py`), and absorbed the IDE-grade approval UX note into `docs/ROADMAP.md` (`#80`).
+
 ### Added
 - Shared serve contract: `discover_live_serve()` reuses a live relay via `serve.json` + `/health.host_id`, `klanker serve` resolves the deterministic entry workspace, doctor checks Host Vault provider keys (#126).
 - Per-workspace dynamic turn prompt, workspace-scoped routines + `mgmt` endpoints, `:workspace` REPL switching with workdir propagation (#119).

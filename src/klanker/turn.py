@@ -8,6 +8,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -38,6 +39,7 @@ def resolve_actor_did(ws: object, *, persona: str = "") -> str:
         return explicit
     host = getattr(ws, "host", None)
     host_dir = str(getattr(host, "dir", "") or "")
+    host_keys = getattr(host, "keys", None)
     if importlib.util.find_spec("agents_keys") is not None:
         env = {**os.environ, "AGENTS_HOST_DIR": host_dir} if host_dir else dict(os.environ)
         candidates: list[str] = []
@@ -46,6 +48,8 @@ def resolve_actor_did(ws: object, *, persona: str = "") -> str:
             candidates.append(p_clean)
         candidates.append("host")
         for slug in candidates:
+            if host_keys is not None and not (Path(host_keys) / f"{slug}.ed25519").is_file():
+                continue
             try:
                 proc = subprocess.run(
                     [sys.executable, "-m", "agents_keys", "did", slug],

@@ -99,7 +99,7 @@ class TestKlanker(unittest.TestCase):
             host_dir = Path(td) / "host"
             base_env = {
                 k: v for k, v in os.environ.items()
-                if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")
+                if k not in ("RELAY_WEB_TOKEN", "RELAY_SECRET", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")
             }
             base_env["AGENTS_HOST_DIR"] = str(host_dir)
 
@@ -108,6 +108,7 @@ class TestKlanker(unittest.TestCase):
                  patch("pathlib.Path.home", return_value=fake_home):
                 url = _maybe_generate_web_token(False)
                 minted = os.environ["RELAY_WEB_TOKEN"]
+                self.assertEqual(os.environ["RELAY_SECRET"], minted)
                 self.assertEqual(url, f"http://127.0.0.1:8787/?token={minted}")
             vault_path = secrets_host_file(Host.open(host_dir))
             self.assertTrue(vault_path.is_file())
@@ -481,6 +482,30 @@ class TestTurnStoreAndActorDid(unittest.TestCase):
             host = Host(dir=Path(td) / "host")
             ws_a = host.create("ws-a")
             ws_b = host.create("ws-b")
+            expected_host = f"host:{host.host_id()}"
+            base_env = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("AGENTS_STORE_DB", "AGENTS_ACTOR_DID", "AGENTS_WORKSPACE")
+            }
+            base_env["AGENTS_HOST_DIR"] = str(host.dir)
+
+            # Missing .ed25519 keys fast-path without spawning agents_keys.
+            calls: list[list[str]] = []
+            with patch.dict(os.environ, dict(base_env), clear=True), patch.object(
+                turn,
+                "subprocess",
+                types.SimpleNamespace(run=lambda cmd, **_kw: calls.append(list(cmd))),
+            ):
+                self.assertEqual(
+                    turn.resolve_actor_did(ws_a, persona="researcher"),
+                    expected_host,
+                )
+            self.assertEqual(calls, [])
+
+            host.keys.mkdir(parents=True, exist_ok=True)
+            (host.keys / "researcher.ed25519").write_bytes(b"r" * 64)
+            (host.keys / "host.ed25519").write_bytes(b"h" * 64)
 
             captured: list[tuple[str, str]] = []
             fake_loop = types.ModuleType("runner.loop")
@@ -501,16 +526,10 @@ class TestTurnStoreAndActorDid(unittest.TestCase):
                     cmd, 0, stdout=f"did:key:z6Mk{slug}123\n", stderr=""
                 )
 
-            base_env = {
-                k: v
-                for k, v in os.environ.items()
-                if k not in ("AGENTS_STORE_DB", "AGENTS_ACTOR_DID", "AGENTS_WORKSPACE")
-            }
-            base_env["AGENTS_HOST_DIR"] = str(host.dir)
             with patch.dict(os.environ, base_env, clear=True), patch.dict(
                 sys.modules, {"runner": fake_runner, "runner.loop": fake_loop}
-            ), patch("importlib.util.find_spec", return_value=types.SimpleNamespace()), patch(
-                "subprocess.run", side_effect=_fake_did
+            ), patch("importlib.util.find_spec", return_value=types.SimpleNamespace()), patch.object(
+                turn, "subprocess", types.SimpleNamespace(run=_fake_did)
             ):
                 # Re-clear inherited AGENTS_STORE_DB/AGENTS_ACTOR_DID between turns like relay spawn.
                 os.environ["AGENTS_WORKSPACE"] = "ws-a"

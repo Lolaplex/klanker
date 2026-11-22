@@ -190,14 +190,15 @@ class RemoteCliTests(unittest.TestCase):
                 }
                 non_tty = _FakeOut(False)
                 err_buf = io.StringIO()
-                with patch.object(daemon, "discover_live_serve", return_value="http://127.0.0.1:8787"), patch(
-                    "urllib.request.urlopen", return_value=_FakeResp(payload)
-                ), redirect_stdout(non_tty), patch("sys.stderr", err_buf):
+                with patch.object(daemon, "discover_live_serve") as mock_discover, patch(
+                    "urllib.request.urlopen"
+                ) as mock_open, redirect_stdout(non_tty), patch("sys.stderr", err_buf):
                     rc_non = remotes_cli.cmd_pair(_args())
-                self.assertEqual(rc_non, 0, f"stderr={err_buf.getvalue()!r} stdout={non_tty.getvalue()!r}")
-                self.assertNotIn("ABCD-EFGH", non_tty.getvalue())
-                self.assertNotIn("secret-pair-tok", non_tty.getvalue())
-                self.assertIn("REDACTED", non_tty.getvalue())
+                self.assertEqual(rc_non, 2, f"stderr={err_buf.getvalue()!r} stdout={non_tty.getvalue()!r}")
+                mock_discover.assert_not_called()
+                mock_open.assert_not_called()
+                self.assertEqual(non_tty.getvalue(), "")
+                self.assertIn("non-TTY", err_buf.getvalue())
 
                 tty_out = _FakeOut(True)
                 with patch.object(daemon, "discover_live_serve", return_value="http://127.0.0.1:8787"), patch(
