@@ -1,57 +1,37 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Trash2, FolderOpen, LogIn, LogOut, X } from "lucide-react";
-import { DesktopSettings, KlankerInstance, ProcessStatus } from "../types/klanker";
-import {
-  choiceOf,
-  ProviderChoice,
-  providerLabel,
-  ModelProvider,
-  sameChoice,
-  windowKind,
-  withChoice,
-} from "../openrouterModels";
-import { ModelControl } from "./ModelControl";
+import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { SecretField } from "./SecretField";
 import { TracesPanel } from "./TracesPanel";
+import { ProvidersPanel } from "./ProvidersPanel";
 import { api } from "../services/api";
 import { dialogs } from "../services/dialogs";
 
 interface InstanceSheetProps {
   instance: KlankerInstance;
   status: ProcessStatus | null;
-  settings: DesktopSettings;
-  rankedIds: string[];
-  modelNote: string | null;
-  loadingModels: boolean;
-  onNeedModels: () => void;
   onSave: (updated: KlankerInstance) => void | Promise<void>;
-  onStar: (provider: ModelProvider, id: string) => void;
   onDelete: (id: string) => void;
   /** Job id is its goal-session id — open it as a chat. */
   onOpenSession?: (ws: string, persona: string, session: string) => void;
   /** Active workspace selection — scopes traces reads. */
   activeWorkspace?: string;
+  /** Fired after provider add/delete so the chat picker refetches. */
+  onProvidersChanged?: () => void;
   onClose: () => void;
 }
 
 const inputClass =
   "w-full bg-[#121212] border border-[#262626] focus:border-[#525252] rounded-xl px-3 py-3 md:py-2.5 text-white outline-none text-base md:text-sm";
 
-const choices: ProviderChoice[] = ["echo", "lmstudio", "openrouter", "inherit"];
-
 export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   instance,
   status,
-  settings,
-  rankedIds,
-  modelNote,
-  loadingModels,
-  onNeedModels,
   onSave,
-  onStar,
   onDelete,
   onOpenSession,
   activeWorkspace = "",
+  onProvidersChanged,
   onClose,
 }) => {
   const [formData, setFormData] = useState<KlankerInstance>(instance);
@@ -60,7 +40,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   const [loginNote, setLoginNote] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
   const [authed, setAuthed] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"config" | "traces" | "jobs">("config");
+  const [tab, setTab] = useState<"config" | "traces" | "jobs" | "providers">("config");
   const [jobWs, setJobWs] = useState("");
   const [jobPersona, setJobPersona] = useState("");
   const [jobGoal, setJobGoal] = useState("");
@@ -68,14 +48,8 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   const [jobBusy, setJobBusy] = useState(false);
   const [jobNote, setJobNote] = useState<string | null>(null);
   const [newPersona, setNewPersona] = useState("");
-  const [providers, setProviders] = useState<{ name: string; kind?: string; model?: string; models?: string[] }[]>([]);
   const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
   const [personas, setPersonas] = useState<{ id: string; name?: string }[]>([]);
-  const choice = choiceOf(formData);
-  const kind = choice === "inherit" ? windowKind(settings) : choice;
-  const showModel = choice === "lmstudio" || choice === "openrouter";
-  // Real manifest pick (acp.devin, openai.default, …) — generic override.
-  const providerRow = providers.find((p) => p.name === formData.provider);
 
   useEffect(() => {
     setFormData(instance);
@@ -83,7 +57,6 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
     setLoginNote(null);
     setAuthed(null);
     void api.authStatus(instance).then((s) => setAuthed(s.authenticated)).catch(() => setAuthed(null));
-    void api.listProviders(instance).then(setProviders).catch(() => undefined);
     void api.listWorkspaces(instance).then(setWorkspaces).catch(() => undefined);
   }, [instance.id, instance.updated_at]);
 
@@ -101,10 +74,6 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
     }
     void api.listPersonas(instance, ws).then(setPersonas).catch(() => setPersonas([]));
   }, [instance.id, firstWs, tab, jobWsEff]);
-
-  useEffect(() => {
-    if (choice === "openrouter") onNeedModels();
-  }, [choice, onNeedModels]);
 
   useEffect(() => {
     if (tab !== "jobs" || !jobWsEff) return;
@@ -132,8 +101,6 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
         workspace: jobWsEff,
         persona: jobPersonaEff,
         goal,
-        provider: choice === "inherit" ? undefined : formData.provider || undefined,
-        model: formData.model || undefined,
       });
       setJobNote(`job ${job.id || ""} queued`);
       setJobGoal("");
@@ -169,25 +136,6 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
       .catch((e) => setSaveNote(`save: ${e instanceof Error ? e.message : e}`));
   };
 
-  const pickProvider = (next: ProviderChoice) => {
-    if (choice === next) return;
-    const carry = choice === "lmstudio" || choice === "openrouter";
-    const modelForNext =
-      next === "echo" || next === "inherit" ? "" : carry ? formData.model : windowKind(settings) === next ? settings.model : "";
-    const saved = withChoice(draftRef.current, next, modelForNext);
-    writeForm(saved);
-    save(saved);
-  };
-
-  const commitModel = (id: string) => {
-    if (choice !== "lmstudio" && choice !== "openrouter") return;
-    const trimmed = id.trim();
-    const saved = withChoice(draftRef.current, choice, trimmed);
-    writeForm(saved);
-    if (sameChoice(instance, choice, trimmed)) return;
-    save(saved);
-  };
-
   const doLogin = async () => {
     const token = loginToken.trim();
     if (!token) return;
@@ -218,7 +166,6 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
     }
   };
 
-  const windowModel = kind !== "echo" ? settings.model.trim() : "";
   // Managed/spawned locals: endpoint is derived, bearer secret lives in the
   // keyring — the remote-only fields (URL, cookie login) stay hidden.
   const local = instance.kind === "local";
@@ -273,7 +220,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
             {!local && !desktop && authed !== null && <span className="ml-2">{authed ? "· authed" : "· not authed"}</span>}
           </span>
           <div className="flex bg-[#141414] border border-[#262626] rounded-full p-1 gap-0.5">
-            {(["config", "traces", "jobs"] as const).map((t) => (
+            {(["config", "providers", "traces", "jobs"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -295,7 +242,9 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
           </div>
         )}
 
-        {tab === "traces" ? (
+        {tab === "providers" ? (
+          <ProvidersPanel instance={instance} onChanged={onProvidersChanged} />
+        ) : tab === "traces" ? (
           <div className="flex-1 min-h-0 overflow-hidden">
             <TracesPanel instance={instance} workspace={activeWorkspace} />
           </div>
@@ -510,114 +459,6 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                 </div>
               </div>
             )}
-
-            <div className="space-y-2">
-              <div className="text-[10px] text-[#737373] uppercase tracking-wider">Provider</div>
-              {providers.length > 0 ? (
-                <select
-                  value={formData.provider}
-                  onChange={(e) => {
-                    const next = { ...draftRef.current, provider: e.target.value };
-                    writeForm(next);
-                    save(next);
-                  }}
-                  className={inputClass}
-                >
-                  <option value="">host default (env)</option>
-                  {desktop && <option value="inherit">inherit app setting</option>}
-                  {providers.map((p) => (
-                    <option key={p.name} value={p.name}>
-                      {p.name}
-                      {p.model ? ` · ${p.model}` : ""}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <div>
-                  <div className="grid grid-cols-4 gap-1">
-                    {choices.map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        onClick={() => pickProvider(item)}
-                        className={`px-2 py-1.5 min-h-9 rounded border text-[11px] transition-colors ${
-                          choice === item
-                            ? "bg-white text-black border-white"
-                            : "bg-[#0a0a0a] text-[#a3a3a3] border-[#262626] hover:text-white"
-                        }`}
-                      >
-                        {item === "inherit" ? "Inherit" : providerLabel(item)}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-1.5 text-[10px] text-[#525252]">
-                    host provider list unavailable — showing app fallback providers
-                  </p>
-                </div>
-              )}
-              {choice === "inherit" && providers.length === 0 && (
-                <p className="text-[11px] text-[#737373] truncate">
-                  Window: {providerLabel(kind)}
-                  {windowModel ? ` · ${windowModel}` : ""}
-                </p>
-              )}
-              {providerRow && (
-                <div>
-                  <div className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
-                    Model override
-                  </div>
-                  <input
-                    type="text"
-                    value={formData.model}
-                    spellCheck={false}
-                    placeholder={providerRow.model || "provider default"}
-                    onChange={(e) => {
-                      const next = { ...draftRef.current, model: e.target.value };
-                      writeForm(next);
-                    }}
-                    onBlur={() => save()}
-                    className={inputClass}
-                  />
-                  {(providerRow.models ?? []).length > 0 && (
-                    <div className="mt-1 max-h-36 overflow-y-auto border border-[#262626] rounded">
-                      {(providerRow.models ?? []).map((id) => (
-                        <button
-                          key={id}
-                          type="button"
-                          onClick={() => {
-                            const next = { ...draftRef.current, model: id };
-                            writeForm(next);
-                            save(next);
-                          }}
-                          className={`w-full min-h-9 truncate px-2 py-1.5 text-left ${
-                            id === formData.model.trim()
-                              ? "bg-[#141414] text-white"
-                              : "text-[#a3a3a3] hover:bg-[#181818] hover:text-white"
-                          }`}
-                        >
-                          {id}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-              {showModel && (
-                <ModelControl
-                  provider={choice}
-                  label="Model override"
-                  model={formData.model}
-                  recent={settings.recent_models[choice]}
-                  favorites={settings.favorites[choice]}
-                  ranked={choice === "openrouter" ? rankedIds : []}
-                  loading={choice === "openrouter" && loadingModels}
-                  note={choice === "openrouter" ? modelNote : null}
-                  onDraft={(id) => writeForm({ ...draftRef.current, model: id })}
-                  onCommit={commitModel}
-                  onToggleStar={(id) => onStar(choice, id)}
-                />
-              )}
-            </div>
 
             <button
               type="button"

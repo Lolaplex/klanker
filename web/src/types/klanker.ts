@@ -10,17 +10,32 @@ export interface InstanceTailscale {
   fqdn?: string;
 }
 
-export interface ProviderModelLists {
-  openrouter: string[];
-  lmstudio: string[];
+/** Host provider manifest row as served by GET /v1/providers. */
+export interface ProviderRow {
+  name: string;
+  kind?: string;
+  model?: string;
+  when?: string;
+  models?: string[];
+  modes?: string[];
+  /** "file" = manifest under <host>/providers (deletable); "env" = managed by the host. */
+  source?: string;
+  configurable?: boolean;
+  /** ACP agent command on file-managed acp-agent manifests. */
+  command?: string;
+  /** Probe/config error reported by the relay (e.g. missing agent command). */
+  error?: string;
+}
+
+/** Flat {provider, model} tuple — the pick unit for chat overrides and favorites. */
+export interface ModelPick {
+  provider: string;
+  model: string;
 }
 
 export interface DesktopSettings {
-  provider: string;
-  model: string;
+  /** Fallback workdir boundary for local instances without their own. */
   workspace: string;
-  recent_models: ProviderModelLists;
-  favorites: ProviderModelLists;
   /** Launch the desktop app on OS login (tauri-plugin-autostart). */
   autostart: boolean;
 }

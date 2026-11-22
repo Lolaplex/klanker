@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Unified provider/model surfaces (klanker#114/#137/#141/#142, agents-relay#36/#39): one `ProviderModelPicker` in the chat toolbar — flat {provider,model} rows for every host provider incl. ACP agents, favorites on top (host-side `/v1/favorites` with localStorage fallback on older relays), free-id `provider:model` input, optional group-by-provider, and a stale badge when the last fetched `/v1/providers` came from the offline cache. The instance sheet gains a "providers" tab (Zed-style rows: name, kind, source, models, probe + delete) with an add form for OpenAI-compatible endpoints and ACP agents (`command` e.g. `devin acp`); env-managed rows are labeled and cannot be deleted. Chat picks persist per session on the relay (`session` on `/v1/model`), overriding the workspace last-used pick; a cleared pick falls back to the workspace last-used again.
+- Recents and the fixed {inherit,echo,lmstudio,openrouter} provider taxonomy are gone: `openrouterModels.ts`, `ModelControl`, the four-button fallback grid, the native provider `<select>`, and the desktop `provider`/`model` settings keys were removed. Provider configuration is host-only (providers tab); model selection is chat-only (picker); app settings keep workdir + autostart.
+
+### Added
 - Unified connect flow (klanker#138): the sidebar "Discover" button is now "Connect" and the add sheet takes ONE field — a pair link `https://host/#pair=<token>` (scanned/pasted) or typed `CODE@host` — redeems it against `/v1/pair/redeem` and stores the returned remote secret (no more manual url+secret as the primary path; LAN scan stays, manual fields survive behind an "old relay" disclosure). Pair modal: remote mode QR now encodes the absolute pair link (was: bare code with no relay address), shows a copyable link, and warns when the link resolves to loopback (dead for other devices). New `pairLink.ts` parser + tests.
 
 ### Fixed

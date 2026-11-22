@@ -3,8 +3,6 @@ import { FolderOpen, X } from "lucide-react";
 import { DesktopSettings, KlankerInstance } from "../types/klanker";
 import { getPushSubscription, pushSupported, subscribePush, unsubscribePush } from "../push";
 import { api } from "../services/api";
-import { ModelProvider, providerLabel, ProviderKind, toggleFavorite } from "../openrouterModels";
-import { ModelControl } from "./ModelControl";
 
 interface SettingsPanelProps {
   settings: DesktopSettings;
@@ -12,12 +10,8 @@ interface SettingsPanelProps {
   workspace?: string;
   persona?: string;
   instances?: KlankerInstance[];
-  rankedIds: string[];
-  modelNote: string | null;
-  loadingModels: boolean;
   onClose: () => void;
   onSave: (settings: DesktopSettings) => void;
-  onStar: (provider: ModelProvider, id: string) => void;
   onAddInstance?: () => void;
   onEditInstance?: (inst: KlankerInstance) => void;
 }
@@ -25,20 +19,14 @@ interface SettingsPanelProps {
 const inputClass =
   "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
 
-const choices: ProviderKind[] = ["echo", "lmstudio", "openrouter"];
-
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   settings,
   instance,
   workspace,
   persona,
   instances,
-  rankedIds,
-  modelNote,
-  loadingModels,
   onClose,
   onSave,
-  onStar,
   onAddInstance,
   onEditInstance,
 }) => {
@@ -125,24 +113,9 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       .catch(() => null);
     if (dir) setDraft((d) => ({ ...d, workspace: dir }));
   };
-  const kind: ProviderKind = draft.provider === "lmstudio" || draft.provider === "openrouter" ? draft.provider : "echo";
-
   const save = (event: React.FormEvent) => {
     event.preventDefault();
-    const provider = kind;
-    onSave({
-      ...draft,
-      provider,
-      model: provider === "echo" ? "" : draft.model.trim(),
-      workspace: draft.workspace.trim(),
-    });
-  };
-
-  const star = (id: string) => {
-    if (kind === "echo") return;
-    const next = toggleFavorite(draft, kind, id);
-    setDraft(next);
-    onStar(kind, id);
+    onSave({ ...draft, workspace: draft.workspace.trim() });
   };
 
   return (
@@ -212,50 +185,6 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               Fallback file-access boundary for local instances that don't set their own.
             </p>
           </div>
-          )}
-
-          {desktop && (
-          <div>
-            <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Fallback provider</div>
-            <div className="grid grid-cols-3 gap-1">
-              {choices.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setDraft({ ...draft, provider: item })}
-                  className={`px-2 py-1.5 min-h-9 rounded border text-[11px] transition-colors ${
-                    kind === item
-                      ? "bg-white text-black border-white"
-                      : "bg-[#0a0a0a] text-[#a3a3a3] border-[#262626] hover:text-white"
-                  }`}
-                >
-                  {providerLabel(item)}
-                </button>
-              ))}
-            </div>
-          </div>
-          )}
-
-          {desktop && kind !== "echo" && (
-            <p className="text-[10px] text-[#525252]">
-              Provider endpoints and API keys are managed on the host secret vault (<code className="text-[#737373]">~/.agents/secrets/host.json</code>).
-            </p>
-          )}
-
-          {kind !== "echo" && (
-            <ModelControl
-              provider={kind}
-              label="Fallback model"
-              model={draft.model}
-              recent={draft.recent_models[kind]}
-              favorites={draft.favorites[kind]}
-              ranked={kind === "openrouter" ? rankedIds : []}
-              loading={kind === "openrouter" && loadingModels}
-              note={kind === "openrouter" ? modelNote : null}
-              onDraft={(id) => setDraft({ ...draft, model: id })}
-              onCommit={(id) => setDraft({ ...draft, model: id.trim() })}
-              onToggleStar={star}
-            />
           )}
 
           {desktop && (
