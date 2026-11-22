@@ -91,6 +91,12 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "   - Use `call_job` with `mcp.traces.audit` or `mcp.traces.seal` to audit execution integrity or seal session records.",
         "   - Cryptographic hashes and seal digests verify authenticity for system briefings and audit logs.",
     ]
+    if os.environ.get("KLANKER_DEPLOY_WEBHOOK"):
+        lines.extend([
+            "",
+            "7. Deploy policy:",
+            "   - A repo webhook auto-deploys pushed commits on this host (KLANKER_DEPLOY_WEBHOOK). Do NOT call the deploy API after pushing — it queues a duplicate build of the same commit. The deploy API remains for restart, rollback and force-rebuild only.",
+        ])
     lines.extend(evidence_policy_lines())
     lines.extend(coding_block(workspace_path()))
 

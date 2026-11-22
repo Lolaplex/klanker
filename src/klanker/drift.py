@@ -14,8 +14,8 @@ Deploy path resolution (first match wins):
 - self-deploy host (e.g. NAS): docker socket + a repo checkout at
   ``KLANKER_SRC`` (default ``/src``) → ``scripts/self-deploy.sh``.
 
-Exit codes: 0 = suite current, 2 = drift detected, 3 = drift but no
-deploy path on this host.
+Exit codes: 0 = suite current or deploy triggered, 2 = drift detected
+(report only), 1 = unexpected error.
 """
 
 from __future__ import annotations
@@ -125,6 +125,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"drift {pkg}: {sha[:8]} -> {remote[:8]}")
     if args.deploy:
         print(_deploy())
-    else:
-        print("no --deploy flag; report only")
+        return 0
+    print("no --deploy flag; report only")
     return 2
