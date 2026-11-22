@@ -357,6 +357,14 @@ class DaemonTests(unittest.TestCase):
         self.assertFalse(state_file.exists())
         self.assertIn(("killpg", 5242, signal.SIGTERM), calls)
 
+    def test_no_autospawn_refuses_detach_and_ensure_daemon_returns_none(self):
+        with patch.dict(os.environ, {"AGENTS_NO_AUTOSPAWN": "1"}), patch.object(
+            daemon, "discover_live_serve", return_value=None
+        ), patch.object(daemon, "relay_health", return_value=False):
+            with self.assertRaises(RuntimeError):
+                daemon._spawn_detached(["klanker", "serve"])
+            self.assertIsNone(daemon.ensure_daemon("http://127.0.0.1:8787"))
+
 
 if __name__ == "__main__":
     unittest.main()

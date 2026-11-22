@@ -24,6 +24,7 @@ export function useInstances(args: {
   setHerd: React.Dispatch<React.SetStateAction<Record<string, ProcessStatus>>>;
   instancesRef: React.MutableRefObject<KlankerInstance[]>;
   herdKey: string;
+  refreshInstances: () => Promise<void>;
 } {
   const { onSelectInstance, loadSettings, setWsNote } = args;
   const [auth, setAuth] = useState<AuthState>("checking");
@@ -164,8 +165,15 @@ export function useInstances(args: {
     };
   }, [herdKey]);
 
+  const refreshInstances = async () => {
+    try {
+      const list = await api.listKlankers();
+      setInstances(list);
+    } catch {}
+  };
+
   return {
     auth, setAuth, instances, setInstances, managedId, setManagedId,
-    herd, setHerd, instancesRef, herdKey,
+    herd, setHerd, instancesRef, herdKey, refreshInstances,
   };
 }

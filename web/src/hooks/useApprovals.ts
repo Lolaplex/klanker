@@ -16,17 +16,23 @@ export function useApprovals(args: {
   deciding: boolean;
   decideError: string | null;
   handleDecide: (allow: boolean) => Promise<void>;
+  refresh: () => void;
   reset: () => void;
 } {
   const { activeInstance, status, workspaceId = "" } = args;
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [decideError, setDecideError] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
   const pollSeq = useRef(0);
   const lastNotifiedApprovalRef = useRef<string>("");
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeInstance?.id ?? null;
   const instId = activeInstance?.id;
+
+  const refresh = () => {
+    setRefreshTick((n) => n + 1);
+  };
 
   const reset = () => {
     setPending(null);
@@ -34,7 +40,7 @@ export function useApprovals(args: {
     setDeciding(false);
   };
 
-  // Approvals poll
+  // Approvals poll + SSE nudge
   useEffect(() => {
     const inst = activeInstance;
     if (!inst || status?.state !== "running") return;
@@ -65,7 +71,7 @@ export function useApprovals(args: {
       window.clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instId, workspaceId, status?.state]);
+  }, [instId, workspaceId, status?.state, refreshTick]);
 
   const handleDecide = async (allow: boolean) => {
     const inst = activeInstance;
@@ -86,5 +92,5 @@ export function useApprovals(args: {
     }
   };
 
-  return { pending, deciding, decideError, handleDecide, reset };
+  return { pending, deciding, decideError, handleDecide, refresh, reset };
 }

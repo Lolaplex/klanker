@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, localInstance } from "../services/api";
+import { extractPairTokenFromHash } from "../relayEvents";
 
 export type AuthState = "checking" | "needed" | "ok";
 
@@ -10,6 +11,33 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
   const [cookieWarning, setCookieWarning] = useState<string | null>(null);
+
+  // Single-use `#pair=<token>` auto-redeem: scrub hash immediately from
+  // location history, exchange for HttpOnly cookie, and reload on success.
+  useEffect(() => {
+    const pairToken = extractPairTokenFromHash(window.location.hash);
+    if (!pairToken) return;
+    try {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    } catch {}
+    let stop = false;
+    setLoginBusy(true);
+    setLoginError(null);
+    void api
+      .redeemPairToken(localInstance(), pairToken)
+      .then(() => {
+        if (!stop) window.location.reload();
+      })
+      .catch((err) => {
+        if (!stop) {
+          setLoginError(`pairing failed: ${err instanceof Error ? err.message : String(err)}`);
+          setLoginBusy(false);
+        }
+      });
+    return () => {
+      stop = true;
+    };
+  }, []);
 
   // The relay reports an actionable warning when the session cookie was
   // minted under a different scheme/host (X-Forwarded-Proto mismatch).

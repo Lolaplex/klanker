@@ -39,6 +39,16 @@ Open now:
   klanker serve wiring + web toggle), #92 cross-device turn streaming
   (relay SSE attach to running session), #37 VAPID web push (push
   client exists; needs key gen + relay subscription storage).
+- **IDE-grade approval UX**: current approval cards show action +
+  params only. Target = Zed's agent review surface: inline
+  diff-preview per edit/write (old vs new hunk, syntax-highlighted),
+  per-hunk accept/reject where feasible, command preview with
+  expanded argv + cwd, risk badges on mutating verbs, batch
+  approve-always rules (tool/pattern scoped, persisted to the harness
+  allowlist instead of one-shot). Orient on Zed's `agent` thread UI —
+  steal the interaction model, not the Rust codebase. Needs richer
+  pending-approval payloads from `agents-relay` (diffs/argv/context
+  beyond the current summary) before web can render it.
 - **Gated on Felix (Phase 4)**: E-track exec backends, P3 identity/PR
   path, umbrella/spec cards (#21, #23, #24, #29, #30, #66, #67, #68,
   #88, #93, #84, #1, #2), memory cards, ops (workspace#13, board#4/#7).

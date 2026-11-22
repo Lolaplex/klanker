@@ -181,10 +181,26 @@ pub(crate) fn host_id_matches(health: &HealthProbe, expected_host_id: &str) -> b
     }
 }
 
+/// Port-scan fallback reclaim is destructive (`kill_tree`), so unlike passive
+/// health matching it requires an explicit non-empty matching `host_id`.
+pub(crate) fn can_reclaim_by_port(health: &HealthProbe, expected_host_id: Option<&str>) -> bool {
+    let Some(expected) = expected_host_id.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    health
+        .host_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .is_some_and(|actual| actual == expected)
+}
+
 fn auth_ok(port: u16, token: &str) -> bool {
     if token.trim().is_empty() {
         return false;
     }
+    // Probe `/v1/workspaces` (bearer-protected) rather than `/v1/auth/status`,
+    // which returns 200 even without a valid bearer token.
     let req = format!(
         "GET /v1/workspaces HTTP/1.0\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\n\r\n"
     );
@@ -808,7 +824,11 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
         let target_pid = read_pid_file(app)
             .filter(|(pid, fport)| *fport == port && pid_alive(*pid))
             .map(|(pid, _)| pid)
-            .or_else(|| pid_on_port(port));
+            .or_else(|| {
+                can_reclaim_by_port(&health, expected_host_id.as_deref())
+                    .then(|| pid_on_port(port))
+                    .flatten()
+            });
         if let Some(pid) = target_pid {
             if pid_is_ours(pid) {
                 kill_tree(pid);
@@ -1308,5 +1328,27 @@ Aktive Verbindungen
         assert_eq!(parse_netstat_listen_pid(sample, 9010), Some(3333));
         assert_eq!(parse_netstat_listen_pid(sample, 9011), Some(4444));
         assert_eq!(parse_netstat_listen_pid(sample, 8787), None);
+    }
+
+    #[test]
+    fn can_reclaim_by_port_requires_explicit_matching_host_id() {
+        let matched = HealthProbe {
+            host_id: Some("host_abc".into()),
+            port: Some(8787),
+        };
+        let missing_hid = HealthProbe {
+            host_id: None,
+            port: Some(8787),
+        };
+        let blank_hid = HealthProbe {
+            host_id: Some("   ".into()),
+            port: Some(8787),
+        };
+        assert!(can_reclaim_by_port(&matched, Some("host_abc")));
+        assert!(!can_reclaim_by_port(&matched, Some("host_other")));
+        assert!(!can_reclaim_by_port(&matched, None));
+        assert!(!can_reclaim_by_port(&matched, Some(" ")));
+        assert!(!can_reclaim_by_port(&missing_hid, Some("host_abc")));
+        assert!(!can_reclaim_by_port(&blank_hid, Some("host_abc")));
     }
 }

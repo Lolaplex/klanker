@@ -99,7 +99,7 @@ class TestKlanker(unittest.TestCase):
             host_dir = Path(td) / "host"
             base_env = {
                 k: v for k, v in os.environ.items()
-                if k not in ("RELAY_WEB_TOKEN", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")
+                if k not in ("RELAY_WEB_TOKEN", "RELAY_SECRET", "RELAY_NO_AUTH", "RELAY_HOST", "RELAY_PORT")
             }
             base_env["AGENTS_HOST_DIR"] = str(host_dir)
 
@@ -108,6 +108,7 @@ class TestKlanker(unittest.TestCase):
                  patch("pathlib.Path.home", return_value=fake_home):
                 url = _maybe_generate_web_token(False)
                 minted = os.environ["RELAY_WEB_TOKEN"]
+                self.assertEqual(os.environ["RELAY_SECRET"], minted)
                 self.assertEqual(url, f"http://127.0.0.1:8787/?token={minted}")
             vault_path = secrets_host_file(Host.open(host_dir))
             self.assertTrue(vault_path.is_file())
@@ -460,3 +461,108 @@ class TestTurnDynamicPrompt(unittest.TestCase):
         self.assertEqual(
             seen[0][seen[0].index("--system") + 1], str(prompt)
         )
+
+
+class TestTurnStoreAndActorDid(unittest.TestCase):
+    """klanker#125: per-workspace AGENTS_STORE_DB and AGENTS_ACTOR_DID env propagation."""
+
+    def test_two_workspaces_pass_distinct_store_db_and_actor_did(self):
+        import os
+        import subprocess
+        import sys
+        import tempfile
+        import types
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from agents_workspace import Host
+        from klanker import turn
+
+        with tempfile.TemporaryDirectory() as td:
+            host = Host(dir=Path(td) / "host")
+            ws_a = host.create("ws-a")
+            ws_b = host.create("ws-b")
+            expected_host = f"host:{host.host_id()}"
+            base_env = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("AGENTS_STORE_DB", "AGENTS_ACTOR_DID", "AGENTS_WORKSPACE")
+            }
+            base_env["AGENTS_HOST_DIR"] = str(host.dir)
+
+            # Missing .ed25519 keys fast-path without spawning agents_keys.
+            calls: list[list[str]] = []
+            with patch.dict(os.environ, dict(base_env), clear=True), patch.object(
+                turn,
+                "subprocess",
+                types.SimpleNamespace(run=lambda cmd, **_kw: calls.append(list(cmd))),
+            ):
+                self.assertEqual(
+                    turn.resolve_actor_did(ws_a, persona="researcher"),
+                    expected_host,
+                )
+            self.assertEqual(calls, [])
+
+            host.keys.mkdir(parents=True, exist_ok=True)
+            (host.keys / "researcher.ed25519").write_bytes(b"r" * 64)
+            (host.keys / "host.ed25519").write_bytes(b"h" * 64)
+
+            captured: list[tuple[str, str]] = []
+            fake_loop = types.ModuleType("runner.loop")
+
+            def _fake_loop(_argv):
+                captured.append(
+                    (os.environ.get("AGENTS_STORE_DB", ""), os.environ.get("AGENTS_ACTOR_DID", ""))
+                )
+                return 0
+
+            fake_loop.main = _fake_loop
+            fake_runner = types.ModuleType("runner")
+            fake_runner.loop = fake_loop
+
+            def _fake_did(cmd, **_kw):
+                slug = cmd[-1]
+                return subprocess.CompletedProcess(
+                    cmd, 0, stdout=f"did:key:z6Mk{slug}123\n", stderr=""
+                )
+
+            with patch.dict(os.environ, base_env, clear=True), patch.dict(
+                sys.modules, {"runner": fake_runner, "runner.loop": fake_loop}
+            ), patch("importlib.util.find_spec", return_value=types.SimpleNamespace()), patch.object(
+                turn, "subprocess", types.SimpleNamespace(run=_fake_did)
+            ):
+                # Re-clear inherited AGENTS_STORE_DB/AGENTS_ACTOR_DID between turns like relay spawn.
+                os.environ["AGENTS_WORKSPACE"] = "ws-a"
+                rc1 = turn.main(["--persona", "researcher"])
+                os.environ.pop("AGENTS_ACTOR_DID", None)
+                os.environ["AGENTS_WORKSPACE"] = "ws-b"
+                rc2 = turn.main([])
+
+        self.assertEqual(rc1, 0)
+        self.assertEqual(rc2, 0)
+        self.assertEqual(Path(captured[0][0]), ws_a.store_db)
+        self.assertEqual(Path(captured[1][0]), ws_b.store_db)
+        self.assertNotEqual(captured[0][0], captured[1][0])
+        self.assertEqual(captured[0][1], "did:key:z6Mkresearcher123")
+        self.assertEqual(captured[1][1], "did:key:z6Mkhost123")
+
+
+class TestQrEncoder(unittest.TestCase):
+    """klanker#125: stdlib QR matrix + Unicode half-block render."""
+
+    def test_qr_matrix_shape_and_finders(self):
+        from klanker.qr import encode_qr_matrix, render_qr_unicode
+
+        mat = encode_qr_matrix("http://127.0.0.1:8787/#pair=abc123")
+        n = len(mat)
+        self.assertGreaterEqual(n, 21)
+        self.assertTrue(all(len(row) == n for row in mat))
+        # Top-left 7x7 finder outer ring and center 3x3 dark squares.
+        for i in range(7):
+            self.assertTrue(mat[0][i])
+            self.assertTrue(mat[6][i])
+            self.assertTrue(mat[i][0])
+            self.assertTrue(mat[i][6])
+        self.assertTrue(mat[3][3])
+        art = render_qr_unicode("hello")
+        self.assertTrue(art.splitlines())

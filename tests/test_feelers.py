@@ -51,6 +51,25 @@ class TestFeelerPlugs(unittest.TestCase):
         self.assertIn("mcp.memory.search.json", names)
         self.assertIn("mcp.memory.add.json", names)
 
+    def test_store_and_voice_registered_in_sensing_and_helpjson(self):
+        from klanker import helpjson, sensing
+
+        self.assertEqual(sensing.SUITE_MODULES["store"], "agents_store")
+        self.assertEqual(sensing.SUITE_MODULES["voice"], "agents_voice")
+        caps = sensing.HostCapabilities(
+            os_name="Linux",
+            is_tty=False,
+            python_version="3.12.0",
+            suite_modules={"store": True, "voice": True},
+        )
+        self.assertTrue(caps.has_store)
+        self.assertTrue(caps.has_voice)
+
+        aliases = {p["alias"]: p["module"] for p in helpjson.PACKAGES}
+        self.assertEqual(aliases.get("store"), "agents_store")
+        self.assertEqual(aliases.get("voice"), "agents_voice")
+        self.assertTrue({"view", "pane", "domains", "query"}.issubset(helpjson.READ_VERBS))
+
 
 if __name__ == "__main__":
     unittest.main()

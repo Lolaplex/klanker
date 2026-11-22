@@ -29,6 +29,9 @@ export function useSidebarTree(args: {
   setSessionTitles: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   expandWs: (ws: string) => void;
   expandPersona: (ws: string, persona: string) => void;
+  refreshWorkspaces: () => void;
+  refreshPersonas: (ws?: string) => void;
+  refreshSessions: (ws?: string, persona?: string) => void;
   personasOf: (ws: string) => PersonaRow[] | undefined;
   sessionRowsOf: (ws: string, persona: string) => SessionRow[] | undefined;
 } {
@@ -192,9 +195,50 @@ export function useSidebarTree(args: {
     return [...localRows, ...remoteRows];
   };
 
+  const refreshWorkspaces = () => {
+    const inst = activeInstance;
+    if (!inst || status?.state !== "running") return;
+    void api
+      .listWorkspaces(inst)
+      .then((rows) => {
+        setWorkspaces(rows);
+        setSelWs((cur) => cur || rows[0]?.id || "");
+        rows.forEach((w) => expandWsRef.current(w.id));
+      })
+      .catch(() => {});
+  };
+
+  const refreshPersonas = (wsId?: string) => {
+    const inst = activeInstance;
+    if (!inst || status?.state !== "running") return;
+    const targets = wsId ? [{ id: wsId }] : workspacesRef.current;
+    for (const w of targets) {
+      void api
+        .listPersonas(inst, w.id)
+        .then((rows) => setTreePersonas((prev) => ({ ...prev, [w.id]: rows })))
+        .catch(() => {});
+    }
+  };
+
+  const refreshSessions = (wsId?: string, personaId?: string) => {
+    const inst = activeInstance;
+    if (!inst || status?.state !== "running") return;
+    if (wsId && personaId) {
+      expandPersona(wsId, personaId);
+      return;
+    }
+    for (const k of Object.keys(serverSessions)) {
+      const [ws, persona] = k.split(" ");
+      if (!ws || !persona) continue;
+      if (wsId && ws !== wsId) continue;
+      expandPersona(ws, persona);
+    }
+  };
+
   return {
     workspaces, setWorkspaces, treePersonas, setTreePersonas,
     serverSessions, setServerSessions, sessionTitles, setSessionTitles,
-    expandWs, expandPersona, personasOf, sessionRowsOf,
+    expandWs, expandPersona, refreshWorkspaces, refreshPersonas, refreshSessions,
+    personasOf, sessionRowsOf,
   };
 }
