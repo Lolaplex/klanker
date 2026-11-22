@@ -70,6 +70,7 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
             ":usage :insights [days]  (traces; /usage /insights)",
             ":plan [goal]  plan-mode toggle or one-shot plan (/plan)",
             ":persona [id]  show or switch persona (saved per channel)",
+            ":workspace [id]  list or switch workspace (saved per channel)",
             ":turn <msg> | bare text → agent (needs gateway)",
         ]
         return rows
@@ -127,6 +128,39 @@ def handle_meta_builtin(state: ShellState, intent: str, payload: str = "", messa
         if state.plan_mode:
             return agent_turn(state, payload)
         return agent_turn(state, PLAN_INSTRUCTION + payload)
+    if intent == "workspace":
+        if gw is None:
+            return ["no gateway session"]
+        try:
+            rows = gw.workspaces()
+        except Exception as exc:
+            return [f"workspaces error: {exc}"]
+        if not payload:
+            active = gw.workspace or ""
+            out = [f"workspace={active or '(env default)'}"]
+            for row in rows:
+                rid = str(row.get("id") or "?")
+                mark = "*" if rid == active else " "
+                wd = str(row.get("workdir") or "")
+                out.append(f" {mark} {rid}{f' — {wd}' if wd else ''}")
+            if not rows:
+                out.append("  (relay returned no workspace rows)")
+            return out
+        match = next(
+            (r for r in rows if str(r.get("id") or "") == payload), None
+        )
+        if match is None:
+            known = ", ".join(str(r.get("id") or "?") for r in rows) or "none"
+            return [f"unknown workspace: {payload} (known: {known})"]
+        gw.workspace = payload
+        wd = str(match.get("workdir") or "").strip()
+        if wd:
+            gw.workdir = wd
+        gw._save_prefs()
+        out = [f"workspace={gw.workspace} (channel default saved)"]
+        if wd:
+            out.append(f"workdir={gw.workdir}")
+        return out
     if intent == "persona":
         if gw is None:
             return ["no gateway session"]

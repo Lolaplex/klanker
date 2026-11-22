@@ -1,11 +1,11 @@
-import { DesktopSettings, KlankerInstance, ProviderModelLists } from "./types/klanker";
+import type { DesktopSettings, KlankerInstance, ProviderModelLists } from "./types/klanker";
 
 export const LM_URL = "http://127.0.0.1:1234/v1";
 export const OR_URL = "https://openrouter.ai/api/v1";
 export const DEFAULT_WORKSPACE = "";
 
 export const DEFAULT_SETTINGS: DesktopSettings = {
-  provider: "echo",
+  provider: "inherit",
   model: "",
   workspace: DEFAULT_WORKSPACE,
   recent_models: { openrouter: [], lmstudio: [] },

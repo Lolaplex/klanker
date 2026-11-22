@@ -210,10 +210,10 @@ class TestKlanker(unittest.TestCase):
                 rc = cli_main(["serve", "--no-telegram"])
             self.assertEqual(rc, 0)
             self.assertEqual(observed["argv"], ["serve", "--no-telegram"])
-            self.assertEqual(
-                observed["state"],
-                {"pid": os.getpid(), "port": 9123, "url": "http://127.0.0.1:9123"},
-            )
+            self.assertEqual(observed["state"]["pid"], os.getpid())
+            self.assertEqual(observed["state"]["port"], 9123)
+            self.assertEqual(observed["state"]["url"], "http://127.0.0.1:9123")
+            self.assertTrue(observed["state"].get("host_id"))
             self.assertFalse(state_file.exists())
             self.assertFalse((fake_home / ".klanker").exists())
 
@@ -368,3 +368,95 @@ class TestKlanker(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestServeEntryWorkspace(unittest.TestCase):
+    """klanker#126: serve boot resolves entry workspace without crashing."""
+
+    def test_resolve_entry_workspace_multi_ws_no_default(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from agents_workspace import Host
+
+        with tempfile.TemporaryDirectory() as td:
+            host = Host(dir=Path(td) / "host")
+            host.create("alpha")
+            host.create("beta")
+            env = {"AGENTS_HOST_DIR": str(host.dir), "AGENTS_WORKSPACE": ""}
+            with patch.dict(os.environ, env, clear=False):
+                ws = Host.from_env().resolve_entry_workspace()
+        self.assertEqual(ws.id, "alpha")
+
+
+class TestTurnDynamicPrompt(unittest.TestCase):
+    """klanker#119: turn builds --system per active workspace."""
+
+    def _run_turn(self, host_dir, ws_id):
+        import os
+        import sys
+        import types
+        from unittest.mock import patch
+
+        from klanker import turn
+
+        seen: list[list[str]] = []
+        fake_loop = types.ModuleType("runner.loop")
+        fake_loop.main = lambda argv: seen.append(list(argv)) or 0
+        fake_runner = types.ModuleType("runner")
+        fake_runner.loop = fake_loop
+        env = {"AGENTS_HOST_DIR": str(host_dir), "AGENTS_WORKSPACE": ws_id}
+        with patch.dict(os.environ, env, clear=False), patch.dict(
+            sys.modules, {"runner": fake_runner, "runner.loop": fake_loop}
+        ):
+            rc = turn.main([])
+        return rc, seen
+
+    def test_prompt_follows_active_workspace(self):
+        import tempfile
+        from pathlib import Path
+        from agents_workspace import Host
+
+        with tempfile.TemporaryDirectory() as td:
+            host = Host(dir=Path(td) / "host")
+            host.create("ws-a")
+            host.create("ws-b")
+            rc_a, seen_a = self._run_turn(host.dir, "ws-a")
+            rc_b, seen_b = self._run_turn(host.dir, "ws-b")
+        self.assertEqual(rc_a, 0)
+        self.assertEqual(rc_b, 0)
+        sys_a = seen_a[0][seen_a[0].index("--system") + 1]
+        sys_b = seen_b[0][seen_b[0].index("--system") + 1]
+        self.assertIn("klanker_prompt_ws-a", sys_a)
+        self.assertIn("klanker_prompt_ws-b", sys_b)
+
+    def test_explicit_system_keeps_winning(self):
+        import os
+        import sys
+        import tempfile
+        import types
+        from pathlib import Path
+        from unittest.mock import patch
+        from agents_workspace import Host
+        from klanker import turn
+
+        with tempfile.TemporaryDirectory() as td:
+            host = Host(dir=Path(td) / "host")
+            host.create("ws-a")
+            prompt = Path(td) / "mine.txt"
+            prompt.write_text("static", encoding="utf-8")
+            seen: list[list[str]] = []
+            fake_loop = types.ModuleType("runner.loop")
+            fake_loop.main = lambda argv: seen.append(list(argv)) or 0
+            fake_runner = types.ModuleType("runner")
+            fake_runner.loop = fake_loop
+            env = {"AGENTS_HOST_DIR": str(host.dir), "AGENTS_WORKSPACE": "ws-a"}
+            with patch.dict(os.environ, env, clear=False), patch.dict(
+                sys.modules, {"runner": fake_runner, "runner.loop": fake_loop}
+            ):
+                rc = turn.main(["--system", str(prompt)])
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            seen[0][seen[0].index("--system") + 1], str(prompt)
+        )

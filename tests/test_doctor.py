@@ -95,3 +95,44 @@ class DoctorCliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DoctorVaultTests(unittest.TestCase):
+    """klanker#126: doctor reads Host Vault secrets, not only os.environ."""
+
+    def test_provider_key_from_vault_passes(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from agents_workspace import Host, write_secret
+        from klanker.doctor import _check_provider_keys, _check_llm_keys
+
+        with tempfile.TemporaryDirectory() as td:
+            host = Host(dir=Path(td) / "host")
+            write_secret("OPENROUTER_API_KEY", "sk-test", host=host, scope="host")
+            env = {
+                "AGENTS_HOST_DIR": str(host.dir),
+                "OPENROUTER_API_KEY": "",
+                "OPENAI_API_KEY": "",
+                "ANTHROPIC_API_KEY": "",
+                "LLM_API_KEY": "",
+            }
+            with patch.dict(os.environ, env, clear=True):
+                check = _check_provider_keys({})
+                self.assertEqual(check.status, "pass")
+                self.assertIn("host vault", check.detail)
+                self.assertNotIn("sk-test", check.detail)
+                self.assertEqual(_check_llm_keys({}).status, "pass")
+
+    def test_llm_key_warns_when_all_missing(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from klanker.doctor import _check_llm_keys
+
+        with tempfile.TemporaryDirectory() as td:
+            env = {"AGENTS_HOST_DIR": str(Path(td) / "host")}
+            with patch.dict(os.environ, env, clear=True):
+                check = _check_llm_keys({})
+        self.assertEqual(check.status, "warn")
+        self.assertIn("LLM_API_KEY", check.hint)

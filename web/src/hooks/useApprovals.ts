@@ -10,6 +10,7 @@ import { api, notify } from "../services/api";
 export function useApprovals(args: {
   activeInstance: KlankerInstance | null;
   status: ProcessStatus | null;
+  workspaceId?: string;
 }): {
   pending: PendingApproval | null;
   deciding: boolean;
@@ -17,7 +18,7 @@ export function useApprovals(args: {
   handleDecide: (allow: boolean) => Promise<void>;
   reset: () => void;
 } {
-  const { activeInstance, status } = args;
+  const { activeInstance, status, workspaceId = "" } = args;
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [decideError, setDecideError] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export function useApprovals(args: {
     const tick = async () => {
       const mine = ++pollSeq.current;
       try {
-        const next = await api.pendingApproval(inst);
+        const next = await api.pendingApproval(inst, workspaceId);
         if (!stop && mine === pollSeq.current) {
           if (
             next &&
@@ -64,7 +65,7 @@ export function useApprovals(args: {
       window.clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instId, status?.state]);
+  }, [instId, workspaceId, status?.state]);
 
   const handleDecide = async (allow: boolean) => {
     const inst = activeInstance;

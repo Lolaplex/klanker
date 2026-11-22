@@ -54,13 +54,17 @@ TurnFn = Callable[[dict[str, Any]], tuple[int, str]]
 DeliverFn = Callable[[str, str], None]
 
 
-def schedules_path() -> Path:
-    """Schedule job directory. Does not create it."""
-    return Workspace.from_env().schedules
+def _ws_or_env(ws: "Workspace | None") -> "Workspace":
+    return ws if ws is not None else Workspace.from_env()
 
 
-def schedules_dir() -> Path:
-    path = schedules_path()
+def schedules_path(ws: "Workspace | None" = None) -> Path:
+    """Schedule job directory for ``ws`` (env workspace when None). No mkdir."""
+    return _ws_or_env(ws).schedules
+
+
+def schedules_dir(ws: "Workspace | None" = None) -> Path:
+    path = schedules_path(ws)
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -334,6 +338,7 @@ def add_routine(
     timeout_sec: int | None = None,
     channel: str = "",
     workspace: str = "",
+    ws: "Workspace | None" = None,
 ) -> dict[str, Any]:
     if not (prompt or "").strip():
         raise ValueError("prompt is required")
@@ -362,7 +367,9 @@ def add_routine(
         "channel": resolve_channel(channel),
         "timezone": zone,
     }
-    if (workspace or "").strip():
+    if ws is not None:
+        manifest["workspace"] = ws.id
+    elif (workspace or "").strip():
         manifest["workspace"] = workspace.strip()
     if at:
         manifest["at"] = _normalize_at(at, zone)
@@ -372,15 +379,17 @@ def add_routine(
         manifest["cron"] = cron.strip()
         manifest["cadence"] = "cron"
         manifest["one_shot"] = False
-    target = schedules_dir()
-    if (workspace or "").strip():
-        from agents_workspace import Workspace
-
-        ws = Workspace.resolve(workspace)
-        if ws is None:
-            raise ValueError(f"unknown workspace: {workspace}")
+    if ws is not None:
         target = ws.schedules
         target.mkdir(parents=True, exist_ok=True)
+    else:
+        target = schedules_dir()
+        if (workspace or "").strip():
+            resolved = Workspace.resolve(workspace)
+            if resolved is None:
+                raise ValueError(f"unknown workspace: {workspace}")
+            target = resolved.schedules
+            target.mkdir(parents=True, exist_ok=True)
     path = target / f"{slug}.json"
     path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     manifest["_file"] = str(path)
@@ -403,9 +412,15 @@ def _routine_dirs() -> list[tuple[str, Path]]:
     return rows
 
 
-def list_routines() -> list[dict[str, Any]]:
+def list_routines(ws: "Workspace | None" = None) -> list[dict[str, Any]]:
+    """All workspaces' routines, or only ``ws``'s when given."""
     rows: list[dict[str, Any]] = []
-    for label, root in _routine_dirs():
+    dirs = (
+        [(ws.label or ws.id or ws.root.name, ws.schedules)]
+        if ws is not None
+        else _routine_dirs()
+    )
+    for label, root in dirs:
         if not root.is_dir():
             continue
         for path in sorted(root.glob("*.json")):
@@ -423,8 +438,10 @@ def list_routines() -> list[dict[str, Any]]:
     return rows
 
 
-def job_path(name: str) -> Path:
+def job_path(name: str, ws: "Workspace | None" = None) -> Path:
     slug = slugify(name)
+    if ws is not None:
+        return ws.schedules / f"{slug}.json"
     for _label, root in _routine_dirs():
         candidate = root / f"{slug}.json"
         if candidate.is_file():
@@ -432,8 +449,8 @@ def job_path(name: str) -> Path:
     return schedules_dir() / f"{slug}.json"
 
 
-def load_routine(name: str) -> dict[str, Any]:
-    path = job_path(name)
+def load_routine(name: str, ws: "Workspace | None" = None) -> dict[str, Any]:
+    path = job_path(name, ws)
     if not path.is_file():
         raise FileNotFoundError(name)
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -448,26 +465,28 @@ def _write_job(path: Path, data: dict[str, Any]) -> None:
     path.write_text(json.dumps(body, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def set_paused(name: str, paused: bool) -> dict[str, Any]:
+def set_paused(
+    name: str, paused: bool, ws: "Workspace | None" = None
+) -> dict[str, Any]:
     """Keep the job file. ``paused`` stops the ticker from running a turn."""
-    path = job_path(name)
-    job = load_routine(name)
+    path = job_path(name, ws)
+    job = load_routine(name, ws)
     job["paused"] = bool(paused)
     _write_job(path, job)
     job["_file"] = str(path)
     return job
 
 
-def pause_routine(name: str) -> dict[str, Any]:
-    return set_paused(name, True)
+def pause_routine(name: str, ws: "Workspace | None" = None) -> dict[str, Any]:
+    return set_paused(name, True, ws)
 
 
-def resume_routine(name: str) -> dict[str, Any]:
-    return set_paused(name, False)
+def resume_routine(name: str, ws: "Workspace | None" = None) -> dict[str, Any]:
+    return set_paused(name, False, ws)
 
 
-def remove_routine(name: str) -> bool:
-    path = job_path(name)
+def remove_routine(name: str, ws: "Workspace | None" = None) -> bool:
+    path = job_path(name, ws)
     if not path.is_file():
         return False
     data = json.loads(path.read_text(encoding="utf-8"))

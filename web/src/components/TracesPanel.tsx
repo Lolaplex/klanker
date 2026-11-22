@@ -5,9 +5,11 @@ import { KlankerInstance } from "../types/klanker";
 
 interface TracesPanelProps {
   instance: KlankerInstance | null;
+  /** Active workspace id — never instance.workspace (that is a workdir). */
+  workspace?: string;
 }
 
-export const TracesPanel: React.FC<TracesPanelProps> = ({ instance }) => {
+export const TracesPanel: React.FC<TracesPanelProps> = ({ instance, workspace = "" }) => {
   const [traces, setTraces] = useState<string[]>([]);
   const [note, setNote] = useState("No instance selected.");
   const [loading, setLoading] = useState(false);
@@ -15,7 +17,7 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance }) => {
   const loadTraces = async (target: KlankerInstance) => {
     setLoading(true);
     try {
-      const page = await api.readRecentTraces(target, 40);
+      const page = await api.readRecentTraces(target, workspace, 40);
       setTraces(page.lines);
       setNote(page.note || "traces");
     } catch (e) {
@@ -34,7 +36,7 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance }) => {
     }
     setNote("This relay's traces");
     void loadTraces(instance);
-  }, [instance?.id, instance?.updated_at]);
+  }, [instance?.id, instance?.updated_at, workspace]);
 
   return (
     <div className="h-full flex flex-col bg-[#0a0a0a] font-mono text-xs overflow-hidden">

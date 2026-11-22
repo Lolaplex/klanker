@@ -1,4 +1,4 @@
-import {
+import type {
   DesktopBootstrap,
   DesktopSettings,
   DiscoveredPeer,
@@ -6,8 +6,9 @@ import {
   PendingApproval,
   ProcessStatus,
   TracePage,
+  WorkspaceRow,
 } from "../types/klanker";
-import { DEFAULT_SETTINGS } from "../openrouterModels";
+import { DEFAULT_SETTINGS } from "../openrouterModels.ts";
 
 const LS_INSTANCES = "klanker.instances";
 const LS_INSTANCES_MIGRATED = "klanker.instances_migrated";
@@ -22,9 +23,19 @@ const LS_ACTIVE = "klanker.active";
  *  process, so the hardcoded registry URL cannot be trusted. */
 let localServePort = 8787;
 
+/** Loopback base URL for the managed local relay on its live port. */
+export function localRelayBaseUrl(port: number = localServePort): string {
+  return `http://127.0.0.1:${port}`;
+}
+
+/** Update the managed-serve port (serve_status poll / klanker:serve-state). */
+export function setLocalServePort(port: number): void {
+  if (port > 0) localServePort = port;
+}
+
 const base = (inst: KlankerInstance): string =>
   inst.via === "relay"
-    ? `/v1/remote/${encodeURIComponent(inst.id)}`
+    ? `${caps.spawn ? localRelayBaseUrl() : ""}/v1/remote/${encodeURIComponent(inst.id)}`
     : inst.kind === "local" && caps.spawn
       ? `http://127.0.0.1:${localServePort}`
       : (inst.endpoint?.base_url || inst.base_url || "").replace(/\/+$/, "");
@@ -33,7 +44,15 @@ function headers(inst: KlankerInstance, json = false): Record<string, string> {
   const h: Record<string, string> = {};
   const secret = (inst.secret || "").trim();
   // Mounted remotes: the relay injects the bearer — the client holds none.
-  if (secret && inst.via !== "relay") h["Authorization"] = `Bearer ${secret}`;
+  // Desktop still authenticates to its LOCAL relay for /v1/remote/* calls.
+  if (inst.via === "relay") {
+    if (caps.spawn) {
+      const local = secretCache.get("relay.local");
+      if (local) h["Authorization"] = `Bearer ${local}`;
+    }
+  } else if (secret) {
+    h["Authorization"] = `Bearer ${secret}`;
+  }
   if (json) h["Content-Type"] = "application/json";
   return h;
 }
@@ -64,7 +83,17 @@ export function secretAccount(inst: KlankerInstance): string {
 /** Pull a keyring secret into inst.secret. Called lazily — the local
  *  serve's token is only minted at spawn, after instances were loaded. */
 async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void> {
-  if (!caps.keyring || inst.via === "relay") return;
+  if (!caps.keyring) return;
+  // Relay-mounted remotes need the local relay's own token on Desktop.
+  if (inst.via === "relay") {
+    if (!caps.spawn) return;
+    const local = secretCache.get("relay.local");
+    if (local) {
+      inst.secret = local;
+      inst.has_secret = true;
+    }
+    return;
+  }
   if (!force && inst.secret) return;
   const account = secretAccount(inst);
   const cached = secretCache.get(account);
@@ -224,35 +253,56 @@ export const api = {
     if (caps.spawn) {
       // Managed local entry is synthetic — never persisted. Legacy
       // `kind: "local"` rows were per-instance serves (monolith) — dead.
-      list = [desktopLocalInstance(), ...list.filter((i) => i.id !== "local" && i.kind !== "local")];
-      // Remotes registered on the local relay (added via PWA) merge in by
-      // endpoint host — the file registry wins on conflict.
+      const local = desktopLocalInstance();
+      const fileRows = list.filter((i) => i.id !== "local" && i.kind !== "local");
+      // The local relay /v1/remotes registry is canonical on Desktop too.
+      // File-registry remote rows migrate up once (endpoint host wins —
+      // relay rows are never dropped), then the list renders only relay.
       const relay = await localRelayRemotes();
-      if (relay?.remotes) {
-        const known = new Set(list.map((i) => hostKey(i)));
-        const now = new Date().toISOString();
-        for (const m of relay.remotes) {
-          const host = hostKey(m);
-          if (!host || known.has(host)) continue;
-          known.add(host);
-          list.push({
-            id: m.id,
-            name: m.label || m.id,
-            slug: m.id,
-            role: "",
-            provider: "",
-            model: "",
-            workspace: "",
-            lock_workspace: false,
-            port: 0,
-            system_prompt: "",
-            kind: "remote",
-            endpoint: { base_url: m.base_url },
-            has_secret: m.has_secret,
-            created_at: now,
-            updated_at: now,
-          });
+      const relayHosts = new Set((relay?.remotes || []).map((m) => hostKey(m)).filter(Boolean));
+      const migrated = new Set<string>();
+      for (const i of fileRows) {
+        const host = hostKey(i);
+        if (host && relayHosts.has(host)) {
+          migrated.add(host);
+          continue;
         }
+        await hydrateSecret(i);
+        await localRelayRemotes("POST", {
+          id: i.id,
+          base_url: i.endpoint?.base_url || i.base_url || "",
+          label: i.name,
+          // Keyring secret travels over loopback once so the relay can
+          // inject it on proxy turns — it is never written to disk here.
+          secret: i.secret || i.endpoint?.secret || "",
+        });
+        if (host) relayHosts.add(host);
+      }
+      const after = migrated.size || fileRows.length ? await localRelayRemotes() : relay;
+      const fileByHost = new Map(fileRows.map((i) => [hostKey(i), i] as const));
+      list = [local];
+      const now = new Date().toISOString();
+      for (const m of after?.remotes || []) {
+        const host = hostKey(m);
+        const f = host ? fileByHost.get(host) : undefined;
+        list.push({
+          id: m.id,
+          name: m.label || m.id,
+          slug: m.id,
+          role: "",
+          provider: f?.provider || "",
+          model: f?.model || "",
+          workspace: f?.workspace || "",
+          lock_workspace: f?.lock_workspace || false,
+          port: 0,
+          system_prompt: "",
+          kind: "remote",
+          via: "relay",
+          endpoint: { base_url: m.base_url },
+          has_secret: m.has_secret,
+          created_at: f?.created_at || now,
+          updated_at: now,
+        });
       }
     } else if (list.length === 0) {
       list = [localInstance()];
@@ -265,6 +315,34 @@ export const api = {
   },
 
   async saveKlanker(inst: KlankerInstance): Promise<KlankerInstance> {
+    if (inst.kind === "local" || inst.id === "local") {
+      // Synthetic local entry — edits route through settings/workspace
+      // endpoints, never into a persisted registry.
+      return { ...inst, updated_at: new Date().toISOString() };
+    }
+    if (caps.spawn && inst.kind === "remote") {
+      // Canonical remote registry is the local relay /v1/remotes — no
+      // parallel file write; the secret goes over loopback once and then
+      // only lives in the relay-side vault.
+      const list = await this.listKlankers();
+      const next = { ...inst, updated_at: new Date().toISOString() };
+      if (!list.some((i) => i.id === inst.id)) {
+        next.id = uniqueSlug(inst.slug || inst.name, list.map((i) => i.id));
+        next.slug = next.slug || next.id;
+      }
+      await localRelayRemotes("POST", {
+        id: next.id,
+        base_url: next.endpoint?.base_url || next.base_url || "",
+        label: next.name,
+        secret: (next.secret || next.endpoint?.secret || "").trim(),
+      });
+      return {
+        ...stripSecrets(next),
+        via: "relay",
+        has_secret: !!(next.secret || next.endpoint?.secret) || !!next.has_secret,
+        secret: inst.secret || inst.endpoint?.secret,
+      };
+    }
     const list = await this.listKlankers();
     const next = { ...inst, updated_at: new Date().toISOString() };
     const idx = list.findIndex((i) => i.id === inst.id);
@@ -285,16 +363,6 @@ export const api = {
       } catch {}
     }
     const stored = await registrySave(next);
-    if (next.kind === "remote") {
-      // Mirror into the local relay registry so PWA clients of this host
-      // see the same graph; the secret travels over loopback only.
-      void localRelayRemotes("POST", {
-        id: next.id,
-        base_url: next.endpoint?.base_url || next.base_url || "",
-        label: next.name,
-        secret: (next.secret || next.endpoint?.secret || "").trim(),
-      });
-    }
     return { ...stored, secret: inst.secret || inst.endpoint?.secret };
   },
 
@@ -304,6 +372,9 @@ export const api = {
       inst = (await registryList()).find((i) => i.id === id);
     } catch {}
     if (isTauri()) {
+      // Canonical store is the relay; the file delete only cleans any
+      // legacy `instances/<id>/instance.json` left from pre-#120 installs.
+      void localRelayRemotes("DELETE", undefined, id);
       try {
         await invoke("instance_delete", { id });
       } catch {}
@@ -380,13 +451,13 @@ export const api = {
     }
   },
 
-  async authStatus(inst: KlankerInstance): Promise<{ authenticated: boolean; enabled: boolean; user: string }> {
-    const r = await req<{ authenticated?: boolean; enabled?: boolean; user?: string }>(
+  async authStatus(inst: KlankerInstance): Promise<{ authenticated: boolean; enabled: boolean; user: string; cookie_warning?: string }> {
+    const r = await req<{ authenticated?: boolean; enabled?: boolean; user?: string; cookie_warning?: string }>(
       inst,
       "/v1/auth/status",
       { headers: headers(inst) }
     );
-    return { authenticated: !!r.authenticated, enabled: !!r.enabled, user: r.user || "" };
+    return { authenticated: !!r.authenticated, enabled: !!r.enabled, user: r.user || "", cookie_warning: r.cookie_warning };
   },
 
   /** Exchange RELAY_WEB_TOKEN for the HttpOnly cookie (same-origin). */
@@ -400,9 +471,77 @@ export const api = {
 
   // --- workspaces / personas ----------------------------------------------
 
-  async listWorkspaces(inst: KlankerInstance): Promise<{ id: string; label?: string }[]> {
+  async listWorkspaces(inst: KlankerInstance): Promise<WorkspaceRow[]> {
     const r = await req<{ workspaces?: any[] }>(inst, "/v1/workspaces", { headers: headers(inst) });
-    return (r.workspaces || []).map((w) => ({ id: w.id || w, label: w.label || w.name || w.id || w }));
+    return (r.workspaces || []).map((w) => ({
+      id: w.id || w,
+      label: w.label || w.name || w.id || w,
+      workdir: typeof w === "object" ? w.workdir : undefined,
+      workdir_lock: typeof w === "object" ? w.workdir_lock : undefined,
+      browser_profile: typeof w === "object" ? w.browser_profile : undefined,
+      approval_mode: typeof w === "object" ? w.approval_mode : undefined,
+    }));
+  },
+
+  /** PATCH /v1/workspaces/<id> — workspace config lives on the relay; no
+   *  secrets may ever appear in `patch`. */
+  async updateWorkspace(
+    inst: KlankerInstance,
+    id: string,
+    patch: {
+      label?: string;
+      workdir?: string | null;
+      workdir_lock?: boolean;
+      browser_profile?: string | null;
+      approval_mode?: "off" | "ask" | "strict" | null;
+    }
+  ): Promise<WorkspaceRow | null> {
+    const r = await req<{ workspace?: any }>(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(id)}`,
+      {
+        method: "PATCH",
+        headers: headers(inst, true),
+        body: JSON.stringify(patch),
+      }
+    );
+    const w = r.workspace;
+    if (!w || typeof w !== "object") return null;
+    return {
+      id: w.id || id,
+      label: w.label || w.name || w.id || id,
+      workdir: w.workdir,
+      workdir_lock: w.workdir_lock,
+      browser_profile: w.browser_profile,
+      approval_mode: w.approval_mode,
+    };
+  },
+
+  /** Per-workspace provider/model pick, stored on the relay. */
+  async getModelPick(inst: KlankerInstance, workspace: string): Promise<{ provider: string; model: string }> {
+    const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
+    try {
+      const r = await req<{ provider?: string; model?: string }>(inst, `/v1/model${q}`, {
+        headers: headers(inst),
+      });
+      return { provider: r.provider || "", model: r.model || "" };
+    } catch {
+      return { provider: "", model: "" };
+    }
+  },
+
+  async setModelPick(
+    inst: KlankerInstance,
+    workspace: string,
+    provider: string,
+    model: string
+  ): Promise<{ provider: string; model: string }> {
+    const r = await jsonReq<{ provider?: string; model?: string }>(inst, `/v1/model`, {
+      workspace: workspace || undefined,
+      provider: provider || undefined,
+      model: model || undefined,
+    });
+    return { provider: r.provider || "", model: r.model || "" };
   },
 
   async createWorkspace(inst: KlankerInstance, id: string): Promise<string> {
@@ -627,9 +766,9 @@ export const api = {
 
   // --- approvals (agents-relay#12) -----------------------------------------
 
-  async pendingApproval(inst: KlankerInstance): Promise<PendingApproval | null> {
+  async pendingApproval(inst: KlankerInstance, workspaceId = ""): Promise<PendingApproval | null> {
     try {
-      const ws = inst.workspace.trim();
+      const ws = workspaceId.trim();
       const q = ws ? `?workspace=${encodeURIComponent(ws)}` : "";
       const r = await req<{ approvals?: PendingApproval[] }>(inst, `/v1/approvals${q}`, {
         headers: headers(inst),
@@ -680,8 +819,8 @@ export const api = {
 
   // --- traces (agents-relay#12) ---------------------------------------------
 
-  async readRecentTraces(inst: KlankerInstance, limit = 40): Promise<TracePage> {
-    const ws = inst.workspace.trim();
+  async readRecentTraces(inst: KlankerInstance, workspaceId = "", limit = 40): Promise<TracePage> {
+    const ws = workspaceId.trim();
     try {
       const wq = ws ? `&workspace=${encodeURIComponent(ws)}` : "";
       // Relay needs a session id for lines; without one it returns the list.
@@ -1087,7 +1226,7 @@ async function localRelayFetch(
       secretCache.get("relay.local") ||
       (await invoke<string | null>("secret_get", { account: "relay.local" }).catch(() => null)) ||
       "";
-    return await fetch(`http://127.0.0.1:8787${path}`, {
+    return await fetch(`${localRelayBaseUrl()}${path}`, {
       method,
       headers: {
         "Content-Type": "application/json",
@@ -1195,7 +1334,7 @@ export function localInstance(): KlankerInstance {
     lock_workspace: false,
     port: 0,
     system_prompt: "",
-    kind: "remote",
+    kind: "local",
     endpoint: { base_url: "" },
     created_at: now,
     updated_at: now,

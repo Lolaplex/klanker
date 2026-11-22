@@ -62,11 +62,11 @@ def _memory_rows(ws, query: str = "") -> list[dict[str, Any]]:
     return rows
 
 
-def _routine_rows() -> list[dict[str, Any]]:
+def _routine_rows(ws=None) -> list[dict[str, Any]]:
     from .routine import list_routines
 
     rows = []
-    for job in list_routines():
+    for job in list_routines(ws):
         rows.append({k: v for k, v in job.items() if not k.startswith("_")})
     return rows
 
@@ -94,7 +94,9 @@ def _get(h: Any, path: str, q: dict[str, str]) -> None:
         h._write_json({"ok": True, "recall": {"enabled": bool(recall.get("enabled"))}}, 200)
         return
     if path == f"{_PREFIX}/routines":
-        h._write_json({"ok": True, "routines": _routine_rows()}, 200)
+        ws_filter = (q.get("workspace") or "").strip()
+        ws = _resolve_ws(ws_filter) if ws_filter else None
+        h._write_json({"ok": True, "routines": _routine_rows(ws)}, 200)
         return
     if path == f"{_PREFIX}/memory":
         ws = _resolve_ws(q.get("workspace", ""))
@@ -140,6 +142,9 @@ def _post(h: Any, path: str, q: dict[str, str]) -> None:
                 timezone_name=str(body.get("timezone") or ""),
                 channel="web",
                 workspace=str(body.get("workspace") or ""),
+                ws=_resolve_ws(str(body.get("workspace") or ""))
+                if str(body.get("workspace") or "").strip()
+                else None,
             )
         except ValueError as exc:
             h.send_error(400, str(exc))
@@ -157,21 +162,23 @@ def _post(h: Any, path: str, q: dict[str, str]) -> None:
         action = str(body.get("action") or "")
         from .routine import load_routine, pause_routine, perform_routine, remove_routine, resume_routine
 
+        ws_ref = (q.get("workspace") or str(body.get("workspace") or "")).strip()
+        ws = _resolve_ws(ws_ref) if ws_ref else None
         try:
             if action == "pause":
-                job = pause_routine(slug)
+                job = pause_routine(slug, ws)
                 h._write_json({"ok": True, "routine": {k: v for k, v in job.items() if not k.startswith("_")}}, 200)
                 return
             if action == "resume":
-                job = resume_routine(slug)
+                job = resume_routine(slug, ws)
                 h._write_json({"ok": True, "routine": {k: v for k, v in job.items() if not k.startswith("_")}}, 200)
                 return
             if action == "run":
-                result = perform_routine(load_routine(slug), force=True)
+                result = perform_routine(load_routine(slug, ws), force=True, workspace=ws)
                 h._write_json({"ok": True, "result": {k: result.get(k) for k in ("status", "reply", "name")}}, 200)
                 return
             if action == "remove":
-                if not remove_routine(slug):
+                if not remove_routine(slug, ws):
                     h.send_error(404, "unknown routine")
                     return
                 h._write_json({"ok": True}, 200)

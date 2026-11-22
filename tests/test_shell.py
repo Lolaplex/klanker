@@ -96,3 +96,61 @@ class GatewayClientPrefsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplWorkspaceCommandTests(unittest.TestCase):
+    """klanker#119: :workspace lists and switches the client workspace."""
+
+    def _state(self, gw):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(gateway=gw)
+
+    def test_list_marks_active_and_switch(self):
+        from klanker.shell.agent import handle_meta_builtin
+
+        from types import SimpleNamespace
+
+        saved: list[bool] = []
+        gw = SimpleNamespace(
+            workspace="a",
+            workdir="",
+            _save_prefs=lambda: saved.append(True),
+            workspaces=lambda: [
+                {"id": "a"},
+                {"id": "b", "workdir": "/w/b"},
+            ],
+        )
+        out = handle_meta_builtin(self._state(gw), "workspace", "")
+        self.assertTrue(any(line.strip().startswith("* a") for line in out))
+        self.assertTrue(any("b" in line for line in out))
+
+        out = handle_meta_builtin(self._state(gw), "workspace", "b")
+        self.assertEqual(gw.workspace, "b")
+        self.assertEqual(gw.workdir, "/w/b")
+        self.assertTrue(saved)
+
+    def test_unknown_workspace_rejected(self):
+        from klanker.shell.agent import handle_meta_builtin
+
+        from types import SimpleNamespace
+
+        gw = SimpleNamespace(
+            workspace="a",
+            workdir="",
+            _save_prefs=lambda: None,
+            workspaces=lambda: [{"id": "a"}],
+        )
+        out = handle_meta_builtin(self._state(gw), "workspace", "nope")
+        self.assertIn("unknown workspace", out[0])
+        self.assertEqual(gw.workspace, "a")
+
+    def test_resolve_maps_colon_command(self):
+        from klanker.shell.resolve import resolve_line
+
+        res = resolve_line(":workspace beta", env={})
+        self.assertEqual(res.intent, "workspace")
+        self.assertEqual(res.payload, "beta")
+        res = resolve_line(":workspace", env={})
+        self.assertEqual(res.intent, "workspace")
+        self.assertEqual(res.payload, "")

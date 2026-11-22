@@ -41,18 +41,25 @@ def main(argv: list[str] | None = None) -> int:
 
     # Per-turn context: resolve the workspace this process was spawned for and
     # point the harness at its module overlay. Never mutates a parent process.
-    os.environ.setdefault("AGENTS_MODULES_DIR", str(Workspace.from_env().modules))
+    ws = Workspace.from_env()
+    os.environ.setdefault("AGENTS_MODULES_DIR", str(ws.modules))
     args = list(sys.argv[1:] if argv is None else argv)
     # runner.loop keeps a non-file --system value as the literal prompt text.
     # Klanker passes the built prompt inline, so only refuse values that look
     # like a path (single line, short) whose file does not exist.
     system = system_from_argv(args)
-    if (
-        system
-        and "\n" not in system
-        and len(system) < 500
-        and not Path(system).is_file()
-    ):
+    if not system:
+        # Dynamic per-turn prompt: built for THIS workspace, never a frozen
+        # entry-workspace prompt baked into LOOP_CMD at serve boot.
+        try:
+            from .prompt import save_system_prompt
+            from .sensing import probe_host
+
+            prompt_file = save_system_prompt(probe_host(), workspace=ws)
+            args = ["--system", str(prompt_file)] + args
+        except Exception:
+            log.warning("dynamic system prompt unavailable", exc_info=True)
+    elif "\n" not in system and len(system) < 500 and not Path(system).is_file():
         print(f"Error: --system is not a readable file: {system}", file=sys.stderr)
         return 2
     channel = channel_from_argv(args)

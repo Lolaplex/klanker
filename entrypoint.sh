@@ -8,8 +8,9 @@ mkdir -p /data /data/.agents/workspaces /data/.agents/run /data/.agents/cache /d
 export AGENTS_HOST_DIR="${AGENTS_HOST_DIR:-/data/.agents}"
 
 # Deliberately unset: process-global workspace, workdir, home/root aliases and
-# domain-dir overrides. First start creates workspace 'default'; several
-# workspaces with no selection is an explicit-choice error.
+# domain-dir overrides. First start creates workspace 'default'; with several
+# workspaces Host.resolve_entry_workspace() picks AGENTS_WORKSPACE, the
+# configured default_workspace, 'default', or the first workspace by id.
 
 # Optional auto-migration of a legacy host-level layout (container only).
 # Local serves never auto-migrate; run `agents-workspace migrate` by hand.
