@@ -820,6 +820,10 @@ def main(argv: list[str] | None = None) -> int:
             if hasattr(_ha, "ws_invite_auth"):
                 _ha.ws_invite_auth = ws_invite_auth
                 _ha.ws_grant_hook = ws_grant_apply
+            if hasattr(_ha, "remote_turn_dispatch"):
+                from .remote_dispatch import remote_turn_dispatch
+
+                _ha.remote_turn_dispatch = remote_turn_dispatch
         except Exception as exc:  # noqa: BLE001
             log.warning("workspace sync unavailable: %s", exc)
 

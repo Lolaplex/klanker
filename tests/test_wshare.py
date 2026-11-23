@@ -145,6 +145,58 @@ def test_grant_apply_provisions_and_members(host):
             or {}).get("owner") == "dev-owner"     # not displaced
 
 
+def test_remote_dispatch_proxies_bound_session(
+        host, monkeypatch, tmp_path):
+    """session:host=B -> the turn POST forwards to
+    <hub>/v1/remote/dev-B<path> under this device's credential (R5)."""
+    import io
+    import urllib.request
+    from agents_store.db import connect
+    from klanker.remote_dispatch import remote_turn_dispatch
+    from klanker.session import bind_session
+
+    ws = host.create("w1")
+    _pair(host.dir)                                  # own id dev-self
+    conn = connect(ws.dir / "store.db", check_same_thread=False)
+    bind_session(conn, "ses_1", "rhost1")
+    conn.close()
+
+    calls = []
+
+    class Resp:
+        status = 200
+        headers = {"Content-Type": "text/event-stream"}
+        _data = [b"data: ok\n\n"]
+        def read(self, n=-1):
+            return self._data.pop(0) if self._data else b""
+
+    def fake_urlopen(req, timeout=0, **kw):
+        calls.append(req)
+        return Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    import agents_relay.channel_client as _cc
+    monkeypatch.setattr(_cc, "hub_token", lambda hub_id: "dev-tok")
+
+    class Handler:
+        headers = {"Accept": "text/event-stream"}
+        wfile = io.BytesIO()
+        def send_response(self, s): self.status = s
+        def send_header(self, k, v): pass
+        def end_headers(self): pass
+
+    body = {"session": "ses_1", "workspace": "w1", "text": "hi"}
+    assert remote_turn_dispatch(Handler(), "/v1/chat/stream", body)
+    req = calls[0]
+    assert req.full_url.endswith("/v1/remote/dev-rhost1/v1/chat/stream")
+    assert req.headers["X-device-id"] == "dev-self"
+    # unbound session stays local
+    calls.clear()
+    assert not remote_turn_dispatch(
+        Handler(), "/v1/chat/stream", {"session": "free", "workspace": "w1"})
+    assert calls == []
+
+
 def test_reconcile_retires_worker_on_local_flip(host):
     from klanker.wssync import SyncRuntime
 
