@@ -228,8 +228,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dockerfile ran `useradd` twice; the second invocation failed the build.
 - `compose.nas.yaml` starts the container as root (`user: "0"`) so `entrypoint.sh` can chown the bind-mounted `/data` before dropping to the `klanker` user — otherwise mkdir fails and the container restart-loops.
 
-## [0.2.2] - 2026-11-08
-
 ### Added
 - `--workspace PATH` on `klanker` (REPL), `klanker chat`, and `klanker prompt`. It resolves the path, requires an existing directory (exit 2 otherwise), and sets `AGENTS_WORKSPACE_DIR` for this process and the spawned `runner.loop`.
 - System prompt: file edits use `mcp.terminal.edit` for existing files and `mcp.terminal.write` for new ones, never `mcp.terminal.run`. A git workspace adds a coding block with the repo path, the root `AGENTS.md`, the read → edit → test flow, and no `git push`.
@@ -338,8 +336,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial setup and alignment with Autonomous GitHub Standard.
 - Universal, adaptive AI agent shell and terminal companion.
 
-[Unreleased]: https://github.com/Lolaplex/klanker/compare/v0.2.2...HEAD
-[0.2.2]: https://github.com/Lolaplex/klanker/compare/v0.2.1...v0.2.2
+[Unreleased]: https://github.com/Lolaplex/klanker/compare/v0.2.1...HEAD
 [0.2.1]: https://github.com/Lolaplex/klanker/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Lolaplex/klanker/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Lolaplex/klanker/compare/v0.0.2...v0.1.0
