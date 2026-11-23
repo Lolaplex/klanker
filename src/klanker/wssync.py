@@ -591,6 +591,41 @@ def sync_workspaces() -> dict:
     return out
 
 
+def ws_invite_auth(device_id: str, ws_id: str) -> bool:
+    """`/v1/ws/invite` gate (klanker#145): only the ws owner may mint
+    invites. Owner is recorded in workspace.json execution.owner by
+    `workspace share|invite` or an accepted ws:announce."""
+    try:
+        from agents_workspace import Host
+
+        ws = Host.from_env().workspace(ws_id)
+        owner = str(
+            (getattr(ws, "execution", None) or {}).get("owner") or "")
+        return bool(owner) and owner == device_id
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def ws_grant_apply(device_id: str, ws_id: str, granted_by: str) -> None:
+    """Redeemed ws invite on the hub (klanker#145): provision the ws if
+    unseen, add new device + inviter to the member set, keep/record
+    ownership. The share reconcile loop announces the diff."""
+    from agents_workspace import Host
+
+    host = Host.from_env()
+    if not host.workspace_exists(ws_id):
+        host.create(ws_id)
+    ws = host.workspace(ws_id)
+    members = set(getattr(ws, "sync_hosts", None) or ())
+    members.update(d for d in (device_id, granted_by) if d)
+    ex = dict(getattr(ws, "execution", None) or {})
+    if granted_by and not ex.get("owner"):
+        ex["owner"] = granted_by
+    host.update_workspace(
+        ws_id, sync_hosts=sorted(members), sync_policy="synced",
+        execution=ex)
+
+
 def _try_drain(w: WsSync) -> None:
     try:
         w.drain()

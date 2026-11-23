@@ -341,6 +341,13 @@ def build_parser() -> argparse.ArgumentParser:
     ws_members = ws_sub.add_parser(
         "members", help="Show ws sync policy, owner and member devices")
     ws_members.add_argument("id", help="Workspace id")
+    ws_invite = ws_sub.add_parser(
+        "invite", help="Mint a ws-scoped pair code/QR on the hub")
+    ws_invite.add_argument("id", help="Workspace id")
+    ws_invite.add_argument("--hub", default="", help="Hub id (hubs.json)")
+    ws_join = ws_sub.add_parser(
+        "join", help="Redeem a ws invite (pairs device + grants ws)")
+    ws_join.add_argument("invite", help="Invite code or pair URL")
 
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
@@ -651,13 +658,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"workspace {ws.id} created")
             return 0
-        if cmd in ("share", "unshare", "members"):
+        if cmd in ("share", "unshare", "members", "invite", "join"):
             from . import wshare
 
             return {
                 "share": wshare.cmd_ws_share,
                 "unshare": wshare.cmd_ws_unshare,
                 "members": wshare.cmd_ws_members,
+                "invite": wshare.cmd_ws_invite,
+                "join": wshare.cmd_ws_join,
             }[cmd](args)
         for w in host.list_workspaces():
             iso = getattr(w, "isolation", "") or "local"
@@ -796,8 +805,11 @@ def main(argv: list[str] | None = None) -> int:
         _sync_rt = None
         try:
             from agents_relay import channel as _ch, channel_client as _cc
+            from agents_relay import http_adapter as _ha
 
-            from .wssync import SyncRuntime, sync_workspaces
+            from .wssync import (
+                SyncRuntime, sync_workspaces, ws_grant_apply,
+                ws_invite_auth)
 
             _sync_rt = SyncRuntime()
             _ws_map = sync_workspaces()
@@ -805,6 +817,9 @@ def main(argv: list[str] | None = None) -> int:
             _cc.on_client(lambda c: _sync_rt.attach_client(
                 c, [(ws_id, e["dir"]) for ws_id, e in _ws_map.items()]))
             _sync_rt.start()
+            if hasattr(_ha, "ws_invite_auth"):
+                _ha.ws_invite_auth = ws_invite_auth
+                _ha.ws_grant_hook = ws_grant_apply
         except Exception as exc:  # noqa: BLE001
             log.warning("workspace sync unavailable: %s", exc)
 

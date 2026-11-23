@@ -119,6 +119,32 @@ def test_reconcile_announces_member_change(host):
         w.conn.close()
 
 
+def test_invite_auth_owner_only(host):
+    from klanker.wssync import ws_invite_auth
+
+    host.create("w1")
+    assert not ws_invite_auth("dev-x", "w1")       # no owner -> refuse
+    assert not ws_invite_auth("dev-x", "ghost")    # unknown ws -> refuse
+    host.update_workspace(
+        "w1", execution={"owner": "dev-a", "failover": "none"})
+    assert ws_invite_auth("dev-a", "w1")
+    assert not ws_invite_auth("dev-b", "w1")
+
+
+def test_grant_apply_provisions_and_members(host):
+    from klanker.wssync import ws_grant_apply
+
+    ws_grant_apply("dev-new", "w1", "dev-owner")   # ws didn't exist
+    ws = host.workspace("w1")
+    assert set(ws.sync_hosts) == {"dev-new", "dev-owner"}
+    assert (ws.execution or {}).get("owner") == "dev-owner"
+    ws_grant_apply("dev-x", "w1", "")              # later grant
+    assert set(host.workspace("w1").sync_hosts) == {
+        "dev-new", "dev-owner", "dev-x"}
+    assert (host.workspace("w1").execution
+            or {}).get("owner") == "dev-owner"     # not displaced
+
+
 def test_reconcile_retires_worker_on_local_flip(host):
     from klanker.wssync import SyncRuntime
 
