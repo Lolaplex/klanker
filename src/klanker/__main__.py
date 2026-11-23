@@ -123,6 +123,17 @@ def apply_workspace(raw: str | None) -> int | None:
     return 2
 
 
+def _non_negative_int(raw: str) -> int:
+    try:
+        val = int(raw)
+    except ValueError:
+        val = -1
+    if val < 0:
+        raise argparse.ArgumentTypeError(
+            f"must be an integer >= 0 (0 = no limit): {raw!r}")
+    return val
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="klanker",
@@ -284,6 +295,25 @@ def build_parser() -> argparse.ArgumentParser:
     import_p.add_argument("--workspace", default="", help="Data workspace id")
     import_p.add_argument("--apply", action="store_true", help="Write the import (default: preview only)")
 
+    # 3d3. Fold file domains into the workspace store.db
+    migrate_p = sub.add_parser(
+        "migrate", help="Migrate file domains into store.db datoms")
+    migrate_p.add_argument(
+        "--to-store", action="store_true", required=True,
+        help="Import personas/config/memory into <ws>/store.db")
+    migrate_p.add_argument(
+        "--workspace", default="", help="Data workspace id (default: env)")
+    migrate_p.add_argument(
+        "--archive", action="store_true",
+        help="Move imported sources to <ws>/archive/pre-store/ (default: keep;"
+             " the runtime still reads personas/config/memory from files)."
+             " Only the store copy is scrubbed: source files, archived or"
+             " not, keep any raw tokens")
+    migrate_p.add_argument(
+        "--memory-max-bytes", type=_non_negative_int, default=None,
+        help="Skip (and warn about) memory notes larger than this"
+             " (default 1048576, env KLANKER_MIGRATE_MEMORY_MAX_BYTES)")
+
     # 3e. Workspaces
     ws_p = sub.add_parser("workspace", help="Create or list workspaces")
     ws_sub = ws_p.add_subparsers(dest="ws_cmd")
@@ -412,6 +442,7 @@ KNOWN_SUBCOMMANDS = {
     "persona",
     "workspace",
     "import",
+    "migrate",
     "bg",
     "ps",
     "logs",
@@ -548,6 +579,39 @@ def main(argv: list[str] | None = None) -> int:
             workspace=getattr(args, "workspace", "") or "",
             apply=bool(getattr(args, "apply", False)),
         )
+
+    elif args.command == "migrate":
+        from agents_workspace import Workspace
+
+        from .migrate import migrate_to_store
+
+        ws_id = getattr(args, "workspace", "") or ""
+        if ws_id:
+            from agents_workspace import Host
+
+            ws = Host.from_env().workspace(ws_id)
+        else:
+            ws = Workspace.from_env()
+        try:
+            stats = migrate_to_store(
+                ws.dir, archive=bool(args.archive),
+                memory_max_bytes=getattr(args, "memory_max_bytes", None))
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
+        warnings_ = stats.pop("warnings", [])
+        for domain, s in stats.items():
+            line = ", ".join(f"{k}={v}" for k, v in s.items())
+            print(f"{domain}: {line}")
+        for w in warnings_:
+            print(f"warning: {w}", file=sys.stderr)
+        print("note: secrets were scrubbed in store.db only; the source"
+              " files on disk still hold any raw tokens"
+              + (" (originals moved to <ws>/archive/pre-store/)"
+                 if args.archive else "")
+              + " -- rotate or delete them if they contain credentials",
+              file=sys.stderr)
+        return 0
 
     elif args.command == "workspace":
         from agents_workspace import Host
