@@ -88,6 +88,7 @@ def test_reconcile_announces_member_change(host):
     from klanker.wssync import SyncRuntime
 
     ws = host.create("w1", label="shared")
+    host.update_workspace("w1", sync_policy="synced")
     _pair(host.dir)
 
     class FakeClient:
@@ -103,18 +104,22 @@ def test_reconcile_announces_member_change(host):
     rt = SyncRuntime()
     rt.attach_client(client, [( "w1", ws.dir)])
     rt.tick()
-    assert not [k for k, _ in client.sent if k == "ws:announce"]  # open ws silent
+    # first sight of a synced ws announces it (empty member set = closed)
+    ann = [p for k, p in client.sent if k == "ws:announce"]
+    assert ann and ann[0]["sync_hosts"] == []
 
-    host.update_workspace("w1", sync_hosts=["dev-self", "dev-b"])
+    client.sent.clear()
+    host.update_workspace(
+        "w1", sync_policy="synced", sync_hosts=["dev-self", "dev-b"])
     rt.tick()
     ann = [p for k, p in client.sent if k == "ws:announce"]
     assert ann and ann[0]["sync_hosts"] == ["dev-b", "dev-self"]
     assert ann[0]["owner"] == "dev-self"
 
-    host.update_workspace("w1", sync_hosts=[])   # reopen
+    host.update_workspace("w1", sync_hosts=[])   # back to closed
     rt.tick()
     ann = [p for k, p in client.sent if k == "ws:announce"]
-    assert ann[-1]["open"] is True
+    assert ann[-1]["sync_hosts"] == []
     for w in rt._client_workers.get("hub1", []):
         w.conn.close()
 
@@ -201,6 +206,8 @@ def test_reconcile_retires_worker_on_local_flip(host):
     from klanker.wssync import SyncRuntime
 
     ws = host.create("w1")
+    host.update_workspace(
+        "w1", sync_policy="synced", sync_hosts=["dev-self"])
     _pair(host.dir)
 
     class FakeClient:
@@ -215,7 +222,8 @@ def test_reconcile_retires_worker_on_local_flip(host):
     client = FakeClient()
     rt = SyncRuntime()
     rt.attach_client(client, [("w1", ws.dir)])
-    host.update_workspace("w1", sync_policy="local")
+    host.update_workspace(
+        "w1", sync_policy="local", sync_hosts=[])
     rt.tick()
     assert rt._client_workers["hub1"] == []
     assert any(k == "ws:revoke" for k, _ in client.sent)

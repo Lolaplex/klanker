@@ -66,9 +66,14 @@ def _serve(host_dir, port: int, token: str, env_extra: dict | None = None):
     })
     if env_extra:
         env.update(env_extra)
+    log = open(
+        os.path.join(
+            os.environ.get("KLANKER_E2E_LOG_DIR") or
+            __import__("tempfile").gettempdir(),
+            f"e2e-serve-{port}.log"), "w")
     return subprocess.Popen(
         [sys.executable, "-m", "klanker", "serve"],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        env=env, stdout=log, stderr=subprocess.STDOUT,
         text=True)
 
 
@@ -134,10 +139,14 @@ def test_ws_share_two_serves_end_to_end(e2e):
          "from agents_store.db import connect\n"
          "from agents_store.ingest import ingest\n"
          "from agents_workspace import Host\n"
+         "from klanker.msgsync import ensure_domain\n"
+         "from agents_store.store import Store\n"
          "ws = Host.from_env().workspace('e2ews')\n"
          "c = connect(ws.dir / 'store.db')\n"
-         "ingest(c, 'test@e2e', 1, 'e2e.1',"
-         "        [('e2e:probe', 'e2e:val', 'sync-ok', True)])\n"
+         "ensure_domain(c)\n"
+         "s = Store(c)\n"
+         "ingest(c, 'test@e2e', 1, s._clock.tick(),"
+         "        [('e2e:probe', 'msg:text', 'sync-ok', True)])\n"
          "c.close()"],
         env=env_a, capture_output=True, text=True, timeout=30)
     assert wr.returncode == 0, wr.stderr[-500:]
@@ -160,7 +169,7 @@ def test_ws_share_two_serves_end_to_end(e2e):
              "    c = connect(ws.dir / 'store.db')\n"
              "    rows = list(c.execute(\n"
              "        \"SELECT v FROM v_current WHERE e='e2e:probe' AND"
-             "         a='e2e:val'\"))\n"
+             "         a='msg:text'\"))\n"
              "    print(rows[0][0] if rows else '')\n"
              "except Exception:\n"
              "    print('')"],
