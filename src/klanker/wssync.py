@@ -16,6 +16,7 @@ Delivery is ack-gated: a peer's cursor advances only on `ack`, so the
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -29,7 +30,7 @@ from .msgsync import local_origin_prefixes
 
 log = logging.getLogger(__name__)
 
-TICK_SEC = 60.0
+TICK_SEC = float(os.environ.get("KLANKER_SYNC_TICK_SEC", "60") or 60)
 
 
 class WsSync:
@@ -129,6 +130,11 @@ class SyncRuntime:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._client_workers: dict[str, list[WsSync]] = {}   # hub_id -> [WsSync]
+        # hub role: ws:announce delivery is fire-once per (device, ws,
+        # member-set). Frames to offline devices drop silently, so the
+        # announce re-fires on the device's next upstream contact —
+        # membership survives disconnects (klanker#145).
+        self._announce_sent: dict[tuple[str, str], object] = {}
         self._hub_workers: dict[tuple[str, str], WsSync] = {}  # (ws, dev) -> WsSync
         self._ws_lookup: dict[str, Path] = {}                # hub-side ws dirs
         self._hub = None
@@ -232,6 +238,7 @@ class SyncRuntime:
             self._ws_lookup = dict(ws_lookup)
 
         def op_handler(device_id: str, payload: dict) -> None:
+            self._ensure_announced(hub, device_id)
             ws_id = str(payload.get("ws") or "")
             allowed = (self._ws_lookup.get(ws_id) or {}).get("hosts")
             if allowed is not None and device_id not in allowed:
@@ -253,12 +260,14 @@ class SyncRuntime:
             hub.broadcast("op", payload, skip=skip)
 
         def ack_handler(device_id: str, payload: dict) -> None:
+            self._ensure_announced(hub, device_id)
             ws_id = str(payload.get("ws") or "")
             w = self._hub_worker(device_id, ws_id)
             if w is not None:
                 w.on_ack(payload)
 
         def ws_handler(device_id: str, kind: str, payload: dict) -> None:
+            self._ensure_announced(hub, device_id)
             ws_id = str(payload.get("ws") or "")
             if not ws_id:
                 return
@@ -271,6 +280,51 @@ class SyncRuntime:
         hub.set_ack_handler(ack_handler)
         if hasattr(hub, "set_ws_handler"):
             hub.set_ws_handler(ws_handler)
+        if hasattr(hub, "set_connect_handler"):
+            hub.set_connect_handler(
+                lambda dev: self._ensure_announced(hub, dev))
+
+    def _ensure_announced(self, hub, device_id: str) -> None:
+        """Publish ws:announce for every member ws the device has not
+        heard of (or whose member set changed since). Called on each
+        upstream contact — ws frames to offline devices are dropped, so
+        the next contact is the delivery opportunity."""
+        with self._lock:
+            lookup = dict(self._ws_lookup)
+        for ws_id, entry in lookup.items():
+            self._hub_announce_to(hub, device_id, ws_id, entry)
+
+    def _hub_announce_to(self, hub, device_id: str, ws_id: str,
+                         entry: dict) -> bool:
+        """Fire-once-per-member-set announce + backfill drain."""
+        hosts = entry.get("hosts")
+        if hosts is not None and device_id not in hosts:
+            return False
+        key = (device_id, ws_id)
+        if self._announce_sent.get(key) == hosts:
+            return False
+        label, owner = "", ""
+        try:
+            from agents_workspace import Host
+
+            ws = Host.from_env().workspace(ws_id)
+            label = str(getattr(ws, "label", "") or "")
+            owner = str((getattr(ws, "execution", None) or {})
+                        .get("owner") or "")
+        except Exception:  # noqa: BLE001
+            pass
+        rc = hub.publish(device_id, "ws:announce", {
+            "ws": ws_id, "label": label, "owner": owner,
+            "sync_hosts": sorted(hosts or ()),
+            "open": hosts is None,
+            "seq": int(time.time() * 1000)})
+        if rc is not None and rc < 0:
+            return False  # offline: stays unmarked, connect handler retries
+        self._announce_sent[key] = hosts
+        w = self._hub_worker(device_id, ws_id)
+        if w is not None:
+            _try_drain(w)
+        return True
 
     def _hub_announce(self, hub, device_id: str, ws_id: str,
                       payload: dict) -> None:
@@ -339,12 +393,13 @@ class SyncRuntime:
                "open": new_hosts is None,
                "seq": seq}
         new_set = set(new_hosts or ())
+        with self._lock:
+            entry = dict(self._ws_lookup.get(ws_id) or {})
         for dev in sorted(new_set - old_members):
-            hub.publish(dev, "ws:announce", out)
-            w = self._hub_worker(dev, ws_id)
-            if w is not None:
-                _try_drain(w)  # full-tail backfill for the new member
+            entry["hosts"] = new_hosts
+            self._hub_announce_to(hub, dev, ws_id, entry)
         for dev in sorted(old_members - new_set):
+            self._announce_sent.pop((dev, ws_id), None)
             hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
 
     def _hub_revoke(self, hub, device_id: str, ws_id: str) -> None:
@@ -509,6 +564,7 @@ class SyncRuntime:
                 with self._lock:
                     self._ws_lookup.pop(ws_id, None)
                 for dev in sorted(old):
+                    self._announce_sent.pop((dev, ws_id), None)
                     hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
                 continue
             new = set(f.get("hosts") or ())
@@ -527,18 +583,32 @@ class SyncRuntime:
                        "seq": seq}
             for dev in sorted(new - old):
                 hub.publish(dev, "ws:announce", payload)
+                self._announce_sent[(dev, ws_id)] = new
                 w = self._hub_worker(dev, ws_id)
                 if w is not None:
                     _try_drain(w)
             for dev in sorted(old - new):
+                self._announce_sent.pop((dev, ws_id), None)
                 hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
             for dev in sorted(new & old):
                 hub.publish(dev, "ws:announce", payload)
+                self._announce_sent[(dev, ws_id)] = new
         for ws_id, f in fresh.items():
             if ws_id not in lookup:
+                entry = {"dir": f["dir"], "hosts": f.get("hosts")}
                 with self._lock:
-                    self._ws_lookup[ws_id] = {
-                        "dir": f["dir"], "hosts": f.get("hosts")}
+                    self._ws_lookup[ws_id] = entry
+                # newly discovered ws: announce to every member —
+                # offline devices pick it up on their next contact via
+                # _ensure_announced (klanker#145)
+                hosts = f.get("hosts")
+                for dev in sorted(hosts or ()):
+                    self._hub_announce_to(hub, dev, ws_id, entry)
+        # periodic sweep: closes the connect-before-discovery race —
+        # a device that linked up before the ws was discovered still
+        # gets its announce on the next tick
+        for dev in hub.connected_devices():
+            self._ensure_announced(hub, dev)
 
     def _ws_owner(self, ws_id: str) -> str:
         try:
