@@ -135,6 +135,8 @@ class SyncRuntime:
         self._hub_node = ""
         self._local_node: str | None = None
         self._thread: threading.Thread | None = None
+        self._clients: dict[str, object] = {}            # hub_id -> client
+        self._share_state: dict[tuple, frozenset | None] = {}
 
     def local_node(self) -> str:
         if self._local_node is None:
@@ -165,6 +167,7 @@ class SyncRuntime:
                 client, workers, kind, p)
         with self._lock:
             self._client_workers[client.hub_id] = workers
+            self._clients[client.hub_id] = client
         for w in workers:
             _try_drain(w)  # catch-up on connect
 
@@ -195,14 +198,21 @@ class SyncRuntime:
             log.info("ws %s: provisioned from share announce", ws_id)
         else:
             ws = host.workspace(ws_id)
+        members = list(payload.get("sync_hosts") or [])
         try:
             host.update_workspace(
                 ws_id,
                 label=str(payload.get("label") or "") or None,
-                sync_hosts=list(payload.get("sync_hosts") or []),
-                sync_policy="synced")
+                sync_hosts=members,
+                sync_policy="synced",
+                execution={
+                    **(getattr(ws, "execution", None) or {}),
+                    "owner": str(payload.get("owner") or "")})
         except TypeError:
             pass  # older agents-workspace: ws exists, policy fields absent
+        with self._lock:
+            self._share_state[("spoke", client.hub_id, ws_id)] = (
+                frozenset(members) or None)
         if not any(w.ws_id == ws_id for w in workers):
             w = WsSync(
                 ws_id, ws.dir, client.device_id, "hub",
@@ -300,13 +310,17 @@ class SyncRuntime:
                 "ws %s: announce from non-member %s dropped", ws_id, device_id)
             return
         offered = payload.get("sync_hosts")
-        members = set(old_members if offered is None else
-                      (str(d) for d in offered))
-        members.add(device_id)
-        if owner:
-            members.add(owner)
+        if payload.get("open"):
+            members: set | None = None  # reopen to every paired device
+        else:
+            members = set(old_members if offered is None else
+                          (str(d) for d in offered))
+            members.add(device_id)
+            if owner:
+                members.add(owner)
         try:
-            host.update_workspace(ws_id, sync_hosts=sorted(members))
+            host.update_workspace(
+                ws_id, sync_hosts=sorted(members) if members else [])
             if not owner:
                 host.update_workspace(
                     ws_id,
@@ -314,21 +328,23 @@ class SyncRuntime:
                 owner = device_id
         except TypeError:
             pass
+        new_hosts = frozenset(members) if members else None
         with self._lock:
-            self._ws_lookup[ws_id] = {
-                "dir": ws.dir, "hosts": frozenset(members) or None}
+            self._ws_lookup[ws_id] = {"dir": ws.dir, "hosts": new_hosts}
         seq = payload.get("seq") or 0
         out = {"ws": ws_id,
                "label": str(payload.get("label") or ""),
                "owner": owner or device_id,
-               "sync_hosts": sorted(members),
+               "sync_hosts": sorted(new_hosts or ()),
+               "open": new_hosts is None,
                "seq": seq}
-        for dev in sorted(members - old_members):
+        new_set = set(new_hosts or ())
+        for dev in sorted(new_set - old_members):
             hub.publish(dev, "ws:announce", out)
             w = self._hub_worker(dev, ws_id)
             if w is not None:
                 _try_drain(w)  # full-tail backfill for the new member
-        for dev in sorted(old_members - members):
+        for dev in sorted(old_members - new_set):
             hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
 
     def _hub_revoke(self, hub, device_id: str, ws_id: str) -> None:
@@ -390,6 +406,10 @@ class SyncRuntime:
 
     def tick(self) -> None:
         """Project new trace messages once per ws dir, then drain all."""
+        try:
+            self._reconcile_shares()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ws share reconcile failed: %s", exc)
         workers = self._workers()
         projected: set[str] = set()
         for w in workers:
@@ -406,6 +426,128 @@ class SyncRuntime:
                 w.drain()
             except Exception as exc:  # noqa: BLE001
                 log.warning("ws %s: drain failed: %s", w.ws_id, exc)
+
+    def _reconcile_shares(self) -> None:
+        """Diff the local ws registry against live sync state (klanker#145
+        R3): `klanker ws share/unshare` only edits workspace.json — this
+        loop emits announce/revoke frames for member-set changes, spawns
+        workers for newly synced ws, retires workers for ws that went
+        local. Desired-state reconciliation; self-heals after disconnect."""
+        try:
+            fresh = sync_workspaces()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ws reconcile: registry scan failed: %s", exc)
+            return
+        seq = int(time.time() * 1000)
+
+        # spoke role: announce member-set changes; retire gone-local ws
+        with self._lock:
+            clients = dict(self._clients)
+            cws = {h: list(v) for h, v in self._client_workers.items()}
+        for hub_id, client in clients.items():
+            workers = cws.get(hub_id, [])
+            known = {w.ws_id for w in workers}
+            for w in list(workers):
+                if w.ws_id in fresh:
+                    continue
+                with self._lock:
+                    if w in self._client_workers.get(hub_id, []):
+                        self._client_workers[hub_id].remove(w)
+                self._share_state.pop(("spoke", hub_id, w.ws_id), None)
+                try:
+                    client.send("ws:revoke", {"ws": w.ws_id, "seq": seq})
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    w.conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            for ws_id, entry in fresh.items():
+                hosts = entry.get("hosts")
+                key = ("spoke", hub_id, ws_id)
+                seen = key in self._share_state
+                prev = self._share_state.get(key)
+                changed = not seen or prev != hosts
+                self._share_state[key] = hosts
+                # announce member-set transitions; open ws that was never
+                # restricted stays silent (hub treats it as open anyway)
+                announce = changed and (
+                    hosts is not None or (seen and prev is not None))
+                if announce:
+                    try:
+                        client.send("ws:announce", {
+                            "ws": ws_id,
+                            "label": str(entry.get("label") or ""),
+                            "owner": str(getattr(client, "device_id", "")
+                                         or ""),
+                            "sync_hosts": sorted(hosts or ()),
+                            "open": hosts is None,
+                            "seq": seq})
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "ws %s: announce send failed: %s", ws_id, exc)
+                if ws_id not in known:
+                    w = WsSync(
+                        ws_id, entry["dir"], client.device_id, "hub",
+                        lambda k, p, c=client: c.send(k, p),
+                        origin_only=True, local_node=self.local_node())
+                    with self._lock:
+                        self._client_workers.setdefault(
+                            hub_id, []).append(w)
+                    _try_drain(w)
+
+        # hub role: registry edits on the hub host fan out the same way
+        hub = self._hub
+        if hub is None:
+            return
+        with self._lock:
+            lookup = dict(self._ws_lookup)
+        for ws_id, entry in lookup.items():
+            old = set(entry.get("hosts") or ())
+            f = fresh.get(ws_id)
+            if f is None:
+                with self._lock:
+                    self._ws_lookup.pop(ws_id, None)
+                for dev in sorted(old):
+                    hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
+                continue
+            new = set(f.get("hosts") or ())
+            if old == new:
+                continue
+            with self._lock:
+                self._ws_lookup[ws_id] = {
+                    "dir": f["dir"],
+                    "hosts": frozenset(new) or None}
+            payload = {"ws": ws_id,
+                       "label": str(f.get("label") or ""),
+                       "owner": str(
+                           (self._ws_owner(ws_id) or "")),
+                       "sync_hosts": sorted(new),
+                       "open": not new,
+                       "seq": seq}
+            for dev in sorted(new - old):
+                hub.publish(dev, "ws:announce", payload)
+                w = self._hub_worker(dev, ws_id)
+                if w is not None:
+                    _try_drain(w)
+            for dev in sorted(old - new):
+                hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
+            for dev in sorted(new & old):
+                hub.publish(dev, "ws:announce", payload)
+        for ws_id, f in fresh.items():
+            if ws_id not in lookup:
+                with self._lock:
+                    self._ws_lookup[ws_id] = {
+                        "dir": f["dir"], "hosts": f.get("hosts")}
+
+    def _ws_owner(self, ws_id: str) -> str:
+        try:
+            from agents_workspace import Host
+            ws = Host.from_env().workspace(ws_id)
+            return str((getattr(ws, "execution", None) or {}).get("owner")
+                       or "")
+        except Exception:  # noqa: BLE001
+            return ""
 
     def _workers(self) -> list[WsSync]:
         with self._lock:
@@ -444,6 +586,7 @@ def sync_workspaces() -> dict:
         out[str(ws.id)] = {
             "dir": ws.dir,
             "hosts": frozenset(str(h) for h in hosts) or None,
+            "label": str(getattr(ws, "label", "") or ""),
         }
     return out
 

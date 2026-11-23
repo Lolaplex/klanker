@@ -325,6 +325,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Isolation backend (default: AGENTS_WS_ISOLATION or local)")
     ws_create.add_argument("--image", default="", help="Container image (isolation=container)")
     ws_sub.add_parser("list", help="List workspaces")
+    ws_share = ws_sub.add_parser(
+        "share", help="Share a workspace with a paired device (klanker#145)")
+    ws_share.add_argument("id", help="Workspace id")
+    ws_share.add_argument(
+        "--to", required=True,
+        help="Target channel device id (hub /v1/hub/devices)")
+    ws_unshare = ws_sub.add_parser(
+        "unshare", help="Revoke a device's access to a workspace")
+    ws_unshare.add_argument("id", help="Workspace id")
+    ws_unshare.add_argument("--to", default="", help="Device id to revoke")
+    ws_unshare.add_argument(
+        "--open", action="store_true",
+        help="Reopen the workspace to every paired device")
+    ws_members = ws_sub.add_parser(
+        "members", help="Show ws sync policy, owner and member devices")
+    ws_members.add_argument("id", help="Workspace id")
 
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
@@ -635,6 +651,14 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"workspace {ws.id} created")
             return 0
+        if cmd in ("share", "unshare", "members"):
+            from . import wshare
+
+            return {
+                "share": wshare.cmd_ws_share,
+                "unshare": wshare.cmd_ws_unshare,
+                "members": wshare.cmd_ws_members,
+            }[cmd](args)
         for w in host.list_workspaces():
             iso = getattr(w, "isolation", "") or "local"
             print(f"{w.id}  {w.label or ''}  isolation={iso}")
