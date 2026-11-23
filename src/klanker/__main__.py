@@ -123,6 +123,17 @@ def apply_workspace(raw: str | None) -> int | None:
     return 2
 
 
+def _non_negative_int(raw: str) -> int:
+    try:
+        val = int(raw)
+    except ValueError:
+        val = -1
+    if val < 0:
+        raise argparse.ArgumentTypeError(
+            f"must be an integer >= 0 (0 = no limit): {raw!r}")
+    return val
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="klanker",
@@ -299,7 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
              " Only the store copy is scrubbed: source files, archived or"
              " not, keep any raw tokens")
     migrate_p.add_argument(
-        "--memory-max-bytes", type=int, default=None,
+        "--memory-max-bytes", type=_non_negative_int, default=None,
         help="Skip (and warn about) memory notes larger than this"
              " (default 1048576, env KLANKER_MIGRATE_MEMORY_MAX_BYTES)")
 
@@ -581,9 +592,13 @@ def main(argv: list[str] | None = None) -> int:
             ws = Host.from_env().workspace(ws_id)
         else:
             ws = Workspace.from_env()
-        stats = migrate_to_store(
-            ws.dir, archive=bool(args.archive),
-            memory_max_bytes=getattr(args, "memory_max_bytes", None))
+        try:
+            stats = migrate_to_store(
+                ws.dir, archive=bool(args.archive),
+                memory_max_bytes=getattr(args, "memory_max_bytes", None))
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 2
         warnings_ = stats.pop("warnings", [])
         for domain, s in stats.items():
             line = ", ".join(f"{k}={v}" for k, v in s.items())
