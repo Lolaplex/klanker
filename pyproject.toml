@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "klanker"
-version = "0.2.2"
+version = "0.3.0"
 description = "Adaptive autonomous agent runtime and terminal companion"
 readme = "README.md"
 license = "MIT"
@@ -12,24 +12,24 @@ license-files = ["LICENSE"]
 authors = [{ name = "Lolaplex" }]
 requires-python = ">=3.10"
 dependencies = [
-    "agents-workspace>=0.1.0,<1",
-    "agents-harness[mcp]>=0.1.2",
-    "agents-relay>=0.1.1",
-    "agents-memory>=1.2.0",
-    "agents-sync>=0.1.0",
-    "agents-traces>=0.1.0",
-    "agents-terminal>=0.0.6",
-    "agents-calendar>=0.1.0",
-    "agents-keys>=0.0.4",
-    "agents-voice>=0.1.0",
+    "agents-workspace>=0.2.0,<1",
+    "agents-harness[mcp]>=0.2.0",
+    "agents-relay>=0.2.0",
+    "agents-memory>=2.0.0",
+    "agents-sync>=0.2.0",
+    "agents-traces>=0.2.0",
+    "agents-terminal>=0.1.0",
+    "agents-calendar>=0.2.0",
+    "agents-keys>=0.0.5",
+    "agents-voice>=0.1.1",
     "agents-store>=0.0.1",
-    "agents-browser>=0.45.0",
+    "agents-browser>=0.47.0",
 ]
 
 [project.optional-dependencies]
 tui = ["pyratatui>=0.2.9"]
 repl = [
-    "agents-relay>=0.1.1",
+    "agents-relay>=0.2.0",
     "pyratatui>=0.2.9",
 ]
 all = [
