@@ -17,6 +17,13 @@ memory text (markdown and YAML) is redacted line by line and by value
 pattern. Only env-indirection names (``"OPENAI_API_KEY"``) may be
 recorded.
 
+Only the store copy is scrubbed: the source files on disk keep any raw
+tokens -- ``--archive`` moves the originals unchanged into the archive,
+it does not redact them. Rotate or delete credentials found there.
+
+Memory notes larger than ``memory_max_bytes`` (default 1 MiB, env
+``KLANKER_MIGRATE_MEMORY_MAX_BYTES``) are skipped with a warning.
+
 Sources stay in place by default -- the runtime still reads
 personas/config/memory from files. ``archive=True`` (CLI ``--archive``)
 moves them to <ws>/archive/pre-store/ after their tx commits.
@@ -24,7 +31,9 @@ moves them to <ws>/archive/pre-store/ after their tx commits.
 from __future__ import annotations
 
 import json
+import logging
 import math
+import os
 import re
 import shutil
 from pathlib import Path
@@ -33,6 +42,8 @@ from agents_store.db import connect
 from agents_store.ingest import ingest
 
 from .msgsync import actor, ensure_domain, local_node_id
+
+log = logging.getLogger(__name__)
 
 MIGRATE_ATTRS = {
     "persona:id": ("text", "one"),
@@ -90,8 +101,10 @@ _INLINE_SECRETS = [
     re.compile(r"(?i)(?<=\bbearer\s)[A-Za-z0-9._~+/=-]{12,}"),
 ]
 # scheme://user:password@host -> keep user, redact the password
-_URL_PASSWORD = re.compile(r"(?P<pre>[a-z][a-z0-9+.-]*://[^\s/:@]+:)"
-                           r"(?P<pw>[^\s/@]+)@", re.I)
+# bounded quantifiers + left boundary keep this linear on huge tokens
+_URL_PASSWORD = re.compile(
+    r"(?<![a-z0-9+.-])(?P<pre>[a-z][a-z0-9+.-]{0,31}://[^\s/:@]{1,256}:)"
+    r"(?P<pw>[^\s/@]{1,256})@", re.I)
 # ``key: value`` / ``key = value`` / ``export KEY=value`` assignments in
 # text (markdown, YAML, env snippets) whose key is secret-named.
 _ASSIGN = re.compile(
@@ -374,6 +387,18 @@ def migrate_config(conn, ws_dir: Path, archive: bool,
 
 
 MEMORY_SUFFIXES = (".md", ".yaml", ".yml")
+MEMORY_MAX_BYTES = 1024 * 1024
+MEMORY_MAX_ENV = "KLANKER_MIGRATE_MEMORY_MAX_BYTES"
+
+
+def _memory_max_bytes(override: int | None = None) -> int:
+    if override is not None:
+        return int(override)
+    raw = os.environ.get(MEMORY_MAX_ENV, "").strip()
+    try:
+        return int(raw) if raw else MEMORY_MAX_BYTES
+    except ValueError:
+        return MEMORY_MAX_BYTES
 
 
 def _memory_files(root: Path):
@@ -389,12 +414,27 @@ def _memory_files(root: Path):
 
 
 def migrate_memory(conn, ws_dir: Path, archive: bool,
-                   node: str = "") -> dict:
+                   node: str = "", max_bytes: int | None = None,
+                   warnings: list | None = None) -> dict:
     root = ws_dir / "memory"
-    stats = {"imported": 0, "dupes": 0, "archived": 0, "redacted": 0}
+    stats = {"imported": 0, "dupes": 0, "archived": 0, "redacted": 0,
+             "skipped_large": 0}
     if not root.is_dir():
         return stats
+    limit = _memory_max_bytes(max_bytes)
     for src, rel in list(_memory_files(root)):
+        try:
+            size = src.stat().st_size
+        except OSError:
+            continue
+        if limit > 0 and size > limit:
+            stats["skipped_large"] += 1
+            msg = (f"memory/{rel.as_posix()}: {size} bytes > {limit},"
+                   " skipped (not imported, not archived)")
+            log.warning("migrate: %s", msg)
+            if warnings is not None:
+                warnings.append(msg)
+            continue
         # top-level notes keep their historic slug (stem); nested files
         # and YAML use the relative path so names never collide
         if len(rel.parts) == 1 and src.suffix.lower() == ".md":
@@ -432,7 +472,8 @@ def migrate_memory(conn, ws_dir: Path, archive: bool,
 
 
 def migrate_to_store(ws_dir: str | Path, *, archive: bool = False,
-                     node: str = "") -> dict:
+                     node: str = "",
+                     memory_max_bytes: int | None = None) -> dict:
     """Import file domains into store.db. Sources are kept unless
     ``archive=True`` -- the runtime still reads the files."""
     ws_dir = Path(ws_dir)
@@ -440,11 +481,13 @@ def migrate_to_store(ws_dir: str | Path, *, archive: bool = False,
     conn = connect(ws_dir / "store.db")
     try:
         ensure_migrate_domain(conn)
-        out = {}
-        for domain, fn in (("personas", migrate_personas),
-                           ("config", migrate_config),
-                           ("memory", migrate_memory)):
-            out[domain] = fn(conn, ws_dir, archive, node)
+        out: dict = {}
+        warnings: list[str] = []
+        out["personas"] = migrate_personas(conn, ws_dir, archive, node)
+        out["config"] = migrate_config(conn, ws_dir, archive, node)
+        out["memory"] = migrate_memory(conn, ws_dir, archive, node,
+                                       memory_max_bytes, warnings)
+        out["warnings"] = warnings
         return out
     finally:
         conn.close()
