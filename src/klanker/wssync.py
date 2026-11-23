@@ -176,11 +176,19 @@ class SyncRuntime:
 
         def op_handler(device_id: str, payload: dict) -> None:
             ws_id = str(payload.get("ws") or "")
+            allowed = (self._ws_lookup.get(ws_id) or {}).get("hosts")
+            if allowed is not None and device_id not in allowed:
+                # Inbound write ACL (ws-share spec klanker#145 R1):
+                # sync_hosts is THE member set — ops from devices outside
+                # it must never enter the hub copy nor be fanned out.
+                log.warning(
+                    "ws %s: dropping op from non-member device %s",
+                    ws_id, device_id)
+                return
             w = self._hub_worker(device_id, ws_id)
             if w is None:
                 return  # unknown or local-policy ws: never ingest, never fan out
             w.on_op(payload)
-            allowed = (self._ws_lookup.get(ws_id) or {}).get("hosts")
             skip = {device_id}
             if allowed:
                 skip |= {d for d in hub.connected_devices()
@@ -268,7 +276,9 @@ def sync_workspaces() -> dict:
 
     `sync_policy=local` workspaces never appear on the wire (ws#43):
     no spoke workers, no hub-side ingest, no fan-out. `sync_hosts`
-    restricts hub fan-out to the listed devices; empty/None = all.
+    is THE member set for the ws (klanker#145): it gates BOTH hub
+    fan-out and inbound writes — ops from non-member devices are
+    dropped. empty/None = open, every paired device may write.
     Entries are hub channel device ids (the id this hub minted at
     pairing, `/v1/hub/devices`), compared against
     `hub.connected_devices()` -- not Host.host_id() values.

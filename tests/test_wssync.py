@@ -179,6 +179,59 @@ def test_sync_workspaces_host_allowlist(tmp_path, monkeypatch):
     assert m[str(a.id)]["hosts"] == frozenset({"dev-b"})
 
 
+def test_hub_drops_ops_from_non_member_device(tmp_path):
+    """R1 write ACL: ops for a ws from a device outside sync_hosts are
+    dropped before ingest — no worker, no datoms, no fan-out."""
+    from agents_store import Change
+    from klanker.wssync import SyncRuntime
+
+    hub_dir = tmp_path / "hub"
+    _seed_grants(hub_dir)
+    rt = SyncRuntime()
+
+    class FakeHub:
+        def __init__(self):
+            self.op_handler = None
+            self.sent = []
+        def set_op_handler(self, h): self.op_handler = h
+        def set_ack_handler(self, h): pass
+        def broadcast(self, kind, payload, skip=frozenset()):
+            self.sent.append((kind, payload, set(skip or ())))
+        def connected_devices(self):
+            return ["dev-a", "dev-b", "evil"]
+        def publish(self, device_id, kind, payload): pass
+
+    hub = FakeHub()
+    rt.attach_hub(
+        hub,
+        {"ws1": {"dir": hub_dir, "hosts": frozenset({"dev-a", "dev-b"})}},
+        "hubNode")
+
+    # mint a real op frame on a foreign store, sent by a non-member
+    src_dir = tmp_path / "src"
+    _seed_grants(src_dir)
+    src = WsSync("ws1", src_dir, "evilNode", "hub",
+                 lambda k, p: None, local_node="evilNode")
+    res = src.store.transact([Change(e=None, a="title", v="forged")],
+                             wrapper="test")
+    frames = []
+    src._send = lambda kind, p: frames.append((kind, p))
+    src.drain()
+    op_payload = next(p for k, p in frames if k == "op")
+
+    hub.op_handler("evil", op_payload)
+    assert ("ws1", "evil") not in rt._hub_workers   # no worker spawned
+    hconn = connect(hub_dir / "store.db", check_same_thread=False)
+    assert Store(hconn).view(res.entity) == {}
+    assert hub.sent == []                            # nothing fanned out
+
+    # same op from a member: ingested and fanned out to other members
+    hub.op_handler("dev-a", op_payload)
+    assert Store(hconn).view(res.entity) != {}
+    assert hub.sent and hub.sent[0][2] == {"dev-a", "evil"}
+    hconn.close()
+
+
 def _local_origins_supported() -> bool:
     import inspect
 
