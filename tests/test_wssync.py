@@ -232,6 +232,112 @@ def test_hub_drops_ops_from_non_member_device(tmp_path):
     hconn.close()
 
 
+class _FakeShareHub:
+    """Minimal hub channel double for ws-share control frames."""
+
+    def __init__(self):
+        self.ws_handler = None
+        self.op_handler = None
+        self.published = []   # (device, kind, payload)
+
+    def set_op_handler(self, h): self.op_handler = h
+    def set_ack_handler(self, h): pass
+    def set_ws_handler(self, h): self.ws_handler = h
+    def broadcast(self, kind, payload, skip=frozenset()): pass
+    def connected_devices(self): return []
+    def publish(self, device_id, kind, payload):
+        self.published.append((device_id, kind, payload))
+
+
+@_POLICY
+def test_hub_announce_provisions_and_fans_out(tmp_path, monkeypatch):
+    """ws:announce from a device provisions the ws on the hub, records
+    ownership, and pushes announce+backfill to newly added members."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    rt = SyncRuntime()
+    hub = _FakeShareHub()
+    rt.attach_hub(hub, {}, "hubNode")
+
+    hub.ws_handler("dev-a", "ws:announce", {
+        "ws": "w1", "label": "shared-ws",
+        "sync_hosts": ["dev-b"], "seq": 1})
+    ws = host.workspace("w1")
+    assert ws.dir.is_dir()                       # provisioned on hub
+    assert set(ws.sync_hosts) == {"dev-a", "dev-b"}
+    assert (ws.execution or {}).get("owner") == "dev-a"
+    assert ("dev-b", "ws:announce") in [
+        (d, k) for d, k, _ in hub.published]
+    assert ("w1", "dev-b") in rt._hub_workers    # backfill worker exists
+    # owner cannot be displaced by another device
+    hub.ws_handler("dev-b", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-b", "evil"], "seq": 2})
+    ws = host.workspace("w1")
+    assert set(ws.sync_hosts) == {"dev-a", "dev-b"}   # unchanged
+
+
+@_POLICY
+def test_hub_announce_revokes_removed_member(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    rt = SyncRuntime()
+    hub = _FakeShareHub()
+    rt.attach_hub(hub, {}, "hubNode")
+
+    hub.ws_handler("dev-a", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-b", "dev-c"], "seq": 1})
+    hub.published.clear()
+    hub.ws_handler("dev-a", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-b"], "seq": 2})
+    assert ("dev-c", "ws:revoke") in [
+        (d, k) for d, k, _ in hub.published]
+    assert set(host.workspace("w1").sync_hosts) == {"dev-a", "dev-b"}
+
+
+@_POLICY
+def test_spoke_announce_provisions_and_revoke_freezes(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    rt = SyncRuntime()
+
+    class FakeClient:
+        hub_id = "hub1"
+        device_id = "dev-b"
+        def __init__(self):
+            self.sent = []
+            self.on_ws = None
+            self.on_op = None
+            self.on_ack = None
+            self.on_hello = None
+        def send(self, kind, payload): self.sent.append((kind, payload))
+
+    client = FakeClient()
+    rt.attach_client(client, [])       # spoke with no local ws yet
+    client.on_ws("ws:announce", {
+        "ws": "w1", "label": "shared-ws", "owner": "dev-a",
+        "sync_hosts": ["dev-a", "dev-b"], "seq": 1})
+    assert host.workspace_exists("w1")
+    workers = rt._client_workers["hub1"]
+    assert [w.ws_id for w in workers] == ["w1"]
+    workers[0].conn.close()
+    client.on_ws("ws:revoke", {"ws": "w1", "seq": 2})
+    assert rt._client_workers["hub1"] == []
+    assert host.workspace("w1").sync_policy == "local"
+
+
 def _local_origins_supported() -> bool:
     import inspect
 

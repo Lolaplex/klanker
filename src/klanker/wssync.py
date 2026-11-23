@@ -160,10 +160,57 @@ class SyncRuntime:
         client.on_ack = lambda p: _fanout(workers, p, "on_ack")
         client.on_hello = lambda p: [
             _try_drain(w) for w in workers]  # reconnect catch-up
+        if hasattr(client, "on_ws"):
+            client.on_ws = lambda kind, p: self._spoke_ws_frame(
+                client, workers, kind, p)
         with self._lock:
             self._client_workers[client.hub_id] = workers
         for w in workers:
             _try_drain(w)  # catch-up on connect
+
+    def _spoke_ws_frame(self, client, workers, kind, payload) -> None:
+        """ws-share control frames on the spoke (klanker#145): announce
+        provisions/adopts the ws and starts a worker; revoke freezes it."""
+        ws_id = str(payload.get("ws") or "")
+        if not ws_id:
+            return
+        from agents_workspace import Host
+
+        host = Host.from_env()
+        if kind == "ws:revoke":
+            try:
+                host.update_workspace(ws_id, sync_policy="local")
+            except Exception as exc:  # noqa: BLE001
+                log.warning("ws %s: revoke apply failed: %s", ws_id, exc)
+                return
+            with self._lock:
+                workers[:] = [w for w in workers if w.ws_id != ws_id]
+                lst = self._client_workers.get(client.hub_id, [])
+                lst[:] = [w for w in lst if w.ws_id != ws_id]
+            log.info("ws %s: revoked — frozen to local", ws_id)
+            return
+        if not host.workspace_exists(ws_id):
+            ws = host.create(
+                ws_id, label=str(payload.get("label") or ws_id))
+            log.info("ws %s: provisioned from share announce", ws_id)
+        else:
+            ws = host.workspace(ws_id)
+        try:
+            host.update_workspace(
+                ws_id,
+                label=str(payload.get("label") or "") or None,
+                sync_hosts=list(payload.get("sync_hosts") or []),
+                sync_policy="synced")
+        except TypeError:
+            pass  # older agents-workspace: ws exists, policy fields absent
+        if not any(w.ws_id == ws_id for w in workers):
+            w = WsSync(
+                ws_id, ws.dir, client.device_id, "hub",
+                lambda k, p: client.send(k, p),
+                origin_only=True, local_node=self.local_node())
+            with self._lock:
+                workers.append(w)  # workers IS _client_workers[hub_id]
+            _try_drain(w)
 
     # -- hub role -------------------------------------------------------
 
@@ -201,8 +248,112 @@ class SyncRuntime:
             if w is not None:
                 w.on_ack(payload)
 
+        def ws_handler(device_id: str, kind: str, payload: dict) -> None:
+            ws_id = str(payload.get("ws") or "")
+            if not ws_id:
+                return
+            if kind == "ws:announce":
+                self._hub_announce(hub, device_id, ws_id, payload)
+            elif kind == "ws:revoke":
+                self._hub_revoke(hub, device_id, ws_id)
+
         hub.set_op_handler(op_handler)
         hub.set_ack_handler(ack_handler)
+        if hasattr(hub, "set_ws_handler"):
+            hub.set_ws_handler(ws_handler)
+
+    def _hub_announce(self, hub, device_id: str, ws_id: str,
+                      payload: dict) -> None:
+        """ws-share announce upstream: provision the ws on the hub on
+        first contact, merge the member set, forward the announce to
+        newly added devices (plus full backfill), revoke removed ones.
+
+        Announce carries the owner's FULL desired member set; owner and
+        sender are always kept members so nobody locks themselves out.
+        """
+        from agents_workspace import Host
+
+        host = Host.from_env()
+        if host.workspace_exists(ws_id):
+            ws = host.workspace(ws_id)
+        else:
+            ws = host.create(
+                ws_id, label=str(payload.get("label") or ws_id))
+            try:
+                host.update_workspace(
+                    ws_id,
+                    execution={"owner": device_id, "failover": "none"})
+            except (TypeError, ValueError):
+                pass  # older agents-workspace: owner unenforceable
+        owner = str((getattr(ws, "execution", None) or {}).get("owner") or "")
+        with self._lock:
+            entry = self._ws_lookup.get(ws_id)
+            old_members = set((entry or {}).get("hosts") or ())
+        if owner and device_id != owner:
+            log.warning(
+                "ws %s: announce from non-owner %s dropped", ws_id, device_id)
+            return
+        if not owner and entry is not None \
+                and entry.get("hosts") is not None \
+                and device_id not in old_members:
+            log.warning(
+                "ws %s: announce from non-member %s dropped", ws_id, device_id)
+            return
+        offered = payload.get("sync_hosts")
+        members = set(old_members if offered is None else
+                      (str(d) for d in offered))
+        members.add(device_id)
+        if owner:
+            members.add(owner)
+        try:
+            host.update_workspace(ws_id, sync_hosts=sorted(members))
+            if not owner:
+                host.update_workspace(
+                    ws_id,
+                    execution={"owner": device_id, "failover": "none"})
+                owner = device_id
+        except TypeError:
+            pass
+        with self._lock:
+            self._ws_lookup[ws_id] = {
+                "dir": ws.dir, "hosts": frozenset(members) or None}
+        seq = payload.get("seq") or 0
+        out = {"ws": ws_id,
+               "label": str(payload.get("label") or ""),
+               "owner": owner or device_id,
+               "sync_hosts": sorted(members),
+               "seq": seq}
+        for dev in sorted(members - old_members):
+            hub.publish(dev, "ws:announce", out)
+            w = self._hub_worker(dev, ws_id)
+            if w is not None:
+                _try_drain(w)  # full-tail backfill for the new member
+        for dev in sorted(old_members - members):
+            hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
+
+    def _hub_revoke(self, hub, device_id: str, ws_id: str) -> None:
+        """Upstream revoke = member self-leave. Owners cannot self-leave;
+        shrinking the set goes through ws:announce."""
+        from agents_workspace import Host
+
+        with self._lock:
+            entry = self._ws_lookup.get(ws_id)
+        if not entry or device_id not in (entry.get("hosts") or ()):
+            return
+        ws = Host.from_env().workspace(ws_id)
+        if str((getattr(ws, "execution", None) or {}).get("owner") or "") \
+                == device_id:
+            return
+        members = set(entry["hosts"])
+        members.discard(device_id)
+        try:
+            Host.from_env().update_workspace(
+                ws_id, sync_hosts=sorted(members))
+        except TypeError:
+            pass
+        with self._lock:
+            entry["hosts"] = frozenset(members) or None
+        hub.publish(device_id, "ws:revoke", {"ws": ws_id})
 
     def _hub_worker(self, device_id: str, ws_id: str) -> WsSync | None:
         with self._lock:
