@@ -14,11 +14,14 @@ user's repo (``<worktree_root>/<repo>-<hash>/<sid8>``, root =
 up as untracked files or get committed into another branch. The user's
 own checkout is never switched: checkpoints commit only inside the
 session worktree. Network git calls (ls-remote/push) have timeouts.
+Session ids are validated before they touch a path or branch name and
+worktree paths are confined to the root (no traversal, no symlinks).
 """
 from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -36,8 +39,29 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+# Session ids end up in branch names and filesystem paths; anything
+# outside this set (slashes, dots, absolute paths, whitespace) is refused.
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
+
+
+class InvalidSessionId(ValueError):
+    pass
+
+
+def validate_session_id(session_id: str) -> str:
+    if not isinstance(session_id, str) or not _SESSION_ID_RE.match(session_id):
+        raise InvalidSessionId(f"invalid session id: {session_id!r}")
+    return session_id
+
+
+def session_slug(session_id: str) -> str:
+    """Path/branch-safe short id (validated, first 8 chars)."""
+    return validate_session_id(session_id)[:8]
+
+
 def session_branch(session_id: str) -> str:
-    return f"klanker/s-{session_id[:8]}"
+    return f"klanker/s-{session_slug(session_id)}"
 
 
 def session_view(conn, session_id: str) -> dict:
@@ -127,12 +151,37 @@ def _main_repo(repo: Path) -> Path:
     return Path(common).parent
 
 
+def _check_contained(path: Path, root: Path) -> None:
+    """Refuse symlinks between ``root`` and ``path`` and anything whose
+    resolved location escapes ``root`` (``root`` itself may be a link)."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        raise InvalidSessionId(f"worktree path escapes root: {path}") from None
+    cur = root
+    for part in rel.parts:
+        if part in ("", ".", ".."):
+            raise InvalidSessionId(f"unsafe worktree path: {path}")
+        cur = cur / part
+        if cur.is_symlink():
+            raise InvalidSessionId(f"symlink in worktree path: {cur}")
+    if not path.resolve().is_relative_to(root):
+        raise InvalidSessionId(f"worktree path escapes root: {path}")
+
+
 def worktree_path(repo: str | Path, session_id: str,
                   root: str | Path | None = None) -> Path:
+    """``<root>/<repo>-<hash>/<sid8>``; validated, contained in root,
+    no symlinks below the (resolved) root."""
+    slug = session_slug(session_id)
     main = _main_repo(Path(repo)).resolve()
     tag = hashlib.sha1(str(main).encode("utf-8")).hexdigest()[:8]
-    base = Path(root) if root is not None else worktree_root()
-    return base / f"{main.name}-{tag}" / session_id[:8]
+    name = _UNSAFE_NAME.sub("_", main.name).lstrip(".") or "repo"
+    base = (Path(root) if root is not None else worktree_root())
+    base = base.expanduser().resolve()
+    wt = base / f"{name}-{tag}" / slug
+    _check_contained(wt, base)
+    return wt
 
 
 def find_worktree(repo: str | Path, branch: str) -> Path | None:
@@ -153,13 +202,15 @@ def ensure_worktree(repo: str | Path, session_id: str, *,
     """Idempotent session worktree on branch klanker/s-<sid8>, outside
     the repo. Re-uses the worktree already holding the branch."""
     repo = Path(repo)
-    branch = session_branch(session_id)
+    branch = session_branch(session_id)  # validates session_id
     existing = find_worktree(repo, branch)
     if existing is not None and existing.exists():
         return existing
     _git(repo, "worktree", "prune")
     wt = worktree_path(repo, session_id, root)
     wt.parent.mkdir(parents=True, exist_ok=True)
+    # re-check after mkdir: a link planted in between is still refused
+    _check_contained(wt, wt.parent.parent)
     if not _git_ok(repo, "rev-parse", "--verify", "--quiet",
                    f"refs/heads/{branch}"):
         _git(repo, "worktree", "add", "-b", branch, str(wt))
@@ -177,9 +228,13 @@ def checkpoint(repo: str | Path, session_id: str, host_id: str = "") -> dict:
     dev, whatever is checked out) is never switched or committed to.
     """
     repo = Path(repo)
-    branch = session_branch(session_id)
     out = {"committed": False, "pushed": False, "unpushed": False,
            "error": "", "worktree": ""}
+    try:
+        branch = session_branch(session_id)
+    except InvalidSessionId as exc:
+        out["error"] = str(exc)
+        return out
     try:
         wt = find_worktree(repo, branch)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
@@ -220,6 +275,43 @@ def checkpoint(repo: str | Path, session_id: str, host_id: str = "") -> dict:
     except subprocess.TimeoutExpired:
         out["unpushed"] = True
         out["error"] = "push timed out"
+    return out
+
+
+def remove_worktree(repo: str | Path, session_id: str, *,
+                    delete_branch: bool = False,
+                    force: bool = False) -> dict:
+    """Session end / PR merged: drop the session worktree.
+
+    Refuses a dirty worktree unless ``force`` (git's own check). The
+    branch is kept unless ``delete_branch`` (it may still back a PR).
+    Returns {"removed", "branch_deleted", "error", "worktree"}.
+    """
+    repo = Path(repo)
+    out = {"removed": False, "branch_deleted": False, "error": "",
+           "worktree": ""}
+    try:
+        branch = session_branch(session_id)
+        wt = find_worktree(repo, branch)
+        if wt is not None:
+            if wt.resolve() == _main_repo(repo).resolve():
+                out["error"] = "refusing to remove the main working tree"
+                return out
+            out["worktree"] = str(wt)
+            args = ["worktree", "remove"] + (["--force"] if force else [])
+            _git(repo, *args, str(wt))
+            out["removed"] = True
+        _git(repo, "worktree", "prune")
+        if delete_branch and _git_ok(repo, "rev-parse", "--verify",
+                                     "--quiet", f"refs/heads/{branch}"):
+            _git(repo, "branch", "-D" if force else "-d", branch)
+            out["branch_deleted"] = True
+    except InvalidSessionId as exc:
+        out["error"] = str(exc)
+    except subprocess.CalledProcessError as exc:
+        out["error"] = (exc.stderr or str(exc)).strip()
+    except subprocess.TimeoutExpired:
+        out["error"] = "git timed out"
     return out
 
 

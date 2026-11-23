@@ -1,12 +1,14 @@
 """session host binding + worktree/checkpoint mechanics."""
 import subprocess
+from pathlib import Path
 
 import pytest
 from agents_store.db import connect
 
-from klanker.session import (bind_session, checkpoint, ensure_worktree,
-                             session_branch, session_view, set_wip_unpushed,
-                             switch_host)
+from klanker.session import (InvalidSessionId, bind_session, checkpoint,
+                             ensure_worktree, remove_worktree, session_branch,
+                             session_view, set_wip_unpushed, switch_host,
+                             worktree_path)
 
 
 @pytest.fixture
@@ -178,3 +180,95 @@ def test_bind_actor_host_scoped_and_seq_monotonic(conn):
         " WHERE origin_actor LIKE 'bind@%' ORDER BY id").fetchall()
     assert rows == [("bind@hostA:s7", 1), ("bind@hostA:s7", 2),
                     ("bind@hostA:s7", 3)]
+
+
+# -- session id / path hardening ---------------------------------------------
+
+@pytest.mark.parametrize("bad", [
+    "/tmp/qax", "../../etc", "..", "a/b", "a\\b", "", " sess", "s.1",
+    "sess\x00x", "x" * 200, None,
+])
+def test_invalid_session_ids_refused(repo, tmp_path, bad):
+    with pytest.raises(InvalidSessionId):
+        ensure_worktree(repo, bad)
+    with pytest.raises(InvalidSessionId):
+        session_branch(bad)
+    # nothing was created anywhere
+    assert not (tmp_path / "qax").exists()
+    assert _git(repo, "worktree", "list", "--porcelain").stdout.count(
+        "worktree ") == 1
+
+
+def test_absolute_session_id_never_creates_worktree_at_that_path(repo):
+    target = Path("/tmp/qax-klanker-test")
+    with pytest.raises(InvalidSessionId):
+        ensure_worktree(repo, str(target))
+    assert not target.exists()
+
+
+def test_checkpoint_and_switch_refuse_invalid_id(conn, repo):
+    cp = checkpoint(repo, "../evil")
+    assert "invalid session id" in cp["error"]
+    assert not cp["committed"]
+    res = switch_host(conn, "../evil", "h2", repo=repo)
+    assert res["bound"] is False
+
+
+def test_symlinked_repo_dir_under_root_refused(repo, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    probe = worktree_path(repo, "sessaaaa")
+    probe.parent.parent.mkdir(parents=True, exist_ok=True)
+    probe.parent.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(InvalidSessionId):
+        ensure_worktree(repo, "sessaaaa")
+    assert list(outside.iterdir()) == []
+
+
+def test_symlinked_session_dir_refused(repo, tmp_path):
+    outside = tmp_path / "outside2"
+    outside.mkdir()
+    probe = worktree_path(repo, "sessbbbb")
+    probe.parent.mkdir(parents=True, exist_ok=True)
+    probe.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(InvalidSessionId):
+        ensure_worktree(repo, "sessbbbb")
+    assert list(outside.iterdir()) == []
+
+
+def test_symlinked_root_is_resolved_and_allowed(repo, tmp_path, monkeypatch):
+    real = tmp_path / "realroot"
+    real.mkdir()
+    link = tmp_path / "linkroot"
+    link.symlink_to(real, target_is_directory=True)
+    monkeypatch.setenv("KLANKER_WORKTREE_DIR", str(link))
+    wt = ensure_worktree(repo, "sesscccc")
+    assert real.resolve() in wt.parents
+
+
+def test_remove_worktree(repo):
+    wt = ensure_worktree(repo, "sessdddd")
+    res = remove_worktree(repo, "sessdddd")
+    assert res["removed"] and not res["error"]
+    assert not wt.exists()
+    # branch kept by default (may back a PR)
+    assert _git(repo, "rev-parse", "--verify", "--quiet",
+                "refs/heads/klanker/s-sessdddd").returncode == 0
+    # idempotent, then branch deletion on request
+    res = remove_worktree(repo, "sessdddd", delete_branch=True)
+    assert not res["removed"] and res["branch_deleted"]
+
+
+def test_remove_worktree_refuses_dirty_unless_forced(repo):
+    wt = ensure_worktree(repo, "sesseeee")
+    (wt / "f.txt").write_text("dirty")
+    res = remove_worktree(repo, "sesseeee")
+    assert not res["removed"] and res["error"]
+    assert wt.exists()
+    res = remove_worktree(repo, "sesseeee", force=True, delete_branch=True)
+    assert res["removed"] and res["branch_deleted"]
+    assert not wt.exists()
+
+
+def test_remove_worktree_invalid_id(repo):
+    assert "invalid session id" in remove_worktree(repo, "/tmp/x")["error"]
