@@ -65,6 +65,66 @@ def test_memory_md_import(tmp_path):
     conn.close()
 
 
+def test_default_keeps_sources(tmp_path):
+    """The runtime still reads personas/config/memory from files: a
+    default run must not move them away."""
+    ws = _ws(tmp_path)
+    src = ws / "personas" / "coder" / "persona.json"
+    src.write_text(json.dumps({"id": "coder"}))
+    cfg = ws / "config.json"
+    cfg.write_text(json.dumps({"model": "k2"}))
+    mem = ws / "memory" / "A.md"
+    mem.write_text("# A")
+    stats = migrate_to_store(ws)
+    assert stats["personas"]["imported"] == 1
+    assert stats["personas"]["archived"] == 0
+    assert src.is_file() and cfg.is_file() and mem.is_file()
+    assert not (ws / "archive").exists()
+
+
+def test_nested_secrets_never_import(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "config.json").write_text(json.dumps({
+        "theme": "dark",
+        "providers": {
+            "openrouter": {"api_key": "sk-or-NESTED1", "model": "x/y"},
+            "local": {"url": "http://127.0.0.1:1234", "api_key": "LOCAL_KEY",
+                      "headers": {"Authorization": "Bearer NESTED2"}},
+            "list": [{"token": "NESTED3"}, "ghp_NESTED4abcdefgh", "ok"],
+        },
+        "hotkey": "ctrl+space",
+    }))
+    (ws / "personas" / "coder" / "persona.json").write_text(json.dumps(
+        {"id": "coder", "env": {"GITHUB_TOKEN": "gho_NESTED5"},
+         "mcp": [{"password": "NESTED6"}]}))
+    stats = migrate_to_store(ws)
+    assert stats["config"]["skipped_secret"] == 5  # 4 values + 1 env ref
+    assert stats["personas"]["skipped_secret"] == 2
+    conn = connect(ws / "store.db")
+    blob = " ".join(str(r[0]) for r in conn.execute("SELECT v FROM datom"))
+    for n in range(1, 7):
+        assert f"NESTED{n}" not in blob
+    store = Store(conn, "t")
+    prov = json.loads(_view(store, "cfg:providers")["cfg:value"])
+    assert prov["openrouter"] == {"model": "x/y"}
+    assert prov["list"] == [{}, "ok"]
+    assert "api_key" not in prov["local"]
+    assert _view(store, "cfg:providers.local.api_key")["cfg:key_env"] == "LOCAL_KEY"
+    assert _view(store, "cfg:hotkey")["cfg:value"] == "ctrl+space"
+    conn.close()
+
+
+def test_import_actor_is_host_scoped(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "config.json").write_text(json.dumps({"model": "k2"}))
+    migrate_to_store(ws, node="hostA")
+    conn = connect(ws / "store.db")
+    actors = {r[0] for r in conn.execute(
+        "SELECT origin_actor FROM tx WHERE origin_actor IS NOT NULL")}
+    assert actors == {"import@hostA:config:model"}
+    conn.close()
+
+
 def test_idempotent_and_archive(tmp_path):
     ws = _ws(tmp_path)
     src = ws / "personas" / "coder" / "persona.json"

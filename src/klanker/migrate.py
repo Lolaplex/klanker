@@ -6,21 +6,29 @@ One-way, idempotent import (klanker#143 / frontier #19):
   secret *values* never become datoms)
 - memory/*.md (top level)     -> mem:<slug> entities
 
-Identity: origin_actor="import:<domain>:<id>", origin_seq=mtime_ms —
-re-running with an unchanged file dedupes on ux_tx_origin; a changed
-file re-imports and card-one LWW picks the newer mtime. Source files
-move to <ws>/archive/pre-store/ only after their tx commits.
+Identity: origin_actor="import@<host>:<domain>:<id>", origin_seq=mtime_ms
+— re-running with an unchanged file dedupes on ux_tx_origin; a changed
+file re-imports and card-one LWW picks the newer mtime.
+
+Secrets never become datoms: config and persona documents are scrubbed
+recursively (secret-named keys at any depth, secret-looking values);
+only env-indirection names (``"OPENAI_API_KEY"``) may be recorded.
+
+Sources stay in place by default -- the runtime still reads
+personas/config/memory from files. ``archive=True`` (CLI ``--archive``)
+moves them to <ws>/archive/pre-store/ after their tx commits.
 """
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
 from agents_store.db import connect
 from agents_store.ingest import ingest
 
-from .msgsync import ensure_domain
+from .msgsync import actor, ensure_domain, local_node_id
 
 MIGRATE_ATTRS = {
     "persona:id": ("text", "one"),
@@ -34,9 +42,73 @@ MIGRATE_ATTRS = {
     "mem:text": ("text", "one"),
 }
 
-# config keys whose values must never enter the log — only their env
-# indirection may be recorded.
-SECRET_HINTS = ("token", "secret", "key", "password", "credential")
+# Key names whose values must never enter the log -- only an env
+# indirection may be recorded. Matched case-insensitively at any depth.
+SECRET_HINTS = ("token", "secret", "password", "passwd", "passphrase",
+                "credential", "apikey", "api_key", "private_key", "auth",
+                "bearer", "cookie")
+# An env-variable *name* (e.g. OPENAI_API_KEY) may stand in for a secret.
+# Require an underscore so an all-caps literal password is not mistaken
+# for an indirection and recorded.
+_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
+# Values that look like credentials regardless of their key name.
+_SECRET_VALUE = re.compile(
+    r"^(?:sk-|sk_|rk_|pk_live_|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|"
+    r"xox[abprs]-|AKIA[0-9A-Z]{12}|AIza|eyJ[\w-]{8,}\.eyJ|Bearer\s)")
+
+
+def _is_secret_key(key: str) -> bool:
+    k = str(key).lower().replace("-", "_")
+    return (any(h in k for h in SECRET_HINTS) or k in ("key", "pass")
+            or k.endswith("_key") or k.endswith("_pass"))
+
+
+def _is_secret_value(v) -> bool:
+    return isinstance(v, str) and bool(_SECRET_VALUE.match(v.strip()))
+
+
+def scrub_secrets(obj, path: str = ""):
+    """Return (clean, env_refs, dropped) for a JSON value.
+
+    clean     -- copy with every secret removed (keys dropped from dicts,
+                 items dropped from lists)
+    env_refs  -- [(dotted.path, ENV_NAME)] for secret-named keys whose
+                 value is an env-variable name (safe to record)
+    dropped   -- number of secret values removed
+    """
+    refs: list[tuple[str, str]] = []
+    dropped = 0
+    if isinstance(obj, dict):
+        clean = {}
+        for k, v in obj.items():
+            sub = f"{path}.{k}" if path else str(k)
+            if _is_secret_key(k) and not isinstance(v, (dict, list)):
+                if isinstance(v, str) and len(v) <= 64 and _ENV_NAME.match(v):
+                    refs.append((sub, v))
+                elif v not in (None, "", False):
+                    dropped += 1
+                continue
+            c, r, d = scrub_secrets(v, sub)
+            refs.extend(r)
+            dropped += d
+            if c is not _DROP:
+                clean[k] = c
+        return clean, refs, dropped
+    if isinstance(obj, list):
+        clean_list = []
+        for i, v in enumerate(obj):
+            c, r, d = scrub_secrets(v, f"{path}[{i}]")
+            refs.extend(r)
+            dropped += d
+            if c is not _DROP:
+                clean_list.append(c)
+        return clean_list, refs, dropped
+    if _is_secret_value(obj):
+        return _DROP, refs, 1
+    return obj, refs, 0
+
+
+_DROP = object()
 
 
 def ensure_migrate_domain(conn) -> None:
@@ -48,11 +120,12 @@ def ensure_migrate_domain(conn) -> None:
             (name, vt, card, "migrate --to-store import domain"))
 
 
-def _import(conn, domain: str, ident: str, mtime_ms: int, datoms) -> bool:
+def _import(conn, domain: str, ident: str, mtime_ms: int, datoms,
+            node: str = "") -> bool:
     """One idempotent tx. Returns True if newly applied."""
-    actor = f"import:{domain}:{ident}"
+    origin = actor("import", node or local_node_id(), f"{domain}:{ident}")
     res = ingest(
-        conn, actor, int(mtime_ms), f"{int(mtime_ms):013d}.00000.import",
+        conn, origin, int(mtime_ms), f"{int(mtime_ms):013d}.00000.import",
         datoms)
     return bool(res.applied)
 
@@ -67,9 +140,10 @@ def _archive(ws_dir: Path, src: Path) -> Path:
     return dst
 
 
-def migrate_personas(conn, ws_dir: Path, archive: bool) -> dict:
+def migrate_personas(conn, ws_dir: Path, archive: bool,
+                     node: str = "") -> dict:
     root = ws_dir / "personas"
-    stats = {"imported": 0, "dupes": 0, "archived": 0}
+    stats = {"imported": 0, "dupes": 0, "skipped_secret": 0, "archived": 0}
     if not root.is_dir():
         return stats
     for manifest in sorted(root.glob("*/persona.json")):
@@ -81,6 +155,8 @@ def migrate_personas(conn, ws_dir: Path, archive: bool) -> dict:
         if not isinstance(doc, dict):
             continue
         mtime_ms = int(manifest.stat().st_mtime * 1000)
+        doc, refs, dropped = scrub_secrets(doc)
+        stats["skipped_secret"] += dropped + len(refs)
         e = f"persona:{pid}"
         datoms = [(e, "persona:id", pid, True),
                   (e, "persona:json",
@@ -88,7 +164,7 @@ def migrate_personas(conn, ws_dir: Path, archive: bool) -> dict:
         name = doc.get("name") or doc.get("label")
         if name:
             datoms.append((e, "persona:name", str(name), True))
-        if _import(conn, "persona", pid, mtime_ms, datoms):
+        if _import(conn, "persona", pid, mtime_ms, datoms, node):
             stats["imported"] += 1
         else:
             stats["dupes"] += 1
@@ -98,7 +174,8 @@ def migrate_personas(conn, ws_dir: Path, archive: bool) -> dict:
     return stats
 
 
-def migrate_config(conn, ws_dir: Path, archive: bool) -> dict:
+def migrate_config(conn, ws_dir: Path, archive: bool,
+                   node: str = "") -> dict:
     cfg = ws_dir / "config.json"
     stats = {"imported": 0, "dupes": 0, "skipped_secret": 0, "archived": 0}
     if not cfg.is_file():
@@ -109,40 +186,34 @@ def migrate_config(conn, ws_dir: Path, archive: bool) -> dict:
         return stats
     if not isinstance(doc, dict):
         return stats
-    import re
-
-    env_name = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
     mtime_ms = int(cfg.stat().st_mtime * 1000)
-    for key in sorted(doc):
-        v = doc[key]
-        if any(h in key.lower() for h in SECRET_HINTS):
-            stats["skipped_secret"] += 1
-            # Only an env indirection may be recorded — never a value.
-            if isinstance(v, str) and env_name.match(v):
-                e = f"cfg:{key}"
-                if _import(conn, "config", key, mtime_ms,
-                           [(e, "cfg:key", key, True),
-                            (e, "cfg:key_env", v, True)]):
-                    stats["imported"] += 1
-                else:
-                    stats["dupes"] += 1
-            continue
-        if isinstance(v, (dict, list)):
-            v = json.dumps(v, sort_keys=True)
-        e = f"cfg:{key}"
-        if _import(conn, "config", key, mtime_ms,
-                   [(e, "cfg:key", key, True),
-                    (e, "cfg:value", str(v), True)]):
+
+    def put(key, datoms):
+        if _import(conn, "config", key, mtime_ms, datoms, node):
             stats["imported"] += 1
         else:
             stats["dupes"] += 1
+
+    clean, refs, dropped = scrub_secrets(doc)
+    stats["skipped_secret"] += dropped + len(refs)
+    # Only an env indirection may be recorded for a secret -- never a value.
+    for path, env in refs:
+        e = f"cfg:{path}"
+        put(path, [(e, "cfg:key", path, True), (e, "cfg:key_env", env, True)])
+    for key in sorted(clean):
+        v = clean[key]
+        if isinstance(v, (dict, list)):
+            v = json.dumps(v, sort_keys=True)
+        e = f"cfg:{key}"
+        put(key, [(e, "cfg:key", key, True), (e, "cfg:value", str(v), True)])
     if archive:
         _archive(ws_dir, cfg)
         stats["archived"] += 1
     return stats
 
 
-def migrate_memory(conn, ws_dir: Path, archive: bool) -> dict:
+def migrate_memory(conn, ws_dir: Path, archive: bool,
+                   node: str = "") -> dict:
     root = ws_dir / "memory"
     stats = {"imported": 0, "dupes": 0, "archived": 0}
     if not root.is_dir():
@@ -164,7 +235,7 @@ def migrate_memory(conn, ws_dir: Path, archive: bool) -> dict:
                   (e, "mem:text", text, True)]
         if title:
             datoms.append((e, "mem:title", title, True))
-        if _import(conn, "memory", slug, mtime_ms, datoms):
+        if _import(conn, "memory", slug, mtime_ms, datoms, node):
             stats["imported"] += 1
         else:
             stats["dupes"] += 1
@@ -174,8 +245,12 @@ def migrate_memory(conn, ws_dir: Path, archive: bool) -> dict:
     return stats
 
 
-def migrate_to_store(ws_dir: str | Path, *, archive: bool = True) -> dict:
+def migrate_to_store(ws_dir: str | Path, *, archive: bool = False,
+                     node: str = "") -> dict:
+    """Import file domains into store.db. Sources are kept unless
+    ``archive=True`` -- the runtime still reads the files."""
     ws_dir = Path(ws_dir)
+    node = node or local_node_id()
     conn = connect(ws_dir / "store.db")
     try:
         ensure_migrate_domain(conn)
@@ -183,7 +258,7 @@ def migrate_to_store(ws_dir: str | Path, *, archive: bool = True) -> dict:
         for domain, fn in (("personas", migrate_personas),
                            ("config", migrate_config),
                            ("memory", migrate_memory)):
-            out[domain] = fn(conn, ws_dir, archive)
+            out[domain] = fn(conn, ws_dir, archive, node)
         return out
     finally:
         conn.close()

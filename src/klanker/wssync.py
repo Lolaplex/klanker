@@ -25,6 +25,8 @@ from agents_store.ingest import ingest, ops_since, cursor as store_cursor
 from agents_store.store import Store
 from agents_sync.opdist import BoundedSeen, PeerBook, deliver, receive
 
+from .msgsync import local_origin_prefixes
+
 log = logging.getLogger(__name__)
 
 TICK_SEC = 60.0
@@ -42,12 +44,17 @@ class WsSync:
         send,
         *,
         origin_only: bool = False,
+        local_node: str | None = None,
     ) -> None:
         self.ws_id = ws_id
         self.peer = peer_id
         self.node_id = node_id
+        # Host identity stamped into locally minted ingest actors
+        # (proj@/import@/bind@<node>:...); defaults to the link node id.
+        self.local_node = local_node or node_id
         ws_dir = Path(ws_dir)
         ws_dir.mkdir(parents=True, exist_ok=True)
+        self.ws_dir = ws_dir
         # The conn is touched from the SSE reader thread (on_op) and the
         # sync tick thread (drain) — share it safely: relaxed thread-check
         # + one lock around every DB touch. Older agents-store lacks the
@@ -80,7 +87,8 @@ class WsSync:
                 try:
                     return ops_since(
                         self.conn, since, origin_only=self._origin_only,
-                        local_origins=("proj:", "import", "bind:"))
+                        local_origins=local_origin_prefixes(
+                            self.local_node))
                 except TypeError:
                     return ops_since(
                         self.conn, since, origin_only=self._origin_only)
@@ -124,7 +132,16 @@ class SyncRuntime:
         self._hub_workers: dict[tuple[str, str], WsSync] = {}  # (ws, dev) -> WsSync
         self._ws_lookup: dict[str, Path] = {}                # hub-side ws dirs
         self._hub = None
+        self._hub_node = ""
+        self._local_node: str | None = None
         self._thread: threading.Thread | None = None
+
+    def local_node(self) -> str:
+        if self._local_node is None:
+            from .msgsync import local_node_id
+
+            self._local_node = self._hub_node or local_node_id()
+        return self._local_node
 
     # -- spoke role -----------------------------------------------------
 
@@ -136,6 +153,7 @@ class SyncRuntime:
                 ws_id, ws_dir, client.device_id, "hub",
                 lambda kind, p: client.send(kind, p),
                 origin_only=True,
+                local_node=self.local_node(),
             )
             workers.append(w)
         client.on_op = lambda p: _fanout(workers, p, "on_op")
@@ -191,6 +209,7 @@ class SyncRuntime:
                 w = WsSync(
                     ws_id, ws_dir, self._hub_node, device_id,
                     lambda kind, p: hub.publish(device_id, kind, p),
+                    local_node=self.local_node(),
                 )
                 self._hub_workers[key] = w
             return w
@@ -208,12 +227,26 @@ class SyncRuntime:
 
     def _run(self) -> None:
         while not self._stop.wait(TICK_SEC):
-            for w in self._workers():
-                try:
-                    self._project_msgs(w)
-                    w.drain()
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("ws %s: drain failed: %s", w.ws_id, exc)
+            self.tick()
+
+    def tick(self) -> None:
+        """Project new trace messages once per ws dir, then drain all."""
+        workers = self._workers()
+        projected: set[str] = set()
+        for w in workers:
+            key = str(Path(w.ws_dir).resolve())
+            if key in projected:
+                continue  # several links share one store.db: project once
+            projected.add(key)
+            try:
+                self._project_msgs(w)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("ws %s: msg projection failed: %s", w.ws_id, exc)
+        for w in workers:
+            try:
+                w.drain()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("ws %s: drain failed: %s", w.ws_id, exc)
 
     def _workers(self) -> list[WsSync]:
         with self._lock:
@@ -222,24 +255,12 @@ class SyncRuntime:
             return out
 
     def _project_msgs(self, w: WsSync) -> None:
-        """Fold new trace message events of this ws into msg:* datoms."""
-        from agents_traces.store import TraceStore
+        """Fold trace message lines appended since the last tick into
+        msg:* datoms (incremental byte cursor, no full rescan)."""
+        from .msgsync import project_traces
 
-        from .msgsync import project_session
-
-        tdir = Path(w.ws_dir) / "traces"
-        if not tdir.is_dir():
-            return
-        store = TraceStore(tdir)
-        for row in store.list_sessions(days=3650, limit=10000):
-            sid = row.get("session")
-            if not sid:
-                continue
-            events = store.get_events_for_session(str(sid))
-            if not events:
-                continue
-            with w._db:
-                project_session(w.conn, w.ws_dir, str(sid), events)
+        with w._db:
+            project_traces(w.conn, w.ws_dir, node=w.local_node)
 
 
 def sync_workspaces() -> dict:
