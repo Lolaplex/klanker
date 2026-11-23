@@ -293,8 +293,9 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_p.add_argument(
         "--workspace", default="", help="Data workspace id (default: env)")
     migrate_p.add_argument(
-        "--keep-files", action="store_true",
-        help="Do not archive sources to <ws>/archive/pre-store/")
+        "--archive", action="store_true",
+        help="Move imported sources to <ws>/archive/pre-store/ (default: keep;"
+             " the runtime still reads personas/config/memory from files)")
 
     # 3e. Workspaces
     ws_p = sub.add_parser("workspace", help="Create or list workspaces")
@@ -574,7 +575,7 @@ def main(argv: list[str] | None = None) -> int:
             ws = Host.from_env().workspace(ws_id)
         else:
             ws = Workspace.from_env()
-        stats = migrate_to_store(ws.dir, archive=not args.keep_files)
+        stats = migrate_to_store(ws.dir, archive=bool(args.archive))
         for domain, s in stats.items():
             line = ", ".join(f"{k}={v}" for k, v in s.items())
             print(f"{domain}: {line}")
