@@ -392,13 +392,25 @@ MEMORY_MAX_ENV = "KLANKER_MIGRATE_MEMORY_MAX_BYTES"
 
 
 def _memory_max_bytes(override: int | None = None) -> int:
+    """Effective limit: override, else env, else 1 MiB. 0 = no limit;
+    negative or non-integer values are an error, never "no limit"."""
     if override is not None:
-        return int(override)
+        if isinstance(override, bool) or not isinstance(override, int) \
+                or override < 0:
+            raise ValueError(
+                f"memory_max_bytes must be an integer >= 0: {override!r}")
+        return override
     raw = os.environ.get(MEMORY_MAX_ENV, "").strip()
-    try:
-        return int(raw) if raw else MEMORY_MAX_BYTES
-    except ValueError:
+    if not raw:
         return MEMORY_MAX_BYTES
+    try:
+        val = int(raw)
+    except ValueError:
+        val = -1
+    if val < 0:
+        raise ValueError(
+            f"{MEMORY_MAX_ENV} must be an integer >= 0: {raw!r}")
+    return val
 
 
 def _memory_files(root: Path):
@@ -477,6 +489,7 @@ def migrate_to_store(ws_dir: str | Path, *, archive: bool = False,
     """Import file domains into store.db. Sources are kept unless
     ``archive=True`` -- the runtime still reads the files."""
     ws_dir = Path(ws_dir)
+    memory_max_bytes = _memory_max_bytes(memory_max_bytes)  # fail early
     node = node or local_node_id()
     conn = connect(ws_dir / "store.db")
     try:

@@ -388,3 +388,59 @@ def test_redact_text_linear_on_large_input(text):
     t0 = time.time()
     redact_text(text)
     assert time.time() - t0 < 5.0
+
+
+@pytest.mark.parametrize("bad", [-1, -1024, True, 1.5, "10"])
+def test_negative_or_invalid_memory_limit_rejected(tmp_path, bad):
+    ws = _ws(tmp_path)
+    (ws / "memory" / "N.md").write_text("# n")
+    with pytest.raises(ValueError):
+        migrate_to_store(ws, memory_max_bytes=bad)
+    assert not (ws / "store.db").exists()  # failed before touching the store
+
+
+@pytest.mark.parametrize("raw", ["-1", "-5000", "abc", "1.5"])
+def test_negative_or_invalid_memory_limit_env_rejected(tmp_path, monkeypatch,
+                                                       raw):
+    ws = _ws(tmp_path)
+    monkeypatch.setenv("KLANKER_MIGRATE_MEMORY_MAX_BYTES", raw)
+    with pytest.raises(ValueError, match="KLANKER_MIGRATE_MEMORY_MAX_BYTES"):
+        migrate_to_store(ws)
+
+
+def _cli_env(tmp_path, monkeypatch, ws):
+    import agents_workspace
+    from klanker import updates
+
+    class _WS:
+        dir = ws
+        root = ws
+
+    monkeypatch.setattr(updates, "check_for_updates", lambda *a, **k: None)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    monkeypatch.setattr(agents_workspace.Workspace, "from_env",
+                        classmethod(lambda cls: _WS()))
+
+
+def test_cli_rejects_negative_memory_limit(tmp_path, monkeypatch, capsys):
+    from klanker import __main__ as cli
+
+    ws = _ws(tmp_path)
+    _cli_env(tmp_path, monkeypatch, ws)
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["migrate", "--to-store", "--memory-max-bytes", "-1"])
+    assert exc.value.code == 2
+    assert "must be an integer >= 0" in capsys.readouterr().err
+    assert not (ws / "store.db").exists()
+
+
+def test_cli_rejects_negative_memory_limit_env(tmp_path, monkeypatch, capsys):
+    from klanker import __main__ as cli
+
+    ws = _ws(tmp_path)
+    _cli_env(tmp_path, monkeypatch, ws)
+    monkeypatch.setenv("KLANKER_MIGRATE_MEMORY_MAX_BYTES", "-1")
+    assert cli.main(["migrate", "--to-store"]) == 2
+    assert "KLANKER_MIGRATE_MEMORY_MAX_BYTES" in capsys.readouterr().err
+    assert not (ws / "store.db").exists()
