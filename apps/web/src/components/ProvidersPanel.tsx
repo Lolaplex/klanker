@@ -251,9 +251,9 @@ export function ProvidersPanel({
         rows.map((row) => {
           const st = statusOf(row);
           const deletable = row.source === "file";
-          // env acp rows are editable: POST writes a file manifest whose
-          // command wins over AGENTS_ACP_CMD* (delete restores the env row).
-          const editable = deletable || (row.source === "env" && row.kind === "acp-agent");
+          // Every row is editable: POST same name writes a file manifest
+          // that shadows package/env rows (delete restores the env row).
+          const editable = true;
           return (
             <div key={row.name} className="border border-[#262626] bg-[#101010] rounded-xl p-3">
               <div className="flex items-start justify-between gap-2">
@@ -274,7 +274,7 @@ export function ProvidersPanel({
                 <div className="flex items-center gap-1 shrink-0">
                   <button
                     type="button"
-                    title={deletable ? "edit" : editable ? "override env row with a file manifest" : "managed by host env — edit on the host"}
+                    title={deletable ? "edit" : "override with a file manifest — delete restores the env row"}
                     onClick={() => edit(row)}
                     disabled={!editable}
                     className="inline-flex h-9 w-9 items-center justify-center text-[#737373] hover:text-white disabled:opacity-30 disabled:hover:text-[#737373]"
