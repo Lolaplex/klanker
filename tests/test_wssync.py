@@ -3,6 +3,8 @@
 Simulates the relay channel as in-memory queues — the wire format and
 ack discipline are the contract under test, not the transport.
 """
+import json
+
 import pytest
 from agents_store import Change, connect
 from agents_store.code_hash import code_hash_for_impl_ref
@@ -173,7 +175,7 @@ def _local_origins_supported() -> bool:
     reason="agents-store without ops_since(local_origins) "
            "(feat/ingest-local-origins)")
 def test_msgs_project_and_sync(link, tmp_path):
-    from klanker.msgsync import project_session
+    from klanker.msgsync import message_entity, project_session
 
     class Ev:
         def __init__(self, ts, role, content):
@@ -185,16 +187,63 @@ def test_msgs_project_and_sync(link, tmp_path):
     project_session(link.a.conn, ws_a_dir, "s1", [
         Ev("2026-11-22T10:00:00Z", "user", "hallo welt"),
         Ev("2026-11-22T10:00:05Z", "assistant", "moin"),
-    ])
+    ], node=link.a.local_node)
     link.a.drain(); link.pump()
-    view = link.b.store.view("msg:s1:000001")
+    view = link.b.store.view(
+        message_entity("s1", "2026-11-22T10:00:00Z", "user", "hallo welt"))
     assert view["msg:role"] == "user"
     assert view["msg:text"] == "hallo welt"
-    # B replays its own trace projection of the same event: origin
-    # identity differs (proj:s1 on A vs B's own conn), so B's own tx —
-    # but cursor-side dedupe keeps a re-drain silent either way.
     link.b.drain()
     link.pump()  # no frame storm
+
+
+@pytest.mark.skipif(
+    not _local_origins_supported(),
+    reason="agents-store without ops_since(local_origins) "
+           "(feat/ingest-local-origins)")
+def test_peer_projection_not_echoed_by_spoke(link, tmp_path):
+    """Hub-side projection (proj@nodeB) reaches spoke A; A's origin_only
+    drain must not treat it as local and echo it back."""
+    from klanker.msgsync import project_session
+
+    class Ev:
+        def __init__(self, ts, role, content):
+            self.ts, self.type, self.session = ts, "message", "s9"
+            self.metadata = {"role": role, "content": content}
+
+    project_session(link.b.conn, tmp_path, "s9", [
+        Ev("2026-11-22T11:00:00Z", "user", "from hub")],
+        node=link.b.local_node)
+    link.b.drain(); link.pump()
+    link.a2b.clear()
+    link.a.drain()
+    assert [k for k, _ in link.a2b if k == "op"] == []
+
+
+def test_tick_projects_once_per_ws_dir_and_drains(tmp_path):
+    from klanker.msgsync import session_messages
+    from klanker.wssync import SyncRuntime
+
+    rt = SyncRuntime()
+    ws_dir = tmp_path / "ws"
+    (ws_dir / "traces").mkdir(parents=True)
+    (ws_dir / "traces" / "2026-11-22.jsonl").write_text(json.dumps({
+        "ts": "2026-11-22T10:00:00Z", "session": "s1", "type": "message",
+        "metadata": {"role": "user", "content": "hi"}}) + "\n")
+    sent = []
+    w1 = WsSync("ws1", ws_dir, "nodeA", "dev1",
+                lambda k, p: sent.append(("dev1", k)), local_node="nodeA")
+    w2 = WsSync("ws1", ws_dir, "nodeA", "dev2",
+                lambda k, p: sent.append(("dev2", k)), local_node="nodeA")
+    rt._hub_workers = {("ws1", "dev1"): w1, ("ws1", "dev2"): w2}
+    rt.tick()
+    assert [m["text"] for m in session_messages(w1.conn, "s1")] == ["hi"]
+    n = w1.conn.execute(
+        "SELECT COUNT(*) FROM tx WHERE origin_actor = 'proj@nodeA:s1'"
+    ).fetchone()[0]
+    assert n == 1
+    assert ("dev1", "op") in sent and ("dev2", "op") in sent
+    w1.conn.close(); w2.conn.close()
 
 
 def test_session_attrs_seed(link):
