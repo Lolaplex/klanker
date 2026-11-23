@@ -4,15 +4,18 @@ One-way, idempotent import (klanker#143 / frontier #19):
 - personas/<id>/persona.json  -> persona:<id> entities
 - config.json scalar settings -> cfg:<key> entities (key_env refs only —
   secret *values* never become datoms)
-- memory/*.md (top level)     -> mem:<slug> entities
+- memory/**/*.md, *.yaml, *.yml -> mem:<slug> entities (text redacted)
 
 Identity: origin_actor="import@<host>:<domain>:<id>", origin_seq=mtime_ms
 — re-running with an unchanged file dedupes on ux_tx_origin; a changed
 file re-imports and card-one LWW picks the newer mtime.
 
 Secrets never become datoms: config and persona documents are scrubbed
-recursively (secret-named keys at any depth, secret-looking values);
-only env-indirection names (``"OPENAI_API_KEY"``) may be recorded.
+recursively (secret-named keys at any depth, matched on word tokens;
+credential-shaped values; credentials inside other strings redacted);
+memory text (markdown and YAML) is redacted line by line and by value
+pattern. Only env-indirection names (``"OPENAI_API_KEY"``) may be
+recorded.
 
 Sources stay in place by default -- the runtime still reads
 personas/config/memory from files. ``archive=True`` (CLI ``--archive``)
@@ -21,6 +24,7 @@ moves them to <ws>/archive/pre-store/ after their tx commits.
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 from pathlib import Path
@@ -43,38 +47,189 @@ MIGRATE_ATTRS = {
 }
 
 # Key names whose values must never enter the log -- only an env
-# indirection may be recorded. Matched case-insensitively at any depth.
-SECRET_HINTS = ("token", "secret", "password", "passwd", "passphrase",
-                "credential", "apikey", "api_key", "private_key", "auth",
-                "bearer", "cookie")
+# indirection may be recorded. Keys are split into word tokens
+# (snake/kebab/dot/camelCase), so ``author``/``tokenizer``/``max_tokens``
+# stay while ``api_key``/``accessToken``/``GITHUB_TOKEN`` are secret.
+SECRET_TOKENS = frozenset({
+    "token", "secret", "password", "passwd", "passphrase", "pwd",
+    "credential", "credentials", "apikey", "privatekey", "bearer",
+    "cookie", "cookies", "authorization", "sessionid", "dsn",
+})
+# A trailing ``key``/``pass`` is secret (``openai_key``, ``db_pass``)
+# unless the key names a non-secret kind of key.
+_NON_SECRET_KEY_PREFIX = frozenset({
+    "sort", "primary", "foreign", "partition", "cache", "lookup", "group",
+    "hot", "short", "shortcut", "idempotency", "dedupe", "public", "pub",
+    "hash", "index", "map", "row", "column", "registry", "storage", "model",
+})
+SECRET_KEY_EXACT = frozenset({"key", "pass", "auth"})
 # An env-variable *name* (e.g. OPENAI_API_KEY) may stand in for a secret.
 # Require an underscore so an all-caps literal password is not mistaken
 # for an indirection and recorded.
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$")
-# Values that look like credentials regardless of their key name.
+# A whole value that starts like a credential is dropped (any key).
 _SECRET_VALUE = re.compile(
-    r"^(?:sk-|sk_|rk_|pk_live_|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|"
-    r"xox[abprs]-|AKIA[0-9A-Z]{12}|AIza|eyJ[\w-]{8,}\.eyJ|Bearer\s)")
+    r"^(?:sk-|sk_|rk_|pk_live_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|glpat-|"
+    r"xox[abposr]-|AKIA[0-9A-Z]{12}|ASIA[0-9A-Z]{12}|AIza|"
+    r"eyJ[\w-]{8,}\.eyJ|Bearer\s|-----BEGIN [A-Z ]*PRIVATE KEY-----)")
+# Credentials embedded anywhere in free text (memory notes, descriptions,
+# YAML) are redacted in place.
+REDACTED = "[REDACTED]"
+_INLINE_SECRETS = [
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?"
+               r"(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S),
+    re.compile(r"(?<![\w-])sk-(?:[A-Za-z0-9]+-)*[A-Za-z0-9_-]{16,}"),
+    re.compile(r"(?<!\w)(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}"),
+    re.compile(r"(?<!\w)gh[pousr]_[A-Za-z0-9]{20,}"),
+    re.compile(r"(?<!\w)github_pat_[A-Za-z0-9_]{20,}"),
+    re.compile(r"(?<![\w-])glpat-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"(?<![\w-])xox[abposr]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"(?<![A-Z0-9])(?:AKIA|ASIA)[0-9A-Z]{16}(?![A-Z0-9])"),
+    re.compile(r"(?<![\w-])AIza[0-9A-Za-z_-]{35}"),
+    re.compile(r"(?<![\w-])eyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]+"),
+    re.compile(r"(?i)(?<=\bbearer\s)[A-Za-z0-9._~+/=-]{12,}"),
+]
+# scheme://user:password@host -> keep user, redact the password
+_URL_PASSWORD = re.compile(r"(?P<pre>[a-z][a-z0-9+.-]*://[^\s/:@]+:)"
+                           r"(?P<pw>[^\s/@]+)@", re.I)
+# ``key: value`` / ``key = value`` / ``export KEY=value`` assignments in
+# text (markdown, YAML, env snippets) whose key is secret-named.
+_ASSIGN = re.compile(
+    r"^(?P<lead>[ \t]*(?:[-*][ \t]+)?(?:export[ \t]+)?[\"']?)"
+    r"(?P<key>[A-Za-z_][\w.-]*)"
+    r"(?P<sep>[\"']?[ \t]*[:=][ \t]*)"
+    r"(?P<val>\S.*?)[ \t]*$", re.M)
+# Candidate high-entropy tokens (API keys without a known prefix).
+_TOKEN_CAND = re.compile(r"(?<![\w+=-])[A-Za-z0-9+_=-]{32,}(?![\w+=-])")
+
+
+def _key_tokens(key: str) -> list[str]:
+    k = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(key))
+    return [t for t in re.split(r"[^A-Za-z0-9]+", k.lower()) if t]
 
 
 def _is_secret_key(key: str) -> bool:
-    k = str(key).lower().replace("-", "_")
-    return (any(h in k for h in SECRET_HINTS) or k in ("key", "pass")
-            or k.endswith("_key") or k.endswith("_pass"))
+    toks = _key_tokens(key)
+    if not toks:
+        return False
+    if len(toks) == 1 and toks[0] in SECRET_KEY_EXACT:
+        return True
+    if any(t in SECRET_TOKENS for t in toks):
+        return True
+    for a, b in zip(toks, toks[1:]):
+        if (a, b) in (("api", "key"), ("private", "key"), ("access", "key"),
+                      ("secret", "key"), ("client", "secret"),
+                      ("session", "id"), ("auth", "header")):
+            return True
+    if len(toks) >= 2 and toks[-1] in ("key", "pass") \
+            and toks[-2] not in _NON_SECRET_KEY_PREFIX:
+        return True
+    return False
+
+
+def _entropy(s: str) -> float:
+    n = len(s)
+    return -sum((c / n) * math.log2(c / n)
+                for c in (s.count(ch) for ch in set(s)))
+
+
+def _high_entropy(tok: str) -> bool:
+    """Random-looking credential: mixed case + digits, high entropy.
+    Hex digests and plain words/paths do not qualify."""
+    core = tok.strip("=")
+    if len(core) < 32:
+        return False
+    if not (re.search(r"[a-z]", core) and re.search(r"[A-Z]", core)
+            and re.search(r"[0-9]", core)):
+        return False
+    return _entropy(core) >= 4.2
 
 
 def _is_secret_value(v) -> bool:
     return isinstance(v, str) and bool(_SECRET_VALUE.match(v.strip()))
 
 
+def _placeholder(val: str) -> bool:
+    v = val.strip().strip("\"'")
+    return (v in ("", "~", "null", "None", "|", ">", "|-", ">-", REDACTED)
+            or v.startswith(("${", "$", "<", "{{"))
+            or (len(v) <= 64 and bool(_ENV_NAME.match(v))))
+
+
+def redact_text(text: str) -> tuple[str, int]:
+    """Redact credentials inside free text. Returns (text, count).
+
+    - secret-named assignments (``password: x``, ``API_KEY=x``,
+      ``- token: "x"``); prose values with spaces are kept unless quoted,
+      env-name/placeholder values are kept
+    - YAML block scalars under a secret key (``private_key: |``)
+    - known credential shapes anywhere (sk-, ghp_, xox*, AKIA, JWT,
+      Bearer, private key blocks, url passwords) and high-entropy tokens
+    """
+    count = 0
+    lines = text.split("\n")
+    out_lines = []
+    block_indent = None
+    for line in lines:
+        if block_indent is not None:
+            ind = len(line) - len(line.lstrip(" \t"))
+            if line.strip() == "" or ind > block_indent:
+                if line.strip():
+                    out_lines.append(line[:ind] + REDACTED)
+                    count += 1
+                else:
+                    out_lines.append(line)
+                continue
+            block_indent = None
+        m = _ASSIGN.match(line)
+        if m and _is_secret_key(m.group("key")):
+            val = m.group("val")
+            raw = val.strip()
+            if raw in ("|", ">", "|-", ">-", "|+", ">+"):
+                block_indent = len(line) - len(line.lstrip(" \t"))
+            elif not _placeholder(raw):
+                quoted = raw[:1] in "\"'" and raw[-1:] == raw[:1] \
+                    and len(raw) >= 2
+                if quoted or not re.search(r"\s", raw):
+                    q = raw[0] if quoted else ""
+                    line = (m.group("lead") + m.group("key") + m.group("sep")
+                            + q + REDACTED + q)
+                    count += 1
+        out_lines.append(line)
+    text = "\n".join(out_lines)
+    for rx in _INLINE_SECRETS:
+        text, n = rx.subn(REDACTED, text)
+        count += n
+
+    def _url(m):
+        nonlocal count
+        if m.group("pw") == REDACTED or _placeholder(m.group("pw")):
+            return m.group(0)
+        count += 1
+        return m.group("pre") + REDACTED + "@"
+
+    text = _URL_PASSWORD.sub(_url, text)
+
+    def _ent(m):
+        nonlocal count
+        if _high_entropy(m.group(0)):
+            count += 1
+            return REDACTED
+        return m.group(0)
+
+    text = _TOKEN_CAND.sub(_ent, text)
+    return text, count
+
+
 def scrub_secrets(obj, path: str = ""):
     """Return (clean, env_refs, dropped) for a JSON value.
 
-    clean     -- copy with every secret removed (keys dropped from dicts,
-                 items dropped from lists)
+    clean     -- copy with every secret removed (secret-named keys dropped
+                 from dicts, credential-shaped items dropped from lists,
+                 credentials inside other strings redacted in place)
     env_refs  -- [(dotted.path, ENV_NAME)] for secret-named keys whose
                  value is an env-variable name (safe to record)
-    dropped   -- number of secret values removed
+    dropped   -- number of secret values removed or redacted
     """
     refs: list[tuple[str, str]] = []
     dropped = 0
@@ -105,6 +260,12 @@ def scrub_secrets(obj, path: str = ""):
         return clean_list, refs, dropped
     if _is_secret_value(obj):
         return _DROP, refs, 1
+    if isinstance(obj, str):
+        red, n = redact_text(obj)
+        if n:
+            if red.strip() == REDACTED:
+                return _DROP, refs, 1
+            return red, refs, n
     return obj, refs, 0
 
 
@@ -212,26 +373,51 @@ def migrate_config(conn, ws_dir: Path, archive: bool,
     return stats
 
 
+MEMORY_SUFFIXES = (".md", ".yaml", ".yml")
+
+
+def _memory_files(root: Path):
+    """memory/**/*.{md,yaml,yml}; symlinks and dot-dirs are skipped."""
+    for p in sorted(root.rglob("*")):
+        rel = p.relative_to(root)
+        if any(part.startswith(".") for part in rel.parts):
+            continue
+        if p.is_symlink() or not p.is_file():
+            continue
+        if p.suffix.lower() in MEMORY_SUFFIXES:
+            yield p, rel
+
+
 def migrate_memory(conn, ws_dir: Path, archive: bool,
                    node: str = "") -> dict:
     root = ws_dir / "memory"
-    stats = {"imported": 0, "dupes": 0, "archived": 0}
+    stats = {"imported": 0, "dupes": 0, "archived": 0, "redacted": 0}
     if not root.is_dir():
         return stats
-    for md in sorted(root.glob("*.md")):
-        slug = md.stem
+    for src, rel in list(_memory_files(root)):
+        # top-level notes keep their historic slug (stem); nested files
+        # and YAML use the relative path so names never collide
+        if len(rel.parts) == 1 and src.suffix.lower() == ".md":
+            slug = src.stem
+        elif src.suffix.lower() == ".md":
+            slug = rel.with_suffix("").as_posix()
+        else:
+            slug = rel.as_posix()
         try:
-            text = md.read_text(encoding="utf-8")
-        except OSError:
+            text = src.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
             continue
-        mtime_ms = int(md.stat().st_mtime * 1000)
+        mtime_ms = int(src.stat().st_mtime * 1000)
+        text, n = redact_text(text)
+        stats["redacted"] += n
         title = ""
-        for line in text.splitlines():
-            if line.strip().startswith("#"):
-                title = line.strip().lstrip("#").strip()
-                break
+        if src.suffix.lower() == ".md":
+            for line in text.splitlines():
+                if line.strip().startswith("#"):
+                    title = line.strip().lstrip("#").strip()
+                    break
         e = f"mem:{slug}"
-        datoms = [(e, "mem:file", md.name, True),
+        datoms = [(e, "mem:file", rel.as_posix(), True),
                   (e, "mem:text", text, True)]
         if title:
             datoms.append((e, "mem:title", title, True))
@@ -240,7 +426,7 @@ def migrate_memory(conn, ws_dir: Path, archive: bool,
         else:
             stats["dupes"] += 1
         if archive:
-            _archive(ws_dir, md)
+            _archive(ws_dir, src)
             stats["archived"] += 1
     return stats
 
