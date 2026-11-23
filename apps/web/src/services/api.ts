@@ -993,6 +993,10 @@ export const api = {
         const chunk = buf.slice(0, i);
         buf = buf.slice(i + 2);
         for (const line of chunk.split("\n")) {
+          if (line.startsWith(": ping")) {
+            yield { type: "ping" }; // keepalive: lets callers tell a live quiet stream from a dead one
+            continue;
+          }
           if (!line.startsWith("data:")) continue;
           try {
             yield JSON.parse(line.slice(5).trim());
@@ -1036,6 +1040,10 @@ export const api = {
         const chunk = buf.slice(0, i);
         buf = buf.slice(i + 2);
         for (const line of chunk.split("\n")) {
+          if (line.startsWith(": ping")) {
+            yield { type: "ping" }; // keepalive: lets callers tell a live quiet stream from a dead one
+            continue;
+          }
           if (!line.startsWith("data:")) continue;
           try {
             yield JSON.parse(line.slice(5).trim());
