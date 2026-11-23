@@ -386,3 +386,87 @@ def switch_host(conn, session_id: str, new_host: str, *,
                          bool(result["checkpoint"]["unpushed"]), node=node)
     result["bound"] = True
     return result
+
+
+def session_bind_gate(session_id: str, tool: str = "",
+                      workspace: object = None) -> bool:
+    """Bind ``session_id`` to this host on its first host-local tool.
+
+    Called either as the in-process harness gate (``register_session_gate``
+    — ``klanker.turn`` registers it, ``workspace`` is ignored, the turn env
+    selects the store) or via ``AGENTS_SESSION_BIND_CMD``. Idempotent: an
+    already-bound session is left alone (a switch made explicitly wins).
+    ``session:repo``/``session:branch`` are written when the workdir is a
+    git checkout; the repo slug is resolved against ``ws.repos`` (R7).
+    """
+    from agents_store.db import connect
+    from agents_workspace import Host
+
+    from .wshare import _own_device_ids
+
+    session_id = str(session_id or "").strip()
+    if not session_id:
+        return False
+    host = Host.from_env()
+    ws_id = os.environ.get("AGENTS_WORKSPACE", "").strip()
+    try:
+        ws = host.workspace(ws_id) if ws_id else host.select_workspace()
+    except Exception:  # noqa: BLE001
+        return False
+    conn = None
+    try:
+        conn = connect(ws.dir / "store.db", check_same_thread=False)
+        if session_view(conn, session_id).get("host"):
+            return False
+        host_id = (sorted(_own_device_ids()) or ["local"])[0]
+        repo, branch = "", ""
+        workdir = os.environ.get("AGENTS_WORKDIR", "").strip()
+        if workdir and _git_ok(Path(workdir), "rev-parse",
+                               "--is-inside-work-tree"):
+            main = _main_repo(Path(workdir))
+            slug = _repo_slug(ws, main)
+            repo = f"{slug}:{main}" if slug else str(main)
+            branch = session_branch(session_id)
+            # coding sessions get an isolated worktree up front —
+            # ws.repos checkout_mode="shared" opts out (klanker#145 R7)
+            if _checkout_mode(ws, main) == "worktree":
+                try:
+                    ensure_worktree(main, session_id)
+                except Exception:  # noqa: BLE001
+                    pass  # bind still lands; worktree retries on switch
+        bind_session(conn, session_id, host_id, branch=branch, repo=repo)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _repo_slug(ws, main: Path) -> str:
+    """ws.repos slug for a checkout path — host-local paths resolve
+    through the repo's own dir name / remote tail against the mapping."""
+    want = main.name.lower()
+    for r in getattr(ws, "repos", ()) or ():
+        slug = str(r.get("slug") or "")
+        url = str(r.get("url") or "")
+        tail = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git").lower()
+        if want == slug.lower() or (tail and want == tail):
+            return slug
+    return ""
+
+
+def _checkout_mode(ws, main: Path) -> str:
+    """ws.repos checkout_mode for this checkout; coding default is
+    ``worktree`` (parallel sessions never share a dirty tree)."""
+    slug = _repo_slug(ws, main)
+    for r in getattr(ws, "repos", ()) or ():
+        if str(r.get("slug") or "") == slug:
+            return str(r.get("checkout_mode") or "worktree")
+    return "worktree"
+
+
+def cmd_session_gate(args) -> int:
+    """Internal: harness bind hook via ``AGENTS_SESSION_BIND_CMD``."""
+    session_bind_gate(args.session, getattr(args, "tool", "") or "")
+    return 0

@@ -7,9 +7,9 @@ from agents_store.db import connect
 
 from klanker import session as session_mod
 from klanker.session import (InvalidSessionId, bind_session, checkpoint,
-                             ensure_worktree, remove_worktree, session_branch,
-                             session_view, set_wip_unpushed, switch_host,
-                             worktree_path)
+                             ensure_worktree, find_worktree, remove_worktree,
+                             session_branch, session_view, set_wip_unpushed,
+                             switch_host, worktree_path)
 
 
 @pytest.fixture
@@ -363,3 +363,111 @@ def test_inside_root_worktree_still_reused_and_checkpointed(repo):
     assert ensure_worktree(repo, "inside01") == wt
     (wt / "f.txt").write_text("v2")
     assert checkpoint(repo, "inside01")["committed"]
+
+
+# -- session gate (harness first host-local tool -> bind datom) ---------------
+
+def _gate_host(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "gatehost"))
+    from agents_workspace import Host
+
+    h = Host.from_env()
+    h.dir.mkdir(parents=True, exist_ok=True)
+    return h
+
+
+def test_session_gate_binds_once(tmp_path, monkeypatch, repo):
+    from klanker.session import session_bind_gate
+
+    h = _gate_host(tmp_path, monkeypatch)
+    h.create("wgate")
+    (h.dir / "clients").mkdir(parents=True, exist_ok=True)
+    (h.dir / "clients" / "hubs.json").write_text(
+        '{"hubs": {"h1": {"device_id": "dev-self",'
+        ' "hub_url": "http://hub"}}}')
+    monkeypatch.setenv("AGENTS_WORKSPACE", "wgate")
+    monkeypatch.setenv("AGENTS_WORKDIR", str(repo))
+
+    assert session_bind_gate("ses_gate1", "git") is True
+    conn = connect(h.dir / "workspaces" / "wgate" / "store.db")
+    try:
+        v = session_view(conn, "ses_gate1")
+        assert v["host"] == "dev-self"
+        assert v["repo"] == str(repo.resolve())
+        assert v["branch"] == "klanker/s-ses_gate1"
+        # second fire is a no-op (existing binding wins)
+        bind_session(conn, "ses_gate1", "dev-other")
+        assert session_bind_gate("ses_gate1", "git") is False
+        assert session_view(conn, "ses_gate1")["host"] == "dev-other"
+    finally:
+        conn.close()
+
+
+def test_session_gate_repo_slug_from_ws_repos(tmp_path, monkeypatch, repo):
+    """ws.repos consumption (R7): a mapped slug prefixes session:repo."""
+    import inspect
+
+    from agents_workspace import Host
+
+    from klanker.session import session_bind_gate
+
+    if "repos" not in inspect.signature(Host.update_workspace).parameters:
+        pytest.skip("agents-workspace without repos field")
+    h = _gate_host(tmp_path, monkeypatch)
+    h.create("wgate")
+    h.update_workspace(
+        "wgate",
+        repos=[{"slug": "myrepo", "url": "git@h:me/repo.git",
+                "checkout_mode": "worktree"}])
+    # repo dir name resolves against the url tail -> slug match
+    monkeypatch.setenv("AGENTS_WORKSPACE", "wgate")
+    monkeypatch.setenv("AGENTS_WORKDIR", str(repo))
+    assert session_bind_gate("ses_map", "git") is True
+    conn = connect(h.dir / "workspaces" / "wgate" / "store.db")
+    try:
+        assert session_view(conn, "ses_map")["repo"].startswith("myrepo:")
+    finally:
+        conn.close()
+    # checkout_mode=worktree: session worktree exists on its branch
+    wt = find_worktree(repo, "klanker/s-ses_map")
+    assert wt is not None and _head(wt) == "klanker/s-ses_map"
+
+
+def test_session_gate_shared_mode_skips_worktree(tmp_path, monkeypatch,
+                                                 repo):
+    import inspect
+
+    from agents_workspace import Host
+
+    from klanker.session import session_bind_gate
+
+    if "repos" not in inspect.signature(Host.update_workspace).parameters:
+        pytest.skip("agents-workspace without repos field")
+    h = _gate_host(tmp_path, monkeypatch)
+    h.create("wgate")
+    h.update_workspace(
+        "wgate",
+        repos=[{"slug": "repo", "checkout_mode": "shared"}])
+    monkeypatch.setenv("AGENTS_WORKSPACE", "wgate")
+    monkeypatch.setenv("AGENTS_WORKDIR", str(repo))
+    assert session_bind_gate("ses_sh", "git") is True
+    assert find_worktree(repo, "klanker/s-ses_sh") is None
+
+
+def test_session_gate_without_repo_binds_local(tmp_path, monkeypatch):
+    from klanker.session import session_bind_gate
+
+    h = _gate_host(tmp_path, monkeypatch)
+    h.create("wgate")
+    monkeypatch.setenv("AGENTS_WORKSPACE", "wgate")
+    monkeypatch.setenv("AGENTS_WORKDIR", str(tmp_path / "notarepo"))
+    (tmp_path / "notarepo").mkdir()
+
+    assert session_bind_gate("ses_chat", "mcp.terminal") is True
+    conn = connect(h.dir / "workspaces" / "wgate" / "store.db")
+    try:
+        v = session_view(conn, "ses_chat")
+        assert v["host"] == "local"
+        assert v["repo"] == "" and v["branch"] == ""
+    finally:
+        conn.close()

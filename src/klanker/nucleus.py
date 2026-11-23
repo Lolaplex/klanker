@@ -141,6 +141,11 @@ class Nucleus:
                     provider_key_env=key_env,
                 )
             )
+            if session:
+                env.setdefault(
+                    "AGENTS_SESSION_BIND_CMD",
+                    f'"{sys.executable}" -m klanker _session-gate '
+                    "{session} {tool}")
             if isolation == "container":
                 cmd = to_container_argv(ws, cmd)
                 env = to_container_env(ws, env)

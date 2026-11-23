@@ -438,6 +438,10 @@ def build_parser() -> argparse.ArgumentParser:
     remote_pair.add_argument("code", nargs="?", default="", help="One-time pairing code")
     remote_pair.add_argument("--id", default="", help="Explicit remote id slug")
 
+    gate_p = sub.add_parser("_session-gate", help=argparse.SUPPRESS)
+    gate_p.add_argument("session", help="Session id")
+    gate_p.add_argument("tool", nargs="?", default="", help="First host-local tool")
+
     pair_p = sub.add_parser("pair", help="Create a single-use 60s pairing code/QR for Web or remote CLI")
     pair_p.add_argument("--remote", action="store_true", help="Mint a remote CLI pairing code")
     pair_p.add_argument("--ttl", type=int, default=60, help="Validity window in seconds (15-120)")
@@ -464,6 +468,7 @@ KNOWN_SUBCOMMANDS = {
     "evidence",
     "persona",
     "workspace",
+    "_session-gate",
     "import",
     "migrate",
     "bg",
@@ -673,6 +678,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{w.id}  {w.label or ''}  isolation={iso}")
         return 0
 
+    elif args.command == "_session-gate":
+        from .session import cmd_session_gate
+
+        return cmd_session_gate(args)
+
     elif args.command == "doctor":
         from .doctor import run as doctor_run
 
@@ -824,6 +834,12 @@ def main(argv: list[str] | None = None) -> int:
                 from .remote_dispatch import remote_turn_dispatch
 
                 _ha.remote_turn_dispatch = remote_turn_dispatch
+            # First host-local tool in a turn subprocess binds
+            # session:host into the ws store (klanker#145 R6).
+            os.environ.setdefault(
+                "AGENTS_SESSION_BIND_CMD",
+                f'"{sys.executable}" -m klanker _session-gate '
+                "{session} {tool}")
         except Exception as exc:  # noqa: BLE001
             log.warning("workspace sync unavailable: %s", exc)
 
