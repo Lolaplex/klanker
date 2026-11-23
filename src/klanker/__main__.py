@@ -709,10 +709,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             from agents_relay import channel as _ch, channel_client as _cc
 
-            from .wssync import SyncRuntime
+            from .wssync import SyncRuntime, sync_workspaces
 
             _sync_rt = SyncRuntime()
-            _ws_map = {str(ws.id): ws.dir for ws in Workspace.list_all()}
+            _ws_map = sync_workspaces()
             _sync_rt.attach_hub(_ch.hub(), _ws_map, str(host.host_id()))
             _cc.on_client(lambda c: _sync_rt.attach_client(
                 c, [(ws_id, d) for ws_id, d in _ws_map.items()]))
