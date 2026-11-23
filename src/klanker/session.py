@@ -1,25 +1,35 @@
 """Session host binding + session worktree mechanics (klanker#136).
 
-session:host is a card-one datom — sessions stay unbound ("") until a
+session:host is a card-one datom -- sessions stay unbound ("") until a
 host-local tool needs a host; hosts can switch between prompts. The
 live run lock is the hub lease (out-of-band); these datoms are the slow
-durable state. Writes go through ingest with origin_actor
-"bind:<session>" — local, LWW-correct, replay-idempotent.
+durable state. Writes go through ingest with a host-scoped actor
+``bind@<node>:<session>`` (origin_seq continues from the store) --
+local, LWW-correct, replay-idempotent, never colliding across hosts.
 
-Code moves by Git, never by file sync: each session gets worktree
-`<repo>/.klanker/wt/<sid8>` on branch `klanker/s-<sid8>`; a WIP
-checkpoint commit lands before any host switch on a dirty tree.
+Code moves by Git, never by file sync: each session gets its own
+worktree on branch ``klanker/s-<sid8>``. Worktrees live OUTSIDE the
+user's repo (``<worktree_root>/<repo>-<hash>/<sid8>``, root =
+``$KLANKER_WORKTREE_DIR`` or ``<host>/worktrees``), so they never show
+up as untracked files or get committed into another branch. The user's
+own checkout is never switched: checkpoints commit only inside the
+session worktree. Network git calls (ls-remote/push) have timeouts.
 """
 from __future__ import annotations
 
+import hashlib
+import os
 import subprocess
 import time
 from pathlib import Path
 
-from agents_store.db import connect
 from agents_store.ingest import ingest
 
-from .msgsync import ensure_domain
+from .msgsync import actor, ensure_domain, local_node_id, next_seq
+
+GIT_TIMEOUT_SEC = 30.0       # local git plumbing
+REMOTE_PROBE_SEC = 15.0      # ls-remote
+PUSH_TIMEOUT_SEC = 60.0      # push
 
 
 def _now_ms() -> int:
@@ -45,43 +55,51 @@ def session_view(conn, session_id: str) -> dict:
     return out
 
 
-def bind_session(conn, session_id: str, host_id: str, *,
-                 branch: str = "", repo: str = "") -> None:
-    """Bind a session to a host (or switch). card-one LWW wins."""
+def _bind_tx(conn, session_id: str, datoms, node: str | None) -> None:
     ensure_domain(conn)
-    e = f"session:{session_id}"
+    origin = actor("bind", node or local_node_id(), session_id)
     ms = _now_ms()
+    ingest(conn, origin, next_seq(conn, origin),
+           f"{ms:013d}.00000.bind", datoms)
+
+
+def bind_session(conn, session_id: str, host_id: str, *,
+                 branch: str = "", repo: str = "",
+                 node: str | None = None) -> None:
+    """Bind a session to a host (or switch). card-one LWW wins."""
+    e = f"session:{session_id}"
     datoms = [(e, "session:host", host_id, True)]
     if branch:
         datoms.append((e, "session:branch", branch, True))
     if repo:
         datoms.append((e, "session:repo", repo, True))
-    ingest(conn, f"bind:{session_id}", ms,
-           f"{ms:013d}.00000.bind", datoms)
+    _bind_tx(conn, session_id, datoms, node)
 
 
-def set_wip_unpushed(conn, session_id: str, flag: bool) -> None:
-    ensure_domain(conn)
-    ms = _now_ms()
-    ingest(conn, f"bind:{session_id}", ms + 1,
-           f"{ms + 1:013d}.00000.bind",
-           [(f"session:{session_id}", "session:wip_unpushed",
-             "true" if flag else "false", True)])
+def set_wip_unpushed(conn, session_id: str, flag: bool, *,
+                     node: str | None = None) -> None:
+    _bind_tx(conn, session_id,
+             [(f"session:{session_id}", "session:wip_unpushed",
+               "true" if flag else "false", True)], node)
 
 
 # -- git mechanics -----------------------------------------------------------
 
-def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+def _git(repo: Path, *args: str, check: bool = True,
+         timeout: float = GIT_TIMEOUT_SEC) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env.setdefault("GIT_TERMINAL_PROMPT", "0")  # never block on a prompt
     return subprocess.run(
         ["git", "-C", str(repo), *args],
-        capture_output=True, text=True, check=check)
+        capture_output=True, text=True, check=check, timeout=timeout,
+        env=env)
 
 
-def _git_ok(repo: Path, *args: str) -> bool:
+def _git_ok(repo: Path, *args: str, timeout: float = GIT_TIMEOUT_SEC) -> bool:
     try:
-        _git(repo, *args)
+        _git(repo, *args, timeout=timeout)
         return True
-    except subprocess.CalledProcessError:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
 
 
@@ -90,82 +108,143 @@ def repo_dirty(repo: Path) -> bool:
     return bool(out.strip())
 
 
-def ensure_worktree(repo: str | Path, session_id: str) -> Path:
-    """Idempotent session worktree on branch klanker/s-<sid8>."""
+def worktree_root() -> Path:
+    env = os.environ.get("KLANKER_WORKTREE_DIR", "").strip()
+    if env:
+        return Path(env).expanduser()
+    try:
+        from agents_workspace import Host
+
+        return Path(Host.from_env().dir) / "worktrees"
+    except Exception:  # noqa: BLE001
+        return Path.home() / ".klanker" / "worktrees"
+
+
+def _main_repo(repo: Path) -> Path:
+    """Top level of the main working tree (works from a linked worktree)."""
+    common = _git(repo, "rev-parse", "--path-format=absolute",
+                  "--git-common-dir").stdout.strip()
+    return Path(common).parent
+
+
+def worktree_path(repo: str | Path, session_id: str,
+                  root: str | Path | None = None) -> Path:
+    main = _main_repo(Path(repo)).resolve()
+    tag = hashlib.sha1(str(main).encode("utf-8")).hexdigest()[:8]
+    base = Path(root) if root is not None else worktree_root()
+    return base / f"{main.name}-{tag}" / session_id[:8]
+
+
+def find_worktree(repo: str | Path, branch: str) -> Path | None:
+    """Path of the worktree that has ``branch`` checked out, if any."""
+    out = _git(Path(repo), "worktree", "list", "--porcelain").stdout
+    path = None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            path = Path(line[len("worktree "):])
+        elif line.startswith("branch ") and path is not None:
+            if line[len("branch "):] == f"refs/heads/{branch}":
+                return path
+    return None
+
+
+def ensure_worktree(repo: str | Path, session_id: str, *,
+                    root: str | Path | None = None) -> Path:
+    """Idempotent session worktree on branch klanker/s-<sid8>, outside
+    the repo. Re-uses the worktree already holding the branch."""
     repo = Path(repo)
     branch = session_branch(session_id)
-    wt = repo / ".klanker" / "wt" / session_id[:8]
-    if (wt / ".git").exists():
-        return wt
+    existing = find_worktree(repo, branch)
+    if existing is not None and existing.exists():
+        return existing
+    _git(repo, "worktree", "prune")
+    wt = worktree_path(repo, session_id, root)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    if not _git_ok(repo, "rev-parse", "--verify", branch):
-        _git(repo, "worktree", "add", str(wt), "-b", branch)
+    if not _git_ok(repo, "rev-parse", "--verify", "--quiet",
+                   f"refs/heads/{branch}"):
+        _git(repo, "worktree", "add", "-b", branch, str(wt))
     else:
         _git(repo, "worktree", "add", str(wt), branch)
     return wt
 
 
 def checkpoint(repo: str | Path, session_id: str, host_id: str = "") -> dict:
-    """Commit dirty session state on its branch; push if a remote is up.
+    """Commit dirty session state in the session worktree; push if a
+    remote answers in time.
 
-    Returns {"committed", "pushed", "unpushed", "error"}. Never commits
-    on user main/dev — switches to klanker/s-<sid8> first.
+    Returns {"committed", "pushed", "unpushed", "error", "worktree"}.
+    Only the session worktree is touched -- the user's checkout (main,
+    dev, whatever is checked out) is never switched or committed to.
     """
     repo = Path(repo)
     branch = session_branch(session_id)
     out = {"committed": False, "pushed": False, "unpushed": False,
-           "error": ""}
-    cur = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    if cur != branch:
-        if not _git_ok(repo, "rev-parse", "--verify", branch):
-            _git(repo, "checkout", "-b", branch)
-        else:
-            _git(repo, "checkout", branch)
-    if not repo_dirty(repo):
-        # clean tree — still maybe unpushed commits
-        pass
-    else:
-        _git(repo, "add", "-A")
-        msg = (f"wip(klanker): checkpoint session {session_id[:8]}"
-               + (f" ({host_id})" if host_id else ""))
-        try:
-            _git(repo, "commit", "-m", msg)
+           "error": "", "worktree": ""}
+    try:
+        wt = find_worktree(repo, branch)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        out["error"] = f"not a git repo: {exc}"
+        return out
+    if wt is None or not wt.exists():
+        out["error"] = "no session worktree"
+        return out
+    out["worktree"] = str(wt)
+    try:
+        if repo_dirty(wt):
+            _git(wt, "add", "-A")
+            msg = (f"wip(klanker): checkpoint session {session_id[:8]}"
+                   + (f" ({host_id})" if host_id else ""))
+            _git(wt, "commit", "-m", msg)
             out["committed"] = True
-        except subprocess.CalledProcessError as exc:
-            out["error"] = f"commit refused: {exc.stderr.strip() or exc}"
-            return out
-    remotes = _git(repo, "remote").stdout.split()
-    if remotes and _git_ok(repo, "ls-remote", remotes[0], "HEAD"):
-        try:
-            _git(repo, "push", "-u", remotes[0], branch)
-            out["pushed"] = True
-        except subprocess.CalledProcessError as exc:
-            out["unpushed"] = True
-            out["error"] = f"push failed: {exc.stderr.strip() or exc}"
-    else:
+    except subprocess.CalledProcessError as exc:
+        out["error"] = f"commit refused: {exc.stderr.strip() or exc}"
+        return out
+    except subprocess.TimeoutExpired:
+        out["error"] = "commit timed out"
+        return out
+    remotes = _git(wt, "remote").stdout.split()
+    if not remotes:
         out["unpushed"] = True
+        return out
+    if not _git_ok(wt, "ls-remote", "--heads", remotes[0],
+                   timeout=REMOTE_PROBE_SEC):
+        out["unpushed"] = True
+        out["error"] = "remote unreachable"
+        return out
+    try:
+        _git(wt, "push", "-u", remotes[0], branch, timeout=PUSH_TIMEOUT_SEC)
+        out["pushed"] = True
+    except subprocess.CalledProcessError as exc:
+        out["unpushed"] = True
+        out["error"] = f"push failed: {exc.stderr.strip() or exc}"
+    except subprocess.TimeoutExpired:
+        out["unpushed"] = True
+        out["error"] = "push timed out"
     return out
 
 
 def switch_host(conn, session_id: str, new_host: str, *,
                 repo: str | Path | None = None,
-                old_host: str = "") -> dict:
+                old_host: str = "", node: str | None = None) -> dict:
     """Host switch between prompts: checkpoint -> rebind -> flag state.
 
     Caller decides what to do with unpushed=True (warn / refuse per
-    workspace execution policy).
+    workspace execution policy). A session without a worktree (pure
+    conversation) rebinds without a checkpoint.
     """
     result = {"checkpoint": None, "bound": False}
     if repo is not None:
         cp = checkpoint(repo, session_id, old_host)
         result["checkpoint"] = cp
-        if cp["error"] and not cp["committed"]:
+        if cp["error"] and not cp["committed"] \
+                and cp["error"] != "no session worktree" \
+                and not cp["unpushed"]:
             return result
     view = session_view(conn, session_id)
     bind_session(conn, session_id, new_host,
-                 branch=view["branch"], repo=view["repo"])
+                 branch=view["branch"], repo=view["repo"], node=node)
     if repo is not None:
         set_wip_unpushed(conn, session_id,
-                         bool(result["checkpoint"]["unpushed"]))
+                         bool(result["checkpoint"]["unpushed"]), node=node)
     result["bound"] = True
     return result

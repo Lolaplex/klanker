@@ -269,6 +269,9 @@ def sync_workspaces() -> dict:
     `sync_policy=local` workspaces never appear on the wire (ws#43):
     no spoke workers, no hub-side ingest, no fan-out. `sync_hosts`
     restricts hub fan-out to the listed devices; empty/None = all.
+    Entries are hub channel device ids (the id this hub minted at
+    pairing, `/v1/hub/devices`), compared against
+    `hub.connected_devices()` -- not Host.host_id() values.
     """
     from agents_workspace import Workspace
 
