@@ -338,3 +338,28 @@ def test_link_swapped_during_worktree_add_is_undone(repo, tmp_path,
     assert not (outside / "racer01").exists()
     assert _git(repo, "worktree", "list", "--porcelain").stdout.count(
         "worktree ") == 1
+
+
+def test_outside_checkout_of_session_branch_never_used(conn, repo, tmp_path):
+    elsewhere = tmp_path / "outside-co"
+    _git(repo, "worktree", "add", "-b", "klanker/s-outside1", str(elsewhere))
+    (elsewhere / "untracked.txt").write_text("not yours")
+    before = _git(elsewhere, "rev-parse", "HEAD").stdout.strip()
+    with pytest.raises(InvalidSessionId, match="outside the worktree root"):
+        ensure_worktree(repo, "outside1")
+    cp = checkpoint(repo, "outside1", "h1")
+    assert not cp["committed"] and not cp["pushed"]
+    assert "outside the worktree root" in cp["error"]
+    res = switch_host(conn, "outside1", "h2", repo=repo)
+    assert res["bound"] is False
+    # nothing was committed in the outside checkout
+    assert _git(elsewhere, "rev-parse", "HEAD").stdout.strip() == before
+    assert (elsewhere / "untracked.txt").exists()
+    assert "untracked.txt" in _git(elsewhere, "status", "--porcelain").stdout
+
+
+def test_inside_root_worktree_still_reused_and_checkpointed(repo):
+    wt = ensure_worktree(repo, "inside01")
+    assert ensure_worktree(repo, "inside01") == wt
+    (wt / "f.txt").write_text("v2")
+    assert checkpoint(repo, "inside01")["committed"]

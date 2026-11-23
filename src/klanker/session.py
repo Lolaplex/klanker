@@ -176,6 +176,16 @@ def _resolved_root(root: str | Path | None = None) -> Path:
     return base.expanduser().resolve()
 
 
+def _inside_root(path: Path, base: Path) -> bool:
+    """True if ``path`` lies under the resolved root ``base`` without a
+    symlink below it and resolves inside it."""
+    try:
+        _check_contained(Path(path), base)
+        return True
+    except InvalidSessionId:
+        return False
+
+
 def worktree_path(repo: str | Path, session_id: str,
                   root: str | Path | None = None) -> Path:
     """``<root>/<repo>-<hash>/<session-id>``; validated, contained in
@@ -206,14 +216,20 @@ def find_worktree(repo: str | Path, branch: str) -> Path | None:
 def ensure_worktree(repo: str | Path, session_id: str, *,
                     root: str | Path | None = None) -> Path:
     """Idempotent session worktree on branch klanker/s-<session-id>,
-    outside the repo. Re-uses the worktree already holding the branch."""
+    outside the repo. Re-uses the worktree already holding the branch
+    only if it lies inside the worktree root; a checkout of the session
+    branch anywhere else is refused (InvalidSessionId), never returned."""
     repo = Path(repo)
     branch = session_branch(session_id)  # validates session_id
+    base = _resolved_root(root)
     existing = find_worktree(repo, branch)
     if existing is not None and existing.exists():
+        if not _inside_root(existing, base):
+            raise InvalidSessionId(
+                f"session branch {branch} is checked out outside the"
+                f" worktree root: {existing}")
         return existing
     _git(repo, "worktree", "prune")
-    base = _resolved_root(root)
     wt = worktree_path(repo, session_id, base)
     wt.parent.mkdir(parents=True, exist_ok=True)
     # re-check after mkdir: a link planted in between is still refused
@@ -234,13 +250,16 @@ def ensure_worktree(repo: str | Path, session_id: str, *,
     return wt
 
 
-def checkpoint(repo: str | Path, session_id: str, host_id: str = "") -> dict:
+def checkpoint(repo: str | Path, session_id: str, host_id: str = "", *,
+               root: str | Path | None = None) -> dict:
     """Commit dirty session state in the session worktree; push if a
     remote answers in time.
 
     Returns {"committed", "pushed", "unpushed", "error", "worktree"}.
     Only the session worktree is touched -- the user's checkout (main,
-    dev, whatever is checked out) is never switched or committed to.
+    dev, whatever is checked out) is never switched or committed to, and
+    a checkout of the session branch outside the worktree root is
+    refused (error, nothing committed).
     """
     repo = Path(repo)
     out = {"committed": False, "pushed": False, "unpushed": False,
@@ -259,6 +278,10 @@ def checkpoint(repo: str | Path, session_id: str, host_id: str = "") -> dict:
         out["error"] = "no session worktree"
         return out
     out["worktree"] = str(wt)
+    if not _inside_root(wt, _resolved_root(root)):
+        out["error"] = ("refusing to checkpoint a session worktree outside"
+                        f" the worktree root: {wt}")
+        return out
     try:
         if repo_dirty(wt):
             _git(wt, "add", "-A")
@@ -316,7 +339,7 @@ def remove_worktree(repo: str | Path, session_id: str, *,
             if wt.resolve() == _main_repo(repo).resolve():
                 out["error"] = "refusing to remove the main working tree"
                 return out
-            if not wt.resolve().is_relative_to(_resolved_root(root)):
+            if not _inside_root(wt, _resolved_root(root)):
                 out["error"] = ("refusing to remove a worktree outside the"
                                 f" worktree root: {wt}")
                 return out
@@ -339,7 +362,8 @@ def remove_worktree(repo: str | Path, session_id: str, *,
 
 def switch_host(conn, session_id: str, new_host: str, *,
                 repo: str | Path | None = None,
-                old_host: str = "", node: str | None = None) -> dict:
+                old_host: str = "", node: str | None = None,
+                root: str | Path | None = None) -> dict:
     """Host switch between prompts: checkpoint -> rebind -> flag state.
 
     Caller decides what to do with unpushed=True (warn / refuse per
@@ -348,7 +372,7 @@ def switch_host(conn, session_id: str, new_host: str, *,
     """
     result = {"checkpoint": None, "bound": False}
     if repo is not None:
-        cp = checkpoint(repo, session_id, old_host)
+        cp = checkpoint(repo, session_id, old_host, root=root)
         result["checkpoint"] = cp
         if cp["error"] and not cp["committed"] \
                 and cp["error"] != "no session worktree" \
