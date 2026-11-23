@@ -8,8 +8,8 @@ durable state. Writes go through ingest with a host-scoped actor
 local, LWW-correct, replay-idempotent, never colliding across hosts.
 
 Code moves by Git, never by file sync: each session gets its own
-worktree on branch ``klanker/s-<sid8>``. Worktrees live OUTSIDE the
-user's repo (``<worktree_root>/<repo>-<hash>/<sid8>``, root =
+worktree on branch ``klanker/s-<session-id>``. Worktrees live OUTSIDE the
+user's repo (``<worktree_root>/<repo>-<hash>/<session-id>``, root =
 ``$KLANKER_WORKTREE_DIR`` or ``<host>/worktrees``), so they never show
 up as untracked files or get committed into another branch. The user's
 own checkout is never switched: checkpoints commit only inside the
@@ -41,7 +41,7 @@ def _now_ms() -> int:
 
 # Session ids end up in branch names and filesystem paths; anything
 # outside this set (slashes, dots, absolute paths, whitespace) is refused.
-_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,128}")  # used with fullmatch
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
 
 
@@ -50,14 +50,16 @@ class InvalidSessionId(ValueError):
 
 
 def validate_session_id(session_id: str) -> str:
-    if not isinstance(session_id, str) or not _SESSION_ID_RE.match(session_id):
+    if not isinstance(session_id, str) \
+            or _SESSION_ID_RE.fullmatch(session_id) is None:
         raise InvalidSessionId(f"invalid session id: {session_id!r}")
     return session_id
 
 
 def session_slug(session_id: str) -> str:
-    """Path/branch-safe short id (validated, first 8 chars)."""
-    return validate_session_id(session_id)[:8]
+    """Path/branch-safe id: the full validated session id. (A short
+    prefix let two sessions share one worktree and branch.)"""
+    return validate_session_id(session_id)
 
 
 def session_branch(session_id: str) -> str:
@@ -169,16 +171,20 @@ def _check_contained(path: Path, root: Path) -> None:
         raise InvalidSessionId(f"worktree path escapes root: {path}")
 
 
+def _resolved_root(root: str | Path | None = None) -> Path:
+    base = Path(root) if root is not None else worktree_root()
+    return base.expanduser().resolve()
+
+
 def worktree_path(repo: str | Path, session_id: str,
                   root: str | Path | None = None) -> Path:
-    """``<root>/<repo>-<hash>/<sid8>``; validated, contained in root,
-    no symlinks below the (resolved) root."""
+    """``<root>/<repo>-<hash>/<session-id>``; validated, contained in
+    root, no symlinks below the (resolved) root."""
     slug = session_slug(session_id)
     main = _main_repo(Path(repo)).resolve()
     tag = hashlib.sha1(str(main).encode("utf-8")).hexdigest()[:8]
     name = _UNSAFE_NAME.sub("_", main.name).lstrip(".") or "repo"
-    base = (Path(root) if root is not None else worktree_root())
-    base = base.expanduser().resolve()
+    base = _resolved_root(root)
     wt = base / f"{name}-{tag}" / slug
     _check_contained(wt, base)
     return wt
@@ -199,23 +205,32 @@ def find_worktree(repo: str | Path, branch: str) -> Path | None:
 
 def ensure_worktree(repo: str | Path, session_id: str, *,
                     root: str | Path | None = None) -> Path:
-    """Idempotent session worktree on branch klanker/s-<sid8>, outside
-    the repo. Re-uses the worktree already holding the branch."""
+    """Idempotent session worktree on branch klanker/s-<session-id>,
+    outside the repo. Re-uses the worktree already holding the branch."""
     repo = Path(repo)
     branch = session_branch(session_id)  # validates session_id
     existing = find_worktree(repo, branch)
     if existing is not None and existing.exists():
         return existing
     _git(repo, "worktree", "prune")
-    wt = worktree_path(repo, session_id, root)
+    base = _resolved_root(root)
+    wt = worktree_path(repo, session_id, base)
     wt.parent.mkdir(parents=True, exist_ok=True)
     # re-check after mkdir: a link planted in between is still refused
-    _check_contained(wt, wt.parent.parent)
+    _check_contained(wt, base)
     if not _git_ok(repo, "rev-parse", "--verify", "--quiet",
                    f"refs/heads/{branch}"):
         _git(repo, "worktree", "add", "-b", branch, str(wt))
     else:
         _git(repo, "worktree", "add", str(wt), branch)
+    # re-check after git created it: if a component was swapped for a
+    # link meanwhile, drop the fresh checkout and refuse
+    try:
+        _check_contained(wt, base)
+    except InvalidSessionId:
+        _git_ok(repo, "worktree", "remove", "--force", str(wt))
+        _git_ok(repo, "worktree", "prune")
+        raise
     return wt
 
 
@@ -280,9 +295,12 @@ def checkpoint(repo: str | Path, session_id: str, host_id: str = "") -> dict:
 
 def remove_worktree(repo: str | Path, session_id: str, *,
                     delete_branch: bool = False,
-                    force: bool = False) -> dict:
+                    force: bool = False,
+                    root: str | Path | None = None) -> dict:
     """Session end / PR merged: drop the session worktree.
 
+    Only a worktree inside the worktree root is removed; a checkout of
+    the session branch anywhere else (or the main tree) is refused.
     Refuses a dirty worktree unless ``force`` (git's own check). The
     branch is kept unless ``delete_branch`` (it may still back a PR).
     Returns {"removed", "branch_deleted", "error", "worktree"}.
@@ -294,10 +312,14 @@ def remove_worktree(repo: str | Path, session_id: str, *,
         branch = session_branch(session_id)
         wt = find_worktree(repo, branch)
         if wt is not None:
+            out["worktree"] = str(wt)
             if wt.resolve() == _main_repo(repo).resolve():
                 out["error"] = "refusing to remove the main working tree"
                 return out
-            out["worktree"] = str(wt)
+            if not wt.resolve().is_relative_to(_resolved_root(root)):
+                out["error"] = ("refusing to remove a worktree outside the"
+                                f" worktree root: {wt}")
+                return out
             args = ["worktree", "remove"] + (["--force"] if force else [])
             _git(repo, *args, str(wt))
             out["removed"] = True

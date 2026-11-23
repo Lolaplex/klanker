@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from agents_store.db import connect
 
+from klanker import session as session_mod
 from klanker.session import (InvalidSessionId, bind_session, checkpoint,
                              ensure_worktree, remove_worktree, session_branch,
                              session_view, set_wip_unpushed, switch_host,
@@ -60,7 +61,7 @@ def test_wip_flag(conn):
 
 
 def test_branch_name():
-    assert session_branch("abcdef123456") == "klanker/s-abcdef12"
+    assert session_branch("abcdef123456") == "klanker/s-abcdef123456"
 
 
 @pytest.fixture(autouse=True)
@@ -81,7 +82,7 @@ def test_worktree_outside_repo_and_idempotent(repo, tmp_path):
     assert (wt / ".git").exists()
     assert tmp_path / "wts" in wt.parents
     assert repo not in wt.parents
-    assert _head(wt) == "klanker/s-sessx123"
+    assert _head(wt) == "klanker/s-sessx1234"
     assert (wt / "f.txt").read_text() == "v1"
     assert ensure_worktree(repo, "sessx1234") == wt
     # the user's checkout stays clean -- no untracked worktree dirs
@@ -272,3 +273,68 @@ def test_remove_worktree_refuses_dirty_unless_forced(repo):
 
 def test_remove_worktree_invalid_id(repo):
     assert "invalid session id" in remove_worktree(repo, "/tmp/x")["error"]
+
+
+
+# -- QA recheck: id collisions, foreign worktrees, newline, TOCTOU ----------
+
+def _branch_exists(repo, branch):
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet",
+         f"refs/heads/{branch}"], capture_output=True).returncode == 0
+
+
+def test_shared_prefix_sessions_do_not_collide(repo):
+    a = ensure_worktree(repo, "abcdefgh1")
+    b = ensure_worktree(repo, "abcdefgh2")
+    assert a != b
+    assert _head(a) == "klanker/s-abcdefgh1"
+    assert _head(b) == "klanker/s-abcdefgh2"
+    res = remove_worktree(repo, "abcdefgh1", delete_branch=True, force=True)
+    assert res["removed"] and res["branch_deleted"], res
+    assert not a.exists()
+    assert b.exists() and _head(b) == "klanker/s-abcdefgh2"
+    assert _branch_exists(repo, "klanker/s-abcdefgh2")
+    assert not _branch_exists(repo, "klanker/s-abcdefgh1")
+
+
+def test_remove_worktree_refuses_checkout_outside_root(repo, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    _git(repo, "worktree", "add", "-b", "klanker/s-foreign1", str(elsewhere))
+    res = remove_worktree(repo, "foreign1", delete_branch=True, force=True)
+    assert not res["removed"] and not res["branch_deleted"]
+    assert "outside the worktree root" in res["error"]
+    assert elsewhere.exists() and (elsewhere / "f.txt").exists()
+    assert _branch_exists(repo, "klanker/s-foreign1")
+
+
+@pytest.mark.parametrize("bad", ["abc\n", "abc\n\n", "\nabc", "abc\r"])
+def test_trailing_newline_ids_refused(repo, bad):
+    with pytest.raises(InvalidSessionId):
+        session_branch(bad)
+    with pytest.raises(InvalidSessionId):
+        ensure_worktree(repo, bad)
+
+
+def test_link_swapped_during_worktree_add_is_undone(repo, tmp_path,
+                                                    monkeypatch):
+    outside = tmp_path / "outside-swap"
+    outside.mkdir()
+    real_git = session_mod._git
+
+    def racing_git(r, *args, **kw):
+        if args[:2] == ("worktree", "add"):
+            target = Path(args[4] if args[2] == "-b" else args[2])
+            parent = target.parent
+            parent.rename(parent.with_name(parent.name + ".moved"))
+            parent.symlink_to(outside, target_is_directory=True)
+        return real_git(r, *args, **kw)
+
+    monkeypatch.setattr(session_mod, "_git", racing_git)
+    with pytest.raises(InvalidSessionId):
+        ensure_worktree(repo, "racer01")
+    monkeypatch.setattr(session_mod, "_git", real_git)
+    # the checkout git made through the link is gone again
+    assert not (outside / "racer01").exists()
+    assert _git(repo, "worktree", "list", "--porcelain").stdout.count(
+        "worktree ") == 1
