@@ -779,7 +779,7 @@ def main(argv: list[str] | None = None) -> int:
             _ws_map = sync_workspaces()
             _sync_rt.attach_hub(_ch.hub(), _ws_map, str(host.host_id()))
             _cc.on_client(lambda c: _sync_rt.attach_client(
-                c, [(ws_id, d) for ws_id, d in _ws_map.items()]))
+                c, [(ws_id, e["dir"]) for ws_id, e in _ws_map.items()]))
             _sync_rt.start()
         except Exception as exc:  # noqa: BLE001
             log.warning("workspace sync unavailable: %s", exc)

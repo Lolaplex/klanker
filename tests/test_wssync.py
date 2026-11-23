@@ -160,6 +160,23 @@ def test_sync_workspaces_excludes_local_policy(tmp_path, monkeypatch):
     m = sync_workspaces()
     assert str(a.id) in m
     assert str(b.id) not in m
+    assert m[str(a.id)]["hosts"] is None
+
+
+@_POLICY
+def test_sync_workspaces_host_allowlist(tmp_path, monkeypatch):
+    """sync_hosts narrows hub fan-out to the listed devices (ws#43)."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    a = host.create("a")
+    host.update_workspace(str(a.id), sync_hosts=["dev-b"])
+    from klanker.wssync import sync_workspaces
+
+    m = sync_workspaces()
+    assert m[str(a.id)]["hosts"] == frozenset({"dev-b"})
 
 
 def _local_origins_supported() -> bool:

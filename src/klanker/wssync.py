@@ -180,7 +180,12 @@ class SyncRuntime:
             if w is None:
                 return  # unknown or local-policy ws: never ingest, never fan out
             w.on_op(payload)
-            hub.broadcast("op", payload, skip={device_id})
+            allowed = (self._ws_lookup.get(ws_id) or {}).get("hosts")
+            skip = {device_id}
+            if allowed:
+                skip |= {d for d in hub.connected_devices()
+                         if d not in allowed}
+            hub.broadcast("op", payload, skip=skip)
 
         def ack_handler(device_id: str, payload: dict) -> None:
             ws_id = str(payload.get("ws") or "")
@@ -193,9 +198,10 @@ class SyncRuntime:
 
     def _hub_worker(self, device_id: str, ws_id: str) -> WsSync | None:
         with self._lock:
-            ws_dir = self._ws_lookup.get(ws_id)
-            if ws_dir is None or self._hub is None:
+            entry = self._ws_lookup.get(ws_id)
+            if entry is None or self._hub is None:
                 return None
+            ws_dir = entry["dir"] if isinstance(entry, dict) else entry
             key = (ws_id, device_id)
             w = self._hub_workers.get(key)
             if w is None:
@@ -258,18 +264,27 @@ class SyncRuntime:
 
 
 def sync_workspaces() -> dict:
-    """ws_id -> ws dir for workspaces allowed to emit ops.
+    """ws_id -> {"dir": path, "hosts": frozenset|None} for emittable ws.
 
     `sync_policy=local` workspaces never appear on the wire (ws#43):
-    no spoke workers, no hub-side ingest, no fan-out.
+    no spoke workers, no hub-side ingest, no fan-out. `sync_hosts`
+    restricts hub fan-out to the listed devices; empty/None = all.
+    Entries are hub channel device ids (the id this hub minted at
+    pairing, `/v1/hub/devices`), compared against
+    `hub.connected_devices()` -- not Host.host_id() values.
     """
     from agents_workspace import Workspace
 
-    return {
-        str(ws.id): ws.dir
-        for ws in Workspace.list_all()
-        if getattr(ws, "sync_policy", "synced") != "local"
-    }
+    out = {}
+    for ws in Workspace.list_all():
+        if getattr(ws, "sync_policy", "synced") == "local":
+            continue
+        hosts = getattr(ws, "sync_hosts", None) or []
+        out[str(ws.id)] = {
+            "dir": ws.dir,
+            "hosts": frozenset(str(h) for h in hosts) or None,
+        }
+    return out
 
 
 def _try_drain(w: WsSync) -> None:
