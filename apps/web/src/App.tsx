@@ -30,6 +30,7 @@ import {
   selStoreKey,
 } from "./chatBuckets";
 import { reconcileChat } from "./chatSync";
+import { Kicker, runResumableTurn } from "./turnStream";
 import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
 import { PairModal } from "./components/PairModal";
@@ -591,7 +592,7 @@ export function App() {
       const instProvider = inst0.provider.trim();
       const provider = pick?.provider.trim() || (instProvider !== "inherit" ? instProvider : "");
       const model = (pick && (pick.provider || pick.model) ? pick.model : inst0.model).trim();
-      const stream = api.streamChat(inst0, {
+      const sendBody = {
         text,
         run: busy.run,
         session,
@@ -600,49 +601,92 @@ export function App() {
         provider: provider || undefined,
         model: model || undefined,
         attachments: attachments && attachments.length ? attachments : undefined,
-      });
-      // iOS can suspend the SSE fetch without erroring it: no delta, no done,
-      // no catch — the spinner and the busy-lock would hang forever. An idle
-      // watchdog fails the turn; the reconcile in `finally` heals from server
-      // truth. Generous: prefill/stall gaps are bounded by provider settings.
-      const it = stream[Symbol.asyncIterator]();
-      const STREAM_IDLE_MS = 5 * 60_000;
+      };
+      // A dead client stream (iOS "Load failed", suspend, network switch) is
+      // not a failed turn: the relay keeps running it. Re-attach to the same
+      // run via /v1/runs/stream (it replays from the start) instead of
+      // painting an error bubble; only real turn failures surface. A
+      // visibility regain with a quiet stream forces the re-attach at once.
+      // The relay pings every ~12s (surfaced as {type:"ping"}), so 45s of
+      // total silence means the stream is dead, not a slow tool phase.
+      const STREAM_IDLE_MS = 45_000;
       let replyBuf = "";
-      for (;;) {
-        const next = await Promise.race([
-          it.next(),
-          new Promise<never>((_, reject) =>
-            window.setTimeout(() => reject(new Error("stream stalled (no events for 5m)")), STREAM_IDLE_MS)
-          ),
-        ]);
-        if (next.done) break;
-        const ev = next.value;
-        if (ev.type === "delta" && ev.text) {
-          replyBuf += ev.text;
-          deltas.push(ev.text);
-        } else if (ev.type === "status" && ev.text) {
-          setStreamStatus(ev.text);
-        } else if (ev.type === "error") {
-          deltas.flush();
-          throw new Error(ev.text || "turn failed");
-        } else if (ev.type === "trailer") {
-          deltas.flush();
-          sawTrailer = true;
-          setChats((prev) =>
-            mapChat(prev, selKey, chatId, (item) => ({
-              ...item,
-              session: ev.session || item.session,
-              messages: item.messages.map((m) =>
-                m.id === assistantId ? { ...m, elapsed_ms: Date.now() - started } : m
-              ),
-            }))
-          );
-          if (ev.returncode && ev.returncode !== 0) {
-            setStreamStatus(`turn exited ${ev.returncode}`);
-          }
+      let lastEventAt = Date.now();
+      const kicker = new Kicker();
+      const onVisible = () => {
+        if (document.visibilityState === "visible" && Date.now() - lastEventAt > 15_000) {
+          kicker.kick();
         }
+      };
+      document.addEventListener("visibilitychange", onVisible);
+      let outcome: "done" | "detached";
+      try {
+        outcome = await runResumableTurn({
+          open: () => api.streamChat(inst0, sendBody),
+          reattach: () => api.attachRun(inst0, { run: busy.run }),
+          onEvent: (ev) => {
+            lastEventAt = Date.now();
+            if (ev.type === "delta" && ev.text) {
+              replyBuf += ev.text;
+              deltas.push(ev.text);
+            } else if (ev.type === "status" && ev.text) {
+              setStreamStatus(ev.text);
+            } else if (ev.type === "trailer") {
+              deltas.flush();
+              sawTrailer = true;
+              setChats((prev) =>
+                mapChat(prev, selKey, chatId, (item) => ({
+                  ...item,
+                  session: ev.session || item.session,
+                  messages: item.messages.map((m) =>
+                    m.id === assistantId ? { ...m, elapsed_ms: Date.now() - started } : m
+                  ),
+                }))
+              );
+              if (ev.returncode && ev.returncode !== 0) {
+                setStreamStatus(`turn exited ${ev.returncode}`);
+              }
+            }
+          },
+          onReset: () => {
+            deltas.flush();
+            replyBuf = "";
+            lastEventAt = Date.now();
+            setChats((prev) =>
+              mapChat(prev, selKey, chatId, (item) => ({
+                ...item,
+                messages: item.messages.map((m) => (m.id === assistantId ? { ...m, content: "" } : m)),
+              }))
+            );
+          },
+          onStatus: (s) => setStreamStatus(s),
+          idleMs: STREAM_IDLE_MS,
+          maxReattach: 6,
+          kicker,
+          waitVisible: () =>
+            document.visibilityState === "visible"
+              ? Promise.resolve()
+              : new Promise<void>((resolve) => {
+                  const h = () => {
+                    if (document.visibilityState === "visible") {
+                      document.removeEventListener("visibilitychange", h);
+                      resolve();
+                    }
+                  };
+                  document.addEventListener("visibilitychange", h);
+                }),
+        });
+      } finally {
+        document.removeEventListener("visibilitychange", onVisible);
       }
       deltas.flush();
+      if (outcome === "detached") {
+        // The run is no longer attachable (finished + reaped, relay restart,
+        // or an old relay without /v1/runs/stream). The reconcile in
+        // `finally` converges the bubble to the session history.
+        setStreamStatus(null);
+        return;
+      }
       if (voiceSupported && voiceEnabled && replyBuf.trim() && typeof SpeechSynthesisUtterance !== "undefined") {
         try {
           window.speechSynthesis?.cancel();
