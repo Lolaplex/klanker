@@ -300,9 +300,8 @@ def test_value_patterns_redacted_in_text(secret):
 
 @pytest.mark.parametrize("text", [
     "commit 3f2a9c1e5b7d4f6a8c0e2b4d6f8a0c2e4b6d8f0a is fine",  # hex sha
-    "path /home/felix/projects/klanker/src/klanker/migrate.py",
     "use scikit-learn and sk-learn style names",
-    "Password: ask Felix, it is in the vault",                 # prose
+    "Password: ask the admin, it is in the vault",             # prose
     "password: ${DB_PASSWORD}",
     "token: OPENAI_API_KEY",
     "https://example.com/a/b?c=d",
@@ -310,3 +309,82 @@ def test_value_patterns_redacted_in_text(secret):
 def test_no_false_positive_redaction(text):
     red, n = redact_text(text)
     assert (red, n) == (text, 0)
+
+
+def test_no_false_positive_on_real_paths(tmp_path):
+    deep = tmp_path / "projects" / "klanker" / "src" / "klanker"
+    deep.mkdir(parents=True)
+    text = f"path {deep / 'migrate.py'} and {tmp_path}"
+    assert redact_text(text) == (text, 0)
+
+
+def test_memory_size_limit_skips_and_warns(tmp_path, monkeypatch, caplog):
+    ws = _ws(tmp_path)
+    (ws / "memory" / "SMALL.md").write_text("# small")
+    big = ws / "memory" / "BIG.md"
+    big.write_text("x" * 2048)
+    stats = migrate_to_store(ws, archive=True, memory_max_bytes=1024)
+    assert stats["memory"]["imported"] == 1
+    assert stats["memory"]["skipped_large"] == 1
+    assert any("BIG.md" in w for w in stats["warnings"])
+    assert big.exists()  # skipped files are not archived either
+    assert "xxxx" not in _blob(ws)
+    # env knob
+    ws2 = tmp_path / "ws2"
+    (ws2 / "memory").mkdir(parents=True)
+    (ws2 / "memory" / "BIG.md").write_text("y" * 600)
+    monkeypatch.setenv("KLANKER_MIGRATE_MEMORY_MAX_BYTES", "500")
+    assert migrate_to_store(ws2)["memory"]["skipped_large"] == 1
+    monkeypatch.setenv("KLANKER_MIGRATE_MEMORY_MAX_BYTES", "0")  # 0 = no limit
+    assert migrate_to_store(ws2)["memory"]["imported"] == 1
+
+
+def test_default_memory_limit_is_one_mib(tmp_path, monkeypatch):
+    monkeypatch.delenv("KLANKER_MIGRATE_MEMORY_MAX_BYTES", raising=False)
+    ws = _ws(tmp_path)
+    (ws / "memory" / "HUGE.md").write_text("z" * (1024 * 1024 + 1))
+    (ws / "memory" / "OK.md").write_text("z" * (1024 * 1024))
+    stats = migrate_to_store(ws)
+    assert stats["memory"]["skipped_large"] == 1
+    assert stats["memory"]["imported"] == 1
+
+
+def test_cli_warns_sources_keep_raw_tokens(tmp_path, monkeypatch, capsys):
+    import sys
+
+    from klanker import __main__ as cli
+
+    ws = _ws(tmp_path)
+    (ws / "memory" / "N.md").write_text("# n")
+    (ws / "memory" / "BIG.md").write_text("q" * 64)
+
+    class _WS:
+        dir = ws
+        root = ws
+
+    import agents_workspace
+    from klanker import updates
+    monkeypatch.setattr(updates, "check_for_updates", lambda *a, **k: None)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    monkeypatch.setattr(agents_workspace.Workspace, "from_env",
+                        classmethod(lambda cls: _WS()))
+    monkeypatch.setattr(sys, "argv", ["klanker", "migrate", "--to-store",
+                                      "--archive", "--memory-max-bytes", "32"])
+    rc = cli.main()
+    out = capsys.readouterr()
+    assert rc in (0, None)
+    assert "memory: " in out.out and "skipped_large=1" in out.out
+    assert "warning: memory/BIG.md" in out.err
+    assert "source files on disk still hold any raw tokens" in out.err
+    assert "archive/pre-store" in out.err
+
+
+@pytest.mark.parametrize("text", [
+    "z" * (1 << 20), "a:" * (1 << 19), "x" * 500_000 + "://",
+    "sk-" * 300_000, "k=" + "v" * (1 << 20),
+])
+def test_redact_text_linear_on_large_input(text):
+    t0 = time.time()
+    redact_text(text)
+    assert time.time() - t0 < 5.0

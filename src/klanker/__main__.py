@@ -295,7 +295,13 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_p.add_argument(
         "--archive", action="store_true",
         help="Move imported sources to <ws>/archive/pre-store/ (default: keep;"
-             " the runtime still reads personas/config/memory from files)")
+             " the runtime still reads personas/config/memory from files)."
+             " Only the store copy is scrubbed: source files, archived or"
+             " not, keep any raw tokens")
+    migrate_p.add_argument(
+        "--memory-max-bytes", type=int, default=None,
+        help="Skip (and warn about) memory notes larger than this"
+             " (default 1048576, env KLANKER_MIGRATE_MEMORY_MAX_BYTES)")
 
     # 3e. Workspaces
     ws_p = sub.add_parser("workspace", help="Create or list workspaces")
@@ -575,10 +581,21 @@ def main(argv: list[str] | None = None) -> int:
             ws = Host.from_env().workspace(ws_id)
         else:
             ws = Workspace.from_env()
-        stats = migrate_to_store(ws.dir, archive=bool(args.archive))
+        stats = migrate_to_store(
+            ws.dir, archive=bool(args.archive),
+            memory_max_bytes=getattr(args, "memory_max_bytes", None))
+        warnings_ = stats.pop("warnings", [])
         for domain, s in stats.items():
             line = ", ".join(f"{k}={v}" for k, v in s.items())
             print(f"{domain}: {line}")
+        for w in warnings_:
+            print(f"warning: {w}", file=sys.stderr)
+        print("note: secrets were scrubbed in store.db only; the source"
+              " files on disk still hold any raw tokens"
+              + (" (originals moved to <ws>/archive/pre-store/)"
+                 if args.archive else "")
+              + " -- rotate or delete them if they contain credentials",
+              file=sys.stderr)
         return 0
 
     elif args.command == "workspace":
