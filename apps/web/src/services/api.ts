@@ -6,6 +6,7 @@ import type {
   HubDevice,
   HubLease,
   HubLink,
+  JobRow,
   KlankerInstance,
   ModelPick,
   PairCreateResult,
@@ -14,6 +15,9 @@ import type {
   ProviderRow,
   RelayCapabilities,
   RelayEvent,
+  RoutineActionResult,
+  RoutineRow,
+  SessionEvent,
   SessionHostSwitch,
   StoreListResult,
   StorePaneResult,
@@ -338,11 +342,38 @@ const isTauri = (): boolean =>
   ("__TAURI_INTERNALS__" in window || "__TAURI__" in window);
 
 /** Invoke a Tauri command; throws on non-desktop. */
-const invoke = <T = any>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
-  const core = (window as any).__TAURI__?.core;
+const invoke = <T = unknown>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+  const core = (
+    window as {
+      __TAURI__?: { core?: { invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown> } };
+    }
+  ).__TAURI__?.core;
   if (!core?.invoke) return Promise.reject(new Error("not a tauri host"));
-  return core.invoke(cmd, args);
+  return core.invoke(cmd, args) as Promise<T>;
 };
+
+/** Loosely-shaped relay row — every field read is narrowed at the mapper
+ *  edge instead of trusting `any`. */
+type WireRow = Record<string, unknown>;
+
+const wstr = (v: unknown): string | undefined =>
+  typeof v === "string" && v ? v : undefined;
+const wbool = (v: unknown): boolean | undefined =>
+  typeof v === "boolean" ? v : undefined;
+
+/** /v1/workspaces row → WorkspaceRow; null on a non-object payload. */
+function mapWorkspaceWire(w: unknown, fallbackId: string): WorkspaceRow | null {
+  if (!w || typeof w !== "object") return null;
+  const o = w as WireRow;
+  return {
+    id: wstr(o.id) || fallbackId,
+    label: wstr(o.label) || wstr(o.name) || wstr(o.id) || fallbackId,
+    workdir: wstr(o.workdir),
+    workdir_lock: wbool(o.workdir_lock),
+    browser_profile: wstr(o.browser_profile),
+    approval_mode: wstr(o.approval_mode),
+  };
+}
 
 /** Capability flags: desktop (Tauri) gets spawn/keyring/updates; web/PWA does not. */
 export const caps = {
@@ -534,11 +565,10 @@ export const api = {
     if (caps.spawn && inst.kind === "remote") {
       if (inst.via === "channel") {
         // Channel rows are hub-paired devices owned by the relay — never
-        // POST /v1/remotes for them. Only client-side metadata (provider,
-        // model, workspace) lands in the file registry mirror.
-        const next = { ...inst, updated_at: new Date().toISOString() };
-        const stored = await registrySave(next);
-        return { ...stored, secret: inst.secret || inst.endpoint?.secret };
+        // POST /v1/remotes for them and never write them into the file
+        // registry (`instances.json`): a persisted channel row would
+        // resurrect after the device is unpaired at the hub.
+        return { ...inst, updated_at: new Date().toISOString() };
       }
       // Canonical remote registry is the local relay /v1/remotes — no
       // parallel file write; the secret goes over loopback once and then
@@ -599,13 +629,18 @@ export const api = {
     // drops its dev-<id> remote row itself. Relay mounts DELETE /v1/remotes.
     const deviceId = inst?.device_id || (id.startsWith("dev-") ? id.slice(4) : "");
     if (isTauri()) {
-      if (deviceId) {
-        localRelayFetch(`/v1/hub/devices/${encodeURIComponent(deviceId)}`, "DELETE").catch(() => undefined);
-      } else {
-        // Canonical store is the relay; the file delete only cleans any
-        // legacy `instances/<id>/instance.json` left from pre-#120 installs.
-        localRelayRemotes("DELETE", undefined, id).catch(() => undefined);
-      }
+      // Await the relay-side delete before the file delete — firing it
+      // un-awaited lets `instance_delete` win the race and orphan the
+      // hub device / remote mount row.
+      try {
+        if (deviceId) {
+          await localRelayFetch(`/v1/hub/devices/${encodeURIComponent(deviceId)}`, "DELETE");
+        } else {
+          // Canonical store is the relay; the file delete only cleans any
+          // legacy `instances/<id>/instance.json` left from pre-#120 installs.
+          await localRelayRemotes("DELETE", undefined, id);
+        }
+      } catch {}
       try {
         await invoke("instance_delete", { id });
       } catch {}
@@ -709,15 +744,19 @@ export const api = {
   // --- workspaces / personas ----------------------------------------------
 
   async listWorkspaces(inst: KlankerInstance): Promise<WorkspaceRow[]> {
-    const r = await req<{ workspaces?: any[] }>(inst, "/v1/workspaces", { headers: headers(inst) });
-    return (r.workspaces || []).map((w) => ({
-      id: w.id || w,
-      label: w.label || w.name || w.id || w,
-      workdir: typeof w === "object" ? w.workdir : undefined,
-      workdir_lock: typeof w === "object" ? w.workdir_lock : undefined,
-      browser_profile: typeof w === "object" ? w.browser_profile : undefined,
-      approval_mode: typeof w === "object" ? w.approval_mode : undefined,
-    }));
+    const r = await req<{ workspaces?: (WireRow | string)[] }>(inst, "/v1/workspaces", { headers: headers(inst) });
+    return (r.workspaces || []).map((w) => {
+      const o: WireRow = typeof w === "object" && w !== null ? w : {};
+      const fallback = typeof w === "string" ? w : "";
+      return {
+        id: wstr(o.id) || fallback,
+        label: wstr(o.label) || wstr(o.name) || wstr(o.id) || fallback,
+        workdir: wstr(o.workdir),
+        workdir_lock: wbool(o.workdir_lock),
+        browser_profile: wstr(o.browser_profile),
+        approval_mode: wstr(o.approval_mode),
+      };
+    });
   },
 
   /** PATCH /v1/workspaces/<id> — workspace config lives on the relay; no
@@ -733,7 +772,7 @@ export const api = {
       approval_mode?: "off" | "ask" | "strict" | null;
     }
   ): Promise<WorkspaceRow | null> {
-    const r = await req<{ workspace?: any }>(
+    const r = await req<{ workspace?: WireRow }>(
       inst,
       `/v1/workspaces/${encodeURIComponent(id)}`,
       {
@@ -742,16 +781,7 @@ export const api = {
         body: JSON.stringify(patch),
       }
     );
-    const w = r.workspace;
-    if (!w || typeof w !== "object") return null;
-    return {
-      id: w.id || id,
-      label: w.label || w.name || w.id || id,
-      workdir: w.workdir,
-      workdir_lock: w.workdir_lock,
-      browser_profile: w.browser_profile,
-      approval_mode: w.approval_mode,
-    };
+    return mapWorkspaceWire(r.workspace, id);
   },
 
   /** Effective pick for a chat: session override when `session` is given,
@@ -820,8 +850,12 @@ export const api = {
 
   async listPersonas(inst: KlankerInstance, workspace: string): Promise<{ id: string; name?: string }[]> {
     const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
-    const r = await req<{ personas?: any[] }>(inst, `/v1/personas${q}`, { headers: headers(inst) });
-    return (r.personas || []).map((p) => ({ id: p.id || p, name: p.name || p.id || p }));
+    const r = await req<{ personas?: (WireRow | string)[] }>(inst, `/v1/personas${q}`, { headers: headers(inst) });
+    return (r.personas || []).map((p) => {
+      const o: WireRow = typeof p === "object" && p !== null ? p : {};
+      const fallback = typeof p === "string" ? p : "";
+      return { id: wstr(o.id) || fallback, name: wstr(o.name) || wstr(o.id) || fallback };
+    });
   },
 
   /** Server-side sessions for (workspace, persona). */
@@ -831,17 +865,17 @@ export const api = {
     persona: string
   ): Promise<{ id: string; goal?: string; title?: string; created_at?: string; last_active?: string }[]> {
     try {
-      const r = await req<{ sessions?: any[] }>(
+      const r = await req<{ sessions?: WireRow[] }>(
         inst,
         `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/sessions`,
         { headers: headers(inst) }
       );
       return (r.sessions || []).map((s) => ({
-        id: s.id || s.session || "",
-        goal: s.goal || undefined,
-        title: s.title || undefined,
-        created_at: s.created_at,
-        last_active: s.last_active || s.updated_at,
+        id: wstr(s.id) || wstr(s.session) || "",
+        goal: wstr(s.goal),
+        title: wstr(s.title),
+        created_at: wstr(s.created_at),
+        last_active: wstr(s.last_active) || wstr(s.updated_at),
       }));
     } catch {
       return [];
@@ -867,21 +901,23 @@ export const api = {
   async listProviders(inst: KlankerInstance): Promise<{ rows: ProviderRow[]; stale: boolean }> {
     const cacheKey = `klanker.providers.${inst.id}`;
     try {
-      const r = await req<{ providers?: any[] }>(inst, "/v1/providers", { headers: headers(inst) });
+      const r = await req<{ providers?: WireRow[] }>(inst, "/v1/providers", { headers: headers(inst) });
       const rows = (r.providers || [])
         .map((p) => ({
-          name: String(p.name || ""),
-          kind: p.kind,
-          model: p.model,
-          when: p.when,
+          name: wstr(p.name) || "",
+          kind: wstr(p.kind),
+          model: wstr(p.model),
+          when: wstr(p.when),
           models: Array.isArray(p.models)
-            ? p.models.filter((m: unknown) => typeof m === "string" && m)
+            ? p.models.filter((m): m is string => typeof m === "string" && m !== "")
             : undefined,
-          modes: Array.isArray(p.modes) ? p.modes : undefined,
-          source: p.source,
-          configurable: p.configurable,
-          command: p.command,
-          error: p.error,
+          modes: Array.isArray(p.modes)
+            ? p.modes.filter((m): m is string => typeof m === "string")
+            : undefined,
+          source: wstr(p.source),
+          configurable: wbool(p.configurable),
+          command: wstr(p.command),
+          error: wstr(p.error),
         }))
         .filter((p) => p.name);
       try {
@@ -1021,9 +1057,9 @@ export const api = {
     workspace: string,
     persona: string,
     session: string
-  ): Promise<any[] | null> {
+  ): Promise<SessionEvent[] | null> {
     try {
-      const r = await req<{ session?: any; events?: any[] }>(
+      const r = await req<{ session?: SessionEvent; events?: SessionEvent[] }>(
         inst,
         `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/sessions/${encodeURIComponent(session)}`,
         { headers: headers(inst) }
@@ -1241,8 +1277,14 @@ export const api = {
   ): Promise<{ id: string; goal?: string; status?: string; result?: string; created_at?: string }[]> {
     try {
       const q = `?workspace=${encodeURIComponent(workspace)}${persona ? `&persona=${encodeURIComponent(persona)}` : ""}`;
-      const r = await req<{ jobs?: any[] }>(inst, `/v1/jobs${q}`, { headers: headers(inst) });
-      return r.jobs || [];
+      const r = await req<{ jobs?: WireRow[] }>(inst, `/v1/jobs${q}`, { headers: headers(inst) });
+      return (r.jobs || []).map((j): JobRow => ({
+        id: wstr(j.id) || "",
+        goal: wstr(j.goal),
+        status: wstr(j.status),
+        result: wstr(j.result),
+        created_at: wstr(j.created_at),
+      }));
     } catch {
       return [];
     }
@@ -1259,16 +1301,20 @@ export const api = {
       model?: string;
     }
   ): Promise<{ id?: string; status?: string }> {
-    const r = await jsonReq<{ job?: any }>(inst, "/v1/jobs", body);
-    return r.job || {};
+    const r = await jsonReq<{ job?: WireRow }>(inst, "/v1/jobs", body);
+    return { id: wstr(r.job?.id), status: wstr(r.job?.status) };
   },
 
   // --- klanker management (/v1/klanker/*, klanker serve hosts only) ----------
 
   async listSkills(inst: KlankerInstance, workspace: string): Promise<{ name: string; files: number; bytes: number }[]> {
     const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
-    const r = await req<{ skills?: any[] }>(inst, `/v1/klanker/skills${q}`, { headers: headers(inst) });
-    return r.skills || [];
+    const r = await req<{ skills?: WireRow[] }>(inst, `/v1/klanker/skills${q}`, { headers: headers(inst) });
+    return (r.skills || []).map((s) => ({
+      name: wstr(s.name) || "",
+      files: typeof s.files === "number" ? s.files : 0,
+      bytes: typeof s.bytes === "number" ? s.bytes : 0,
+    }));
   },
 
   async deleteSkill(inst: KlankerInstance, workspace: string, name: string): Promise<void> {
@@ -1276,9 +1322,16 @@ export const api = {
     await req(inst, `/v1/klanker/skills/${encodeURIComponent(name)}${q}`, { method: "DELETE", headers: headers(inst) });
   },
 
-  async listRoutines(inst: KlankerInstance): Promise<any[]> {
-    const r = await req<{ routines?: any[] }>(inst, "/v1/klanker/routines", { headers: headers(inst) });
-    return r.routines || [];
+  async listRoutines(inst: KlankerInstance): Promise<RoutineRow[]> {
+    const r = await req<{ routines?: WireRow[] }>(inst, "/v1/klanker/routines", { headers: headers(inst) });
+    return (r.routines || []).map((row) => ({
+      name: wstr(row.name) || "",
+      workspace: wstr(row.workspace),
+      prompt: wstr(row.prompt),
+      at: wstr(row.at),
+      cron: wstr(row.cron),
+      paused: wbool(row.paused),
+    }));
   },
 
   async createRoutine(
@@ -1288,14 +1341,17 @@ export const api = {
     await jsonReq(inst, "/v1/klanker/routines", body);
   },
 
-  async routineAction(inst: KlankerInstance, name: string, action: "pause" | "resume" | "run" | "remove"): Promise<any> {
-    return jsonReq(inst, `/v1/klanker/routines/${encodeURIComponent(name)}`, { action });
+  async routineAction(inst: KlankerInstance, name: string, action: "pause" | "resume" | "run" | "remove"): Promise<RoutineActionResult> {
+    return jsonReq<RoutineActionResult>(inst, `/v1/klanker/routines/${encodeURIComponent(name)}`, { action });
   },
 
   async listMemory(inst: KlankerInstance, workspace: string, q = ""): Promise<{ path: string; bytes: number }[]> {
     const wq = workspace ? `workspace=${encodeURIComponent(workspace)}&` : "";
-    const r = await req<{ files?: any[] }>(inst, `/v1/klanker/memory?${wq}q=${encodeURIComponent(q)}`, { headers: headers(inst) });
-    return r.files || [];
+    const r = await req<{ files?: WireRow[] }>(inst, `/v1/klanker/memory?${wq}q=${encodeURIComponent(q)}`, { headers: headers(inst) });
+    return (r.files || []).map((f) => ({
+      path: wstr(f.path) || "",
+      bytes: typeof f.bytes === "number" ? f.bytes : 0,
+    }));
   },
 
   async readMemory(inst: KlankerInstance, workspace: string, path: string): Promise<string> {
@@ -1613,21 +1669,12 @@ export const api = {
     ws: string,
     patch: WorkspacePolicyPatch
   ): Promise<WorkspaceRow | null> {
-    const r = await localRelayJson<{ workspace?: any }>(
+    const r = await localRelayJson<{ workspace?: WireRow }>(
       `/v1/workspaces/${encodeURIComponent(ws)}`,
       "PATCH",
       { ...patch }
     );
-    const w = r.workspace;
-    if (!w || typeof w !== "object") return null;
-    return {
-      id: w.id || ws,
-      label: w.label || w.name || w.id || ws,
-      workdir: w.workdir,
-      workdir_lock: w.workdir_lock,
-      browser_profile: w.browser_profile,
-      approval_mode: w.approval_mode,
-    };
+    return mapWorkspaceWire(r.workspace, ws);
   },
 
   /** GET /v1/workspaces/<ws>/hosts — member devices + presence + active
