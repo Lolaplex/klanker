@@ -22,6 +22,8 @@ interface DevicesPanelProps {
   onToggleHubMode: (on: boolean) => void;
   /** Open the legacy/advanced instance sheet for a row. */
   onEditInstance: (inst: KlankerInstance) => void;
+  /** Open the connect sheet (NewKlankerModal — hub/ws invite + code). */
+  onConnect?: () => void;
   onClose: () => void;
 }
 
@@ -41,6 +43,7 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
   instances,
   onToggleHubMode,
   onEditInstance,
+  onConnect,
   onClose,
 }) => {
   const [links, setLinks] = useState<HubLink[] | null>(null);
@@ -198,7 +201,18 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
             <div className="text-[10px] uppercase tracking-wider text-[#737373]">paired hub links</div>
             {links === null && <div className="text-[#525252] text-[11px]">…</div>}
             {links?.length === 0 && (
-              <div className="text-[#525252] text-[11px]">no hub links — connect one via + in the sidebar.</div>
+              <div className="flex items-center gap-2">
+                <span className="text-[#525252] text-[11px]">no hub links —</span>
+                {onConnect && (
+                  <button
+                    type="button"
+                    onClick={onConnect}
+                    className="px-2 py-0.5 border border-[#262626] rounded text-[10px] text-white hover:bg-[#141414]"
+                  >
+                    connect to a hub
+                  </button>
+                )}
+              </div>
             )}
             {links?.map((link) => (
               <div key={link.hub_id} className="border border-[#1a1a1a] rounded p-2.5 space-y-1">
@@ -225,7 +239,9 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
             <div className="text-[10px] uppercase tracking-wider text-[#737373]">connected &amp; paired devices</div>
             {devices === null && <div className="text-[#525252] text-[11px]">…</div>}
             {devices?.length === 0 && (
-              <div className="text-[#525252] text-[11px]">no devices paired to this hub yet.</div>
+              <div className="text-[#525252] text-[11px]">
+                no devices paired — mint an invite from a workspace's share sheet (workspace settings → invite device).
+              </div>
             )}
             {devices?.map((d) => {
               const pills = deviceWsPills(d, leases || []);

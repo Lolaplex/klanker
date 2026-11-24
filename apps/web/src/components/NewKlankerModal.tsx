@@ -124,7 +124,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
         label: pickedPeer?.hostname || "",
       });
       if (!res.ok) throw new Error(res.error || "hub connect failed");
-      setNote(`linked to hub ${res.hub_id || target.origin} as ${res.device_id || "device"}`);
       onConnected?.();
       close();
     } catch (err) {

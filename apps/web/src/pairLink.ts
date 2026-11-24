@@ -53,14 +53,15 @@ export function parsePairInput(raw: string): PairTarget | null {
   const input = (raw || "").trim();
   if (!input) return null;
 
-  // Pair link: `scheme://…#pair=<cred>` (fragment may carry more keys).
+  // Pair link: `scheme://…#pair=<cred>` (fragment may carry more keys;
+  // `#ws=a&pair=t` and the double-hash `#ws=a#pair=t` both parse).
   const hashIdx = input.indexOf("#");
   if (hashIdx > 0) {
     try {
       const url = new URL(input.slice(0, hashIdx));
       if (url.protocol === "http:" || url.protocol === "https:") {
-        const m = /(?:^|&)pair=([^&]+)/.exec(input.slice(hashIdx + 1));
-        if (m?.[1]) return { origin: url.origin, credential: decodeURIComponent(m[1]) };
+        const cred = parseHashParams(input.slice(hashIdx)).get("pair");
+        if (cred) return { origin: url.origin, credential: cred };
       }
     } catch {
       // fall through to code@host

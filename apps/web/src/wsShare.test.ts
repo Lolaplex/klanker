@@ -129,6 +129,30 @@ test("buildPolicyPatch synced->local freezes the member set (fail-closed)", () =
   assert.equal(res.patch.default_host, "");
 });
 
+test("buildPolicyPatch forces sync_hosts [] on local and preserves execution keys", () => {
+  // A half-filled member list on local would 400 server-side — the wire
+  // carries [] instead (clears any stale allowlist too).
+  const local = buildPolicyPatch(
+    { sync_policy: "local", sync_hosts: ["dev-a"], default_host: "", failover: "none", repos: [] },
+    { execution: { owner: "dev-self", lease_sec: 90, failover: "standby" } }
+  );
+  assert.equal(local.ok, true);
+  if (local.ok) {
+    assert.deepEqual(local.patch.sync_hosts, []);
+    // execution replays the untouched keys — owner + lease_sec survive a
+    // failover-only edit (R12 oracle: execution.owner/lease_sec preserved).
+    assert.deepEqual(local.patch.execution, { owner: "dev-self", lease_sec: 90, failover: "none" });
+  }
+  const synced = buildPolicyPatch(
+    { sync_policy: "synced", sync_hosts: ["dev-a"], default_host: "", failover: "standby", repos: [] },
+    { execution: { owner: "dev-self", lease_sec: 90 } }
+  );
+  assert.equal(synced.ok, true);
+  if (synced.ok) {
+    assert.deepEqual(synced.patch.execution, { owner: "dev-self", lease_sec: 90, failover: "standby" });
+  }
+});
+
 test("buildPolicyPatch rejects invalid slugs and unknown policy/failover values", () => {
   for (const draft of [
     { sync_policy: "bogus", sync_hosts: [], default_host: "", failover: "none", repos: [] },

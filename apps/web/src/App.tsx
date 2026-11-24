@@ -1089,6 +1089,10 @@ export function App() {
             setDevicesOpen(false);
             setInstanceSheetInst(i);
           }}
+          onConnect={() => {
+            setDevicesOpen(false);
+            setIsNewModalOpen(true);
+          }}
           onClose={() => setDevicesOpen(false)}
         />
       )}

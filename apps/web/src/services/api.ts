@@ -18,6 +18,7 @@ import type {
   RoutineActionResult,
   RoutineRow,
   SessionEvent,
+  WsRepoPatch,
   SessionHostSwitch,
   StoreListResult,
   StorePaneResult,
@@ -736,7 +737,9 @@ export const api = {
   },
 
   /** PATCH /v1/workspaces/<id> — workspace config lives on the relay; no
-   *  secrets may ever appear in `patch`. */
+   *  secrets may ever appear in `patch`. General keys and policy keys
+   *  (WorkspacePolicyPatch) compose into one write — the server treats
+   *  them as one atomic update. */
   async updateWorkspace(
     inst: KlankerInstance,
     id: string,
@@ -746,7 +749,7 @@ export const api = {
       workdir_lock?: boolean;
       browser_profile?: string | null;
       approval_mode?: "off" | "ask" | "strict" | null;
-    }
+    } & Partial<WorkspacePolicyPatch>
   ): Promise<WorkspaceRow | null> {
     const r = await req<{ workspace?: WireRow }>(
       inst,
@@ -1681,6 +1684,34 @@ export const api = {
     return mapWorkspaceRow(w, ws);
   },
 
+  /** GET /v1/workspaces/<ws>/repo-paths — this host's checkout map
+   *  (host_paths.json). Owner/admin only; older relays and denied
+   *  callers read an empty map rather than throwing. */
+  async fetchRepoPaths(ws: string): Promise<Record<string, string>> {
+    try {
+      const r = await localRelayJson<{ paths?: Record<string, unknown> }>(
+        `/v1/workspaces/${encodeURIComponent(ws)}/repo-paths`
+      );
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(r.paths || {})) {
+        if (typeof v === "string" && v) out[k] = v;
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  },
+
+  /** PUT /v1/workspaces/<ws>/repo-paths — write host-local checkout
+   *  paths (server applies each slug via set_host_repo_path). */
+  async putRepoPaths(ws: string, paths: Record<string, string>): Promise<void> {
+    await localRelayJson(
+      `/v1/workspaces/${encodeURIComponent(ws)}/repo-paths`,
+      "PUT",
+      { paths }
+    );
+  },
+
   /** GET /v1/workspaces/<ws>/hosts — member devices + presence + active
    *  leases for the host picker. */
   async fetchWorkspaceHosts(ws: string): Promise<WorkspaceHosts> {
@@ -1914,7 +1945,7 @@ function hostKey(inst: { endpoint?: { base_url?: string }; base_url?: string }):
  *  paths instead. */
 async function localRelayFetch(
   path: string,
-  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
   body?: Record<string, unknown>
 ): Promise<Response | null> {
   if (!caps.keyring) return null;
@@ -1942,7 +1973,7 @@ async function localRelayFetch(
  *  structured conflicts (409 holder) are readable off the Error. */
 async function localRelayJson<T>(
   path: string,
-  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
   body?: Record<string, unknown>
 ): Promise<T> {
   let res: Response | null;

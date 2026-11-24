@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, QrCode, X } from "lucide-react";
 import type { HubDevice, KlankerInstance, WorkspaceHosts, WorkspaceRow } from "../types/klanker";
 import { api } from "../services/api";
@@ -14,30 +14,6 @@ interface Props {
   workspace: WorkspaceRow;
   onSaved: (row: WorkspaceRow) => void;
   onClose: () => void;
-}
-
-/** Host-local checkout paths (host_paths.json) — the synced repos[] patch
- *  must never carry them, so they live in localStorage per ws+slug. */
-function repoPathKey(ws: string): string {
-  return `klanker.repopath.${ws}`;
-}
-function loadRepoPaths(ws: string): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(repoPathKey(ws));
-    const obj = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
-    const out: Record<string, string> = {};
-    for (const [k, v] of Object.entries(obj)) if (typeof v === "string" && v) out[k] = v;
-    return out;
-  } catch {
-    return {};
-  }
-}
-function saveRepoPaths(ws: string, rows: RepoEditRow[]): void {
-  try {
-    const out: Record<string, string> = {};
-    for (const r of rows) if (r.slug.trim() && r.path.trim()) out[r.slug.trim()] = r.path.trim();
-    localStorage.setItem(repoPathKey(ws), JSON.stringify(out));
-  } catch {}
 }
 
 const blankRepo = (): RepoEditRow => ({ slug: "", url: "", checkout_mode: "worktree", path: "" });
@@ -64,15 +40,14 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
   );
   const [defaultHost, setDefaultHost] = useState(workspace.default_host || "");
   const [failover, setFailover] = useState(String(workspace.execution?.failover || "none"));
-  const [repos, setRepos] = useState<RepoEditRow[]>(() => {
-    const paths = loadRepoPaths(workspace.id);
-    return (workspace.repos || []).map((r) => ({
+  const [repos, setRepos] = useState<RepoEditRow[]>(() =>
+    (workspace.repos || []).map((r) => ({
       slug: String(r.slug || ""),
       url: String(r.url || ""),
       checkout_mode: r.checkout_mode === "shared" ? "shared" : "worktree",
-      path: paths[String(r.slug || "")] || "",
-    }));
-  });
+      path: "",
+    }))
+  );
   const [wsHosts, setWsHosts] = useState<WorkspaceHosts | null>(null);
   const [hubDevices, setHubDevices] = useState<HubDevice[]>([]);
   const [hostsNote, setHostsNote] = useState<string | null>(null);
@@ -80,6 +55,10 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
 
   const wasSynced = (workspace.sync_policy || "local") !== "local";
   const freezeWarning = wasSynced && syncPolicy === "local";
+  // Async refresh must never clobber in-flight edits: once the operator
+  // touches the policy select the live hosts payload stops driving it.
+  const policyDirty = useRef(false);
+  const pathsLoaded = useRef(false);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -107,11 +86,24 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
           }
           return prev;
         });
-        if (h.sync_policy && h.sync_policy !== syncPolicy) setSyncPolicy(h.sync_policy);
+        if (!policyDirty.current && h.sync_policy && h.sync_policy !== syncPolicy) {
+          setSyncPolicy(h.sync_policy);
+        }
         if (!defaultHost && h.default_host) setDefaultHost(h.default_host);
       })
       .catch((e) => setHostsNote(e instanceof Error ? e.message : String(e)));
     void api.fetchHubDevices().then(setHubDevices).catch(() => setHubDevices([]));
+    // Host-local checkout paths come from the relay (host_paths.json) —
+    // merge into empty path fields only, an edited value is never
+    // overwritten by the slower fetch.
+    void api
+      .fetchRepoPaths(workspace.id)
+      .then((paths) => {
+        if (pathsLoaded.current) return;
+        pathsLoaded.current = true;
+        setRepos((prev) => prev.map((r) => (r.path ? r : { ...r, path: paths[r.slug] || "" })));
+      })
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace.id, showSharing]);
 
@@ -136,34 +128,49 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
     setBusy(true);
     setNote(null);
     try {
-      const row = await api.updateWorkspace(instance, workspace.id, {
+      // One PATCH: the general keys and the policy keys ride together so
+      // a failed second call can never leave the row half-saved.
+      let patch: Parameters<typeof api.updateWorkspace>[2] = {
         label: label.trim() || undefined,
         workdir: workdir.trim() || null,
         workdir_lock: workdirLock,
         browser_profile: browserProfile.trim() || null,
         approval_mode: (approvalMode || null) as "off" | "ask" | "strict" | null,
-      });
-      let policyRow: WorkspaceRow | null = null;
+      };
       if (showSharing) {
-        const built = buildPolicyPatch({
-          sync_policy: syncPolicy,
-          sync_hosts: [...checkedHosts],
-          default_host: defaultHost,
-          failover,
-          repos,
-        });
+        const built = buildPolicyPatch(
+          {
+            sync_policy: syncPolicy,
+            sync_hosts: [...checkedHosts],
+            default_host: defaultHost,
+            failover,
+            repos,
+          },
+          workspace
+        );
         if (!built.ok) {
           setNote(built.error);
           setBusy(false);
           return;
         }
-        policyRow = await api.patchWorkspacePolicy(workspace.id, built.patch);
-        saveRepoPaths(workspace.id, repos);
+        patch = { ...patch, ...built.patch };
       }
-      onSaved({
-        ...(row || { ...workspace, label: label.trim() || workspace.id, workdir: workdir.trim() || undefined, workdir_lock: workdirLock, browser_profile: browserProfile.trim() || undefined, approval_mode: approvalMode || undefined }),
-        ...(policyRow || {}),
-      });
+      const row = await api.updateWorkspace(instance, workspace.id, patch);
+      if (showSharing) {
+        const paths: Record<string, string> = {};
+        for (const r of repos) if (r.slug.trim() && r.path.trim()) paths[r.slug.trim()] = r.path.trim();
+        await api.putRepoPaths(workspace.id, paths);
+      }
+      onSaved(
+        row || {
+          ...workspace,
+          label: label.trim() || workspace.id,
+          workdir: workdir.trim() || undefined,
+          workdir_lock: workdirLock,
+          browser_profile: browserProfile.trim() || undefined,
+          approval_mode: approvalMode || undefined,
+        }
+      );
       onClose();
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
@@ -219,7 +226,10 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                 <select
                   className={inputClass}
                   value={syncPolicy}
-                  onChange={(e) => setSyncPolicy(e.target.value)}
+                  onChange={(e) => {
+                    policyDirty.current = true;
+                    setSyncPolicy(e.target.value);
+                  }}
                   aria-label="sync policy"
                 >
                   <option value="local">local only — never leaves this host</option>
@@ -312,7 +322,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
               <div className="flex flex-col gap-1">
                 <span className={labelClass}>repos — synced checkout map</span>
                 {repos.map((r, i) => (
-                  <div key={i} className="flex flex-col gap-1 border border-[#1a1a1a] rounded p-2">
+                  <div key={r.slug || `row-${i}`} className="flex flex-col gap-1 border border-[#1a1a1a] rounded p-2">
                     <div className="flex gap-1">
                       <input
                         className={inputClass}

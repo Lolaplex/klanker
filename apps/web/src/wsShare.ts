@@ -52,9 +52,17 @@ export type PolicyPatchResult =
   | { ok: false; error: string };
 
 /** Build a wire-valid policy patch from the share-sheet draft.
- *  Fail-closed: `local` always wins over a half-filled member set, and
- *  repo rows without a slug are dropped rather than sent malformed. */
-export function buildPolicyPatch(draft: PolicyDraft): PolicyPatchResult {
+ *  Fail-closed: `local` always wins over a half-filled member set (the
+ *  server 400s sync_hosts on local — the patch sends [] to clear), and
+ *  repo rows without a slug are dropped rather than sent malformed.
+ *  `existing` carries the current workspace row's execution map:
+ *  PATCH merges execution server-side, but the client MUST replay the
+ *  untouched keys (owner, lease_sec) — a bare {failover} write from a
+ *  second admin would otherwise wipe the bound owner. */
+export function buildPolicyPatch(
+  draft: PolicyDraft,
+  existing?: { execution?: Record<string, unknown> }
+): PolicyPatchResult {
   const policy = (draft.sync_policy || "local").trim().toLowerCase();
   if (!POLICIES.has(policy)) {
     return { ok: false, error: `sync_policy must be local|synced|shared` };
@@ -70,7 +78,7 @@ export function buildPolicyPatch(draft: PolicyDraft): PolicyPatchResult {
     }
     if (!hosts.includes(peer)) hosts.push(peer);
   }
-  patch.sync_hosts = hosts.sort();
+  patch.sync_hosts = policy === "local" ? [] : hosts.sort();
 
   const dh = (draft.default_host || "").trim();
   if (dh && !HOST_ID_RE.test(dh)) {
@@ -82,7 +90,7 @@ export function buildPolicyPatch(draft: PolicyDraft): PolicyPatchResult {
   if (failover !== "standby" && failover !== "none") {
     return { ok: false, error: `failover must be standby|none` };
   }
-  patch.execution = { failover };
+  patch.execution = { ...(existing?.execution || {}), failover };
 
   const repos: WsRepoPatch[] = [];
   const seen = new Set<string>();

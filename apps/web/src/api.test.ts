@@ -159,6 +159,30 @@ test("patchWorkspacePolicy PATCHes only the policy keys", async () => {
   }
 });
 
+test("repo paths GET and PUT the workspace host-path map", async () => {
+  const { calls, restore } = stubFetch(async (url, init) => {
+    assert.equal(url, "/v1/workspaces/w1/repo-paths");
+    if (init?.method === "PUT") {
+      assert.deepEqual(JSON.parse(String(init.body)), {
+        paths: { klanker: "C:/code/klanker" },
+      });
+      return jsonRes({ ok: true });
+    }
+    return jsonRes({ ok: true, paths: { klanker: "C:/code/klanker", ignored: 7 } });
+  });
+  try {
+    const paths = await api.fetchRepoPaths("w1");
+    assert.deepEqual(paths, { klanker: "C:/code/klanker" });
+    await api.putRepoPaths("w1", { klanker: "C:/code/klanker" });
+    assert.deepEqual(
+      calls.map((c) => `${c.init?.method || "GET"} ${c.url}`),
+      ["GET /v1/workspaces/w1/repo-paths", "PUT /v1/workspaces/w1/repo-paths"]
+    );
+  } finally {
+    restore();
+  }
+});
+
 test("fetchWorkspaceHosts returns the member/presence payload", async () => {
   const { restore } = stubFetch(async (url) => {
     assert.equal(url, "/v1/workspaces/w1/hosts");
