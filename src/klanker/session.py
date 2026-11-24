@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -34,6 +35,8 @@ from .msgsync import actor, ensure_domain, local_node_id, next_seq
 GIT_TIMEOUT_SEC = 30.0       # local git plumbing
 REMOTE_PROBE_SEC = 15.0      # ls-remote
 PUSH_TIMEOUT_SEC = 60.0      # push
+
+log = logging.getLogger(__name__)
 
 
 def _now_ms() -> int:
@@ -668,8 +671,9 @@ def session_bind_gate(session_id: str, tool: str = "",
                 try:
                     wt = ensure_worktree(main, session_id)
                     workdir_out = str(wt)
-                except Exception:  # noqa: BLE001
-                    pass  # bind still lands; worktree retries on switch
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("session worktree create failed: %s", exc)
+                    # bind still lands; worktree retries on switch
         bind_session(conn, session_id, host_id, branch=branch, repo=repo)
         out = {"bound": True, "workdir": workdir_out,
                "already_bound": False}
@@ -865,11 +869,26 @@ def cmd_session_gate(args) -> int:
     "already_bound": bool}`` so the gate can route the tool call into
     the session worktree. Exit 0 when bound (first bind OR
     already-bound), exit 2 when the bind declined — the harness treats
-    a nonzero rc as SessionGateError and fails closed (klanker#155)."""
+    a nonzero rc as SessionGateError and fails closed (klanker#155).
+    Every invocation is also appended verbatim to
+    ``<host>/session-gate.jsonl`` so a bind that never landed is
+    diagnosable after the fact."""
     import json as _json
 
     _last_bind_result.update(
         {"bound": False, "workdir": "", "already_bound": False})
     res = session_bind_gate(args.session, getattr(args, "tool", "") or "")
-    print(_json.dumps(dict(res)))
+    out = dict(res)
+    try:
+        from agents_workspace import Host
+
+        audit = Host.from_env().dir / "session-gate.jsonl"
+        with open(audit, "a", encoding="utf-8") as fh:
+            fh.write(_json.dumps(
+                {"ts": int(time.time()), "session": str(args.session),
+                 "tool": str(getattr(args, "tool", "") or ""), **out})
+                + "\n")
+    except Exception:  # noqa: BLE001 — the JSON contract still prints
+        pass
+    print(_json.dumps(out))
     return 0 if res.get("bound") else 2

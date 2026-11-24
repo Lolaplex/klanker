@@ -815,7 +815,8 @@ class Gate:
             session_view(node_a, ALPHA, sid)), timeout=60)
         self.check("session:host bound to dev A",
                    bool(view),
-                   f"view={session_view(node_a, ALPHA, sid)}")
+                   f"view={session_view(node_a, ALPHA, sid)}"
+                   f" gate_audit={_gate_audit(node_a)}")
         view = session_view(node_a, ALPHA, sid)
         self.check("session:branch = klanker/s-<sid>",
                    view.get("branch") == branch, f"{view.get('branch')}")
@@ -1012,6 +1013,17 @@ def _find_worktree(node: dict, repo: Path, branch: str) -> Path | None:
         capture_output=True, text=True, timeout=30.0)
     p = out.stdout.strip()
     return Path(p) if p and out.returncode == 0 else None
+
+
+def _gate_audit(node: dict) -> str:
+    """Tail of <host>/session-gate.jsonl — bind refusal reasons."""
+    try:
+        lines = (node["host_dir"] / "session-gate.jsonl") \
+            .read_text(encoding="utf-8", errors="replace") \
+            .splitlines()
+        return lines[-1] if lines else ""
+    except OSError:
+        return ""
 
 
 def _hub_token(node: dict) -> tuple[str, str]:

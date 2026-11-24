@@ -323,6 +323,60 @@ def test_hub_announce_revokes_removed_member(tmp_path, monkeypatch):
     assert set(host.workspace("w1").sync_hosts) == {"dev-a", "dev-b"}
 
 
+class _OfflineShareHub(_FakeShareHub):
+    """Share hub whose link to chosen devices is down: publish() -1."""
+
+    def __init__(self):
+        super().__init__()
+        self.offline = set()
+
+    def publish(self, device_id, kind, payload):
+        if device_id in self.offline:
+            return -1
+        self.published.append((device_id, kind, payload))
+        return 1
+
+    def connected_devices(self):
+        return []
+
+
+@_POLICY
+def test_reconcile_announce_to_offline_member_retries(
+        tmp_path, monkeypatch):
+    """Member-diff announce dropped while the device link is down must
+    stay unmarked — the _ensure_announced sweep re-announces on next
+    contact. Regression: grant lands between ticks; reconcile published
+    the announce before the channel link came up and marked it sent —
+    the new member never heard of the ws (two-host gate flake)."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime, ws_grant_apply
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    rt = SyncRuntime()
+    hub = _OfflineShareHub()
+    rt.attach_hub(hub, {}, "hubNode")
+
+    hub.ws_handler("dev-a", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-a"], "seq": 1})
+    hub.published.clear()
+    # ws invite redeemed: grant widens the set while dev-b's link is down
+    ws_grant_apply("dev-b", "w1", "dev-a")
+    hub.offline.add("dev-b")
+    rt._reconcile_shares()
+    assert set(host.workspace("w1").sync_hosts) == {"dev-a", "dev-b"}
+    assert ("dev-b", "w1") not in rt._announce_sent  # retried, not lost
+    assert ("dev-a", "w1") in rt._announce_sent
+    # device link comes up: the sweep delivers the missed announce
+    hub.offline.discard("dev-b")
+    rt._ensure_announced(hub, "dev-b")
+    frames = [p for p in hub.published
+              if p[0] == "dev-b" and p[1] == "ws:announce"]
+    assert frames and frames[-1][2]["sync_hosts"] == ["dev-a", "dev-b"]
+    assert rt._announce_sent[("dev-b", "w1")] == {"dev-a", "dev-b"}
+
+
 @_POLICY
 def test_spoke_announce_provisions_and_revoke_freezes(
         tmp_path, monkeypatch):
