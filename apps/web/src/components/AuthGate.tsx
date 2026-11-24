@@ -1,8 +1,14 @@
 import { useEffect, useState } from "react";
 import { api, localInstance } from "../services/api";
-import { extractPairTokenFromHash } from "../relayEvents";
+import { classifyPairHash } from "../pairLink";
 
 export type AuthState = "checking" | "needed" | "ok";
+
+interface PairPrompt {
+  token: string;
+  ws: string;
+  mode: string;
+}
 
 /** Same-origin relay token gate. "checking" renders the quiet spinner,
  *  "needed" the token form; a good login sets the cookie and reloads. */
@@ -11,21 +17,63 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
   const [cookieWarning, setCookieWarning] = useState<string | null>(null);
+  const [pairPrompt, setPairPrompt] = useState<PairPrompt | null>(null);
+  const [pairCopied, setPairCopied] = useState(false);
 
-  // Single-use `#pair=<token>` auto-redeem: scrub hash immediately from
-  // location history, exchange for HttpOnly cookie, and reload on success.
+  const redeem = (token: string) => {
+    setLoginBusy(true);
+    setLoginError(null);
+    void api
+      .redeemPairToken(localInstance(), token)
+      .then((res) => {
+        if (res.mode && res.mode !== "web") {
+          // The stored mode wins: a ws/remote invite redeemed here minted
+          // a device credential instead of a cookie — the link is spent.
+          setPairPrompt(null);
+          setLoginError(
+            `that link paired a ${res.mode} device — it is consumed; mint a fresh invite and use Connect in the app`
+          );
+          setLoginBusy(false);
+          return;
+        }
+        window.location.reload();
+      })
+      .catch((err) => {
+        setLoginError(`pairing failed: ${err instanceof Error ? err.message : String(err)}`);
+        setLoginBusy(false);
+      });
+    // callers own the stop flag via unmount/choice
+  };
+
+  // `#pair=<token>` handling (klanker#151): only a BARE web-session link
+  // auto-redeems. A fragment carrying ws=/kind= markers is a device or
+  // workspace invite — burning the single-use token in a browser would
+  // mint a device credential nobody holds, so the user picks intent first.
   useEffect(() => {
-    const pairToken = extractPairTokenFromHash(window.location.hash);
-    if (!pairToken) return;
+    const action = classifyPairHash(window.location.hash);
+    if (action.kind === "none") return;
     try {
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     } catch {}
+    if (action.kind === "confirm") {
+      setPairPrompt({ token: action.token, ws: action.ws, mode: action.mode });
+      return;
+    }
     let stop = false;
     setLoginBusy(true);
     setLoginError(null);
     void api
-      .redeemPairToken(localInstance(), pairToken)
-      .then(() => {
+      .redeemPairToken(localInstance(), action.token)
+      .then((res) => {
+        if (res.mode && res.mode !== "web") {
+          if (!stop) {
+            setLoginError(
+              `that link paired a ${res.mode} device — it is consumed; mint a fresh invite and use Connect in the app`
+            );
+            setLoginBusy(false);
+          }
+          return;
+        }
         if (!stop) window.location.reload();
       })
       .catch((err) => {
@@ -67,6 +115,53 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
       setLoginBusy(false);
     }
   };
+
+  if (pairPrompt) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center bg-[#000000] text-white font-sans p-4">
+        <div className="w-80 flex flex-col gap-3 font-mono text-xs">
+          <div className="text-[#a3a3a3] tracking-widest uppercase">KLANKER</div>
+          <div className="text-white">pair device or web login?</div>
+          <p className="text-[#737373] leading-relaxed">
+            This link {pairPrompt.ws ? (
+              <>joins workspace <span className="text-white">{pairPrompt.ws}</span> — it pairs a <span className="text-white">device</span>, not a browser.</>
+            ) : (
+              <>carries a <span className="text-white">{pairPrompt.mode || "device"}</span> pairing token — it pairs a device, not a browser.</>
+            )}{" "}
+            It is single-use: redeeming it on the wrong surface consumes it.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              void navigator.clipboard?.writeText(pairPrompt.token).then(() => setPairCopied(true)).catch(() => {});
+            }}
+            className="border border-[#262626] px-3 py-2 text-left hover:bg-[#171717]"
+          >
+            {pairCopied ? "invite copied — paste it in the app's Connect flow" : "copy invite for the app — Connect → pair device"}
+          </button>
+          <button
+            type="button"
+            disabled={loginBusy}
+            onClick={() => redeem(pairPrompt.token)}
+            className="border border-[#262626] px-3 py-2 hover:bg-[#171717] disabled:opacity-50"
+          >
+            {loginBusy ? "…" : "web login — redeem here (consumes the link)"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPairPrompt(null);
+              setLoginBusy(false);
+            }}
+            className="text-[#525252] hover:text-white text-left"
+          >
+            dismiss — plain token login
+          </button>
+          {loginError && <div className="text-red-500">{loginError}</div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 flex items-center justify-center bg-[#000000] text-white font-sans">

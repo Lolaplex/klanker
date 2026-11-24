@@ -3,6 +3,7 @@ import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole, type ChatPick } from "./components/ChatConsole";
 import { InstanceSheet } from "./components/InstanceSheet";
+import { DevicesPanel } from "./components/DevicesPanel";
 import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ManagePanel } from "./components/ManagePanel";
@@ -80,6 +81,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [instanceSheetInst, setInstanceSheetInst] = useState<KlankerInstance | null>(null);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [selWs, setSelWs] = useState(() => readWsSel().ws);
   // Per-chat provider+model override, keyed by "<inst> <ws> <persona>"; absent = instance default.
   const [chatPicks, setChatPicks] = useState<Record<string, ChatPick>>({});
@@ -157,6 +159,7 @@ export function App() {
   });
 
   const herdStatus = activeInstance ? inst.herd[activeInstance.id] ?? null : null;
+  const devicesInst = inst.instances.find((i) => i.id === "local") ?? activeInstance ?? inst.instances[0] ?? null;
 
   const approvals = useApprovals({ activeInstance, status: herdStatus, workspaceId: selWs });
   const relayCompat = useRelayCompat({ activeInstance, managedId: inst.managedId, herd: inst.herd });
@@ -521,6 +524,24 @@ export function App() {
       setSettingsOpen(false);
     } catch (e) {
       console.error("Failed to save settings", e);
+    }
+  };
+
+  // Hub LAN toggle (devices panel): persist the setting then restart the
+  // managed serve so the new bind host actually takes effect.
+  const handleToggleHubMode = async (on: boolean) => {
+    await updateSettings((current) => ({ ...current, hub_mode: on }));
+    if (caps.spawn) {
+      try {
+        await api.serveRestart(on);
+        const saved = inst.instancesRef.current.find((i) => i.id === "local");
+        if (saved) {
+          const st = await api.getGatewayStatus(saved);
+          inst.setHerd((prev) => ({ ...prev, local: st }));
+        }
+      } catch (e) {
+        setWsNote(`hub mode: ${e instanceof Error ? e.message : e}`);
+      }
     }
   };
 
@@ -914,6 +935,7 @@ export function App() {
           }
           chatTitle={headerChatTitle}
           status={herdStatus}
+          onOpenDevices={() => setDevicesOpen(true)}
           onOpenSettings={openSettings}
           onOpenManage={() => setManageOpen(true)}
           onOpenNav={() => setNavOpen(true)}
@@ -1050,7 +1072,26 @@ export function App() {
         </div>
       </div>
 
-      <NewKlankerModal isOpen={isNewModalOpen} onClose={() => setIsNewModalOpen(false)} onSave={handleCreate} />
+      <NewKlankerModal
+        isOpen={isNewModalOpen}
+        onClose={() => setIsNewModalOpen(false)}
+        onSave={handleCreate}
+        onConnected={() => void inst.refreshInstances()}
+      />
+      {devicesOpen && devicesInst && (
+        <DevicesPanel
+          instance={devicesInst}
+          status={inst.herd.local ?? null}
+          settings={settings}
+          instances={inst.instances}
+          onToggleHubMode={handleToggleHubMode}
+          onEditInstance={(i) => {
+            setDevicesOpen(false);
+            setInstanceSheetInst(i);
+          }}
+          onClose={() => setDevicesOpen(false)}
+        />
+      )}
       {instanceSheetInst && (
         <InstanceSheet
           instance={inst.instances.find((i) => i.id === instanceSheetInst.id) ?? instanceSheetInst}
@@ -1101,7 +1142,7 @@ export function App() {
         />
       )}
       {pairOpen && activeInstance && (
-        <PairModal instance={activeInstance} onClose={() => setPairOpen(false)} />
+        <PairModal instance={activeInstance} workspace={selWs} onClose={() => setPairOpen(false)} />
       )}
       <DialogHost />
     </div>

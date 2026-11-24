@@ -362,20 +362,6 @@ const wstr = (v: unknown): string | undefined =>
 const wbool = (v: unknown): boolean | undefined =>
   typeof v === "boolean" ? v : undefined;
 
-/** /v1/workspaces row → WorkspaceRow; null on a non-object payload. */
-function mapWorkspaceWire(w: unknown, fallbackId: string): WorkspaceRow | null {
-  if (!w || typeof w !== "object") return null;
-  const o = w as WireRow;
-  return {
-    id: wstr(o.id) || fallbackId,
-    label: wstr(o.label) || wstr(o.name) || wstr(o.id) || fallbackId,
-    workdir: wstr(o.workdir),
-    workdir_lock: wbool(o.workdir_lock),
-    browser_profile: wstr(o.browser_profile),
-    approval_mode: wstr(o.approval_mode),
-  };
-}
-
 /** Capability flags: desktop (Tauri) gets spawn/keyring/updates; web/PWA does not. */
 export const caps = {
   localFs: isTauri(),
@@ -746,18 +732,7 @@ export const api = {
 
   async listWorkspaces(inst: KlankerInstance): Promise<WorkspaceRow[]> {
     const r = await req<{ workspaces?: (WireRow | string)[] }>(inst, "/v1/workspaces", { headers: headers(inst) });
-    return (r.workspaces || []).map((w) => {
-      const o: WireRow = typeof w === "object" && w !== null ? w : {};
-      const fallback = typeof w === "string" ? w : "";
-      return {
-        id: wstr(o.id) || fallback,
-        label: wstr(o.label) || wstr(o.name) || wstr(o.id) || fallback,
-        workdir: wstr(o.workdir),
-        workdir_lock: wbool(o.workdir_lock),
-        browser_profile: wstr(o.browser_profile),
-        approval_mode: wstr(o.approval_mode),
-      };
-    });
+    return (r.workspaces || []).map((w) => mapWorkspaceRow(w));
   },
 
   /** PATCH /v1/workspaces/<id> — workspace config lives on the relay; no
@@ -782,7 +757,9 @@ export const api = {
         body: JSON.stringify(patch),
       }
     );
-    return mapWorkspaceWire(r.workspace, id);
+    const w = r.workspace;
+    if (!w || typeof w !== "object") return null;
+    return mapWorkspaceRow(w, id);
   },
 
   /** Effective pick for a chat: session override when `session` is given,
@@ -1699,7 +1676,9 @@ export const api = {
       "PATCH",
       { ...patch }
     );
-    return mapWorkspaceWire(r.workspace, ws);
+    const w = r.workspace;
+    if (!w || typeof w !== "object") return null;
+    return mapWorkspaceRow(w, ws);
   },
 
   /** GET /v1/workspaces/<ws>/hosts — member devices + presence + active
@@ -1787,6 +1766,28 @@ export function serveToProcess(ss: ServeStatus): ProcessStatus {
     state,
     detail: ss.detail ?? undefined,
   };
+}
+
+/** Serialize a relay workspace row (list/GET/PATCH all share the shape);
+ *  policy keys ride along when the relay serves them (agents-relay#43). */
+function mapWorkspaceRow(w: WireRow | string, fallbackId = ""): WorkspaceRow {
+  const o: WireRow = typeof w === "object" && w !== null ? w : {};
+  const fallback = typeof w === "string" ? w : "";
+  const id = wstr(o.id) || fallback || fallbackId;
+  const row: WorkspaceRow = {
+    id,
+    label: wstr(o.label) || wstr(o.name) || wstr(o.id) || id,
+    workdir: wstr(o.workdir),
+    workdir_lock: wbool(o.workdir_lock),
+    browser_profile: wstr(o.browser_profile),
+    approval_mode: wstr(o.approval_mode),
+  };
+  if (o.sync_policy !== undefined) row.sync_policy = wstr(o.sync_policy);
+  if (Array.isArray(o.sync_hosts)) row.sync_hosts = o.sync_hosts.map(String);
+  if (o.default_host !== undefined) row.default_host = wstr(o.default_host);
+  if (Array.isArray(o.repos)) row.repos = o.repos as WsRepoPatch[];
+  if (o.execution && typeof o.execution === "object") row.execution = o.execution as Record<string, unknown>;
+  return row;
 }
 
 /** Map a legacy `~/.klanker` instance.json onto the current shape. */
