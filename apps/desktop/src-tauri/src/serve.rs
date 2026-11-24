@@ -314,6 +314,32 @@ pub(crate) fn parse_netstat_listen_addr(text: &str, port: u16) -> Option<String>
     None
 }
 
+/// `lsof -Fn` name-field parse for the LISTEN row of `port` — the
+/// non-Windows `port_bind_addr` leg: `n127.0.0.1:8787`, `n*:8787`
+/// (wildcard → "0.0.0.0"), `n[::1]:8787`. Same answer shape as
+/// `parse_netstat_listen_addr` so `ServeStatus.host` is real on every OS.
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+pub(crate) fn parse_lsof_listen_addr(text: &str, port: u16) -> Option<String> {
+    let want = port.to_string();
+    for line in text.lines() {
+        let Some(name) = line.strip_prefix('n') else {
+            continue;
+        };
+        let Some((host, p)) = name.rsplit_once(':') else {
+            continue;
+        };
+        if p != want {
+            continue;
+        }
+        let host = host.trim_matches(|c| c == '[' || c == ']');
+        let host = if host == "*" { "0.0.0.0" } else { host };
+        if !host.is_empty() {
+            return Some(host.to_string());
+        }
+    }
+    None
+}
+
 fn port_bind_addr(port: u16) -> Option<String> {
     #[cfg(target_os = "windows")]
     {
@@ -321,8 +347,14 @@ fn port_bind_addr(port: u16) -> Option<String> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = port;
-        None
+        Command::new("lsof")
+            .args(["-nP", "-sTCP:LISTEN", "-Fn"])
+            .arg(format!("-iTCP:{port}"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .and_then(|out| parse_lsof_listen_addr(&String::from_utf8_lossy(&out.stdout), port))
     }
 }
 
@@ -743,29 +775,35 @@ fn persist_token(token: &str, vault_tok: Option<&str>, keyring_tok: Option<&str>
     Ok(())
 }
 
-fn adopt_or_mark(s: &mut Serve, app: &AppHandle, live_port: u16) {
-    // A serve for this host is already answering on `live_port`. If our
-    // recorded PID matches an active klanker process -> owned; else external.
+/// Blocking half of adopt — pid-file read, `pid_is_ours` (tasklist/proc
+/// spawn) and the keyring sync all take real time, so they run BEFORE the
+/// ServeState mutex is taken. Returns the recorded PID when our spawned
+/// child is still alive, else None (external serve we must not kill).
+fn adopt_probe(app: &AppHandle) -> Option<u32> {
+    let mut ours = None;
     if let Some((pid, _)) = read_pid_file(app) {
         if pid_is_ours(pid) {
-            sync_vault_to_keyring();
-            s.state = "running".into();
-            s.pid = Some(pid);
-            s.port = live_port;
-            s.owned = true;
-            s.failed_spawns = 0;
-            s.detail = None;
-            return;
+            ours = Some(pid);
+        } else {
+            remove_pid_file(app, Some(pid));
         }
-        remove_pid_file(app, Some(pid));
     }
     sync_vault_to_keyring();
+    ours
+}
+
+/// Locked half of adopt — a short commit under the ServeState mutex.
+fn adopt_commit(s: &mut Serve, live_port: u16, owned_pid: Option<u32>) {
     s.state = "running".into();
-    s.pid = None;
+    s.pid = owned_pid;
     s.port = live_port;
-    s.owned = false;
+    s.owned = owned_pid.is_some();
     s.failed_spawns = 0;
-    s.detail = Some("external serve (not app-managed)".into());
+    s.detail = if owned_pid.is_some() {
+        None
+    } else {
+        Some("external serve (not app-managed)".into())
+    };
 }
 
 /// Port the child can actually bind. `bind` is the RELAY_HOST the child
@@ -894,9 +932,10 @@ fn do_ensure(app: &AppHandle, hub_mode: bool, force_own: bool) -> Result<ServeSt
         if !force_own && auth_ok(port, &token) {
             persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref())?;
             let bind = port_bind_addr(port);
+            let owned_pid = adopt_probe(app);
             let st = {
                 let mut s = serve_lock(&serve_state)?;
-                adopt_or_mark(&mut s, app, port);
+                adopt_commit(&mut s, port, owned_pid);
                 s.host = bind.unwrap_or_else(|| "127.0.0.1".into());
                 ServeStatus::of(&s)
             };
@@ -1023,7 +1062,23 @@ fn do_ensure(app: &AppHandle, hub_mode: bool, force_own: bool) -> Result<ServeSt
     let log = log_path(app)?;
     match spawn_klanker(&argv, port, &token, &log, &host_dir, relay_host) {
         Ok(pid) => {
-            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref())?;
+            // A serve we cannot authenticate to is an orphan — reap it
+            // instead of leaking a child the app will never adopt.
+            if let Err(e) = persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref()) {
+                kill_tree(pid);
+                remove_pid_file(app, Some(pid));
+                let st = {
+                    let mut s = serve_lock(&serve_state)?;
+                    s.klanker_version = version;
+                    s.failed_spawns += 1;
+                    s.last_spawn = Some(Instant::now());
+                    s.state = "stopped".into();
+                    s.detail = Some(format!("token persist failed: {e}"));
+                    ServeStatus::of(&s)
+                };
+                emit_serve_state(app, &st);
+                return Err(e);
+            }
             write_pid_file(app, pid, port, expected_host_id.as_deref());
             let healthy = probe_health(port).is_some();
             let st = {
@@ -1085,7 +1140,7 @@ fn status(app: &AppHandle) -> Result<(ServeStatus, bool), String> {
     let (prev, candidates) = {
         let s = serve_lock(&serve_state)?;
         (
-            (s.state.clone(), s.port, s.owned, s.pid),
+            (s.state.clone(), s.port, s.owned, s.pid, s.host.clone()),
             candidate_ports(&s, app),
         )
     };
@@ -1123,10 +1178,17 @@ fn status(app: &AppHandle) -> Result<(ServeStatus, bool), String> {
         false
     };
 
+    // The adopt probe spawns tasklist/proc reads and touches the keyring —
+    // resolve it before the commit lock, never under it.
+    let adopt_pid = if matches!(outcome, Some(ProbeOutcome::Adopt(..))) {
+        adopt_probe(app)
+    } else {
+        None
+    };
     let mut s = serve_lock(&serve_state)?;
     match outcome {
         Some(ProbeOutcome::Adopt(port, bind)) => {
-            adopt_or_mark(&mut s, app, port);
+            adopt_commit(&mut s, port, adopt_pid);
             s.host = bind.unwrap_or_else(|| "127.0.0.1".into());
         }
         Some(ProbeOutcome::AuthLost(port)) => {
@@ -1142,7 +1204,7 @@ fn status(app: &AppHandle) -> Result<(ServeStatus, bool), String> {
         s.state = "lost".into();
         s.detail = Some("serve stopped answering".into());
     }
-    let changed = (s.state.clone(), s.port, s.owned, s.pid) != prev;
+    let changed = (s.state.clone(), s.port, s.owned, s.pid, s.host.clone()) != prev;
     Ok((ServeStatus::of(&s), changed))
 }
 
@@ -1337,9 +1399,10 @@ pub fn init(app: &AppHandle) {
         if host_ok && auth_ok(DEFAULT_PORT, &token) {
             log_persist_err(app, persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref()));
             let bind = port_bind_addr(DEFAULT_PORT);
+            let owned_pid = adopt_probe(app);
             let state = app.state::<ServeState>();
             if let Ok(mut s) = state.0.lock() {
-                adopt_or_mark(&mut s, app, DEFAULT_PORT);
+                adopt_commit(&mut s, DEFAULT_PORT, owned_pid);
                 s.host = bind.unwrap_or_else(|| "127.0.0.1".into());
             };
         }
@@ -1549,6 +1612,17 @@ Aktive Verbindungen
         assert!(!can_reclaim_by_port(&matched, Some(" ")));
         assert!(!can_reclaim_by_port(&missing_hid, Some("host_abc")));
         assert!(!can_reclaim_by_port(&blank_hid, Some("host_abc")));
+    }
+
+    #[test]
+    fn parse_lsof_listen_addr_maps_wildcard_loopback_and_v6() {
+        let sample = "p1234\nf3\nn*:8787\np5555\nf4\nn127.0.0.1:9010\nn[::1]:9011\n";
+        assert_eq!(parse_lsof_listen_addr(sample, 8787).as_deref(), Some("0.0.0.0"));
+        assert_eq!(parse_lsof_listen_addr(sample, 9010).as_deref(), Some("127.0.0.1"));
+        assert_eq!(parse_lsof_listen_addr(sample, 9011).as_deref(), Some("::1"));
+        // A listener on a different port never aliases (host suffix match only).
+        assert_eq!(parse_lsof_listen_addr(sample, 787).as_deref(), None);
+        assert_eq!(parse_lsof_listen_addr("", 8787).as_deref(), None);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { FolderOpen, X } from "lucide-react";
+import { X } from "lucide-react";
 import { DesktopSettings, KlankerInstance } from "../types/klanker";
 import { getPushSubscription, pushSupported, subscribePush, unsubscribePush } from "../push";
-import { api } from "../services/api";
+import { api, caps } from "../services/api";
 
 interface SettingsPanelProps {
   settings: DesktopSettings;
@@ -14,10 +14,8 @@ interface SettingsPanelProps {
   onSave: (settings: DesktopSettings) => void;
   onAddInstance?: () => void;
   onEditInstance?: (inst: KlankerInstance) => void;
+  onInstancesChanged?: () => void;
 }
-
-const inputClass =
-  "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   settings,
@@ -29,8 +27,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onSave,
   onAddInstance,
   onEditInstance,
+  onInstancesChanged,
 }) => {
   const [draft, setDraft] = useState<DesktopSettings>({ ...settings });
+  const [migrateBusy, setMigrateBusy] = useState(false);
+  const [migrateNote, setMigrateNote] = useState<string | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushOn, setPushOn] = useState<boolean | null>(null);
   const [pushNote, setPushNote] = useState<string | null>(null);
@@ -107,16 +108,36 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
   };
 
-  const pickWorkdir = async () => {
-    const dir = await (window as unknown as { __TAURI__: { core: { invoke: (c: string, a?: Record<string, unknown>) => Promise<string | null> } } })
-      .__TAURI__.core.invoke("plugin:dialog|open", { options: { directory: true, title: "Choose default workdir" } })
-      .catch(() => null);
-    if (dir) setDraft((d) => ({ ...d, workspace: dir }));
+  // One-time explicit import of pre-thin-shell stores onto the local
+  // relay's /v1/remotes mount table (klanker#149). Never auto-runs.
+  const runMigrate = async () => {
+    setMigrateBusy(true);
+    setMigrateNote(null);
+    try {
+      const r = await api.migrateLegacyInstances();
+      setMigrateNote(
+        r.migrated === 0 && r.skipped === 0
+          ? "Nothing to import — no legacy stores found."
+          : `Import done — ${r.migrated} migrated, ${r.skipped} skipped.`
+      );
+      if (r.migrated > 0) onInstancesChanged?.();
+    } catch (e) {
+      setMigrateNote(`Import failed: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setMigrateBusy(false);
+    }
   };
+
   const save = (event: React.FormEvent) => {
     event.preventDefault();
     onSave({ ...draft, workspace: draft.workspace.trim() });
   };
+
+  // Relay mounts + file registry can both surface the same remote — dedupe
+  // by id so the list never shows a host twice.
+  const shownInstances = instances
+    ? [...new Map(instances.map((i) => [i.id, i])).values()]
+    : undefined;
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
@@ -128,11 +149,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </button>
         </div>
         <form onSubmit={save} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 space-y-4">
-          {instances && (
+          {shownInstances && (
             <div>
               <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Instances</div>
               <div className="space-y-1">
-                {instances.map((i) => (
+                {shownInstances.map((i) => (
                   <button
                     key={i.id}
                     type="button"
@@ -153,38 +174,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                 >
                   + connect
                 </button>
+                {desktop && caps.spawn && (
+                  <button
+                    type="button"
+                    disabled={migrateBusy}
+                    onClick={() => void runMigrate()}
+                    className="w-full min-h-9 px-2 py-1.5 rounded border border-dashed border-[#262626] text-[#737373] hover:border-[#525252] hover:text-white transition-colors disabled:opacity-50"
+                  >
+                    {migrateBusy ? "importing…" : "import legacy instances"}
+                  </button>
+                )}
+                {migrateNote && <p className="text-[10px] text-[#525252] mt-1">{migrateNote}</p>}
               </div>
             </div>
-          )}
-
-          {/* Workdir + LM Studio/Echo are desktop-local concepts: a browser
-              can't spawn a local serve and the relay never sees these URLs. */}
-          {desktop && (
-          <div>
-            <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
-              Default workdir
-            </label>
-            <div className="flex items-center gap-1">
-              <input
-                type="text"
-                value={draft.workspace}
-                onChange={(e) => setDraft({ ...draft, workspace: e.target.value })}
-                placeholder="tool confinement dir for new local instances"
-                className={inputClass}
-              />
-              <button
-                type="button"
-                title="Browse…"
-                onClick={() => void pickWorkdir()}
-                className="shrink-0 p-2 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white"
-              >
-                <FolderOpen className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <p className="text-[10px] text-[#525252] mt-1">
-              Fallback file-access boundary for local instances that don't set their own.
-            </p>
-          </div>
           )}
 
           {desktop && (

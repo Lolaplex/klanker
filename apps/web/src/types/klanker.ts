@@ -140,6 +140,37 @@ export interface WorkspaceRow {
   approval_mode?: "off" | "ask" | "strict" | string;
 }
 
+/** Relay session/trace event (`GET .../sessions/<id>` → events[]).
+ *  `metadata` fields vary by `type` — readers narrow what they need. */
+export interface SessionEvent {
+  type?: string;
+  ts?: string;
+  metadata?: { role?: string; content?: unknown } & Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface JobRow {
+  id: string;
+  goal?: string;
+  status?: string;
+  result?: string;
+  created_at?: string;
+}
+
+export interface RoutineRow {
+  name: string;
+  workspace?: string;
+  prompt?: string;
+  at?: string;
+  cron?: string;
+  paused?: boolean;
+}
+
+export interface RoutineActionResult {
+  result?: { status?: string; reply?: string };
+  [key: string]: unknown;
+}
+
 export interface RelayEvent {
   id: number;
   kind: string;

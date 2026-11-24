@@ -86,19 +86,25 @@ fn secret_get(account: String) -> Option<String> {
 }
 
 #[tauri::command]
-fn secret_set(account: String, secret: String) -> Result<(), String> {
-    if !secrets::valid_account(&account) {
-        return Err("invalid secret account".into());
-    }
-    let trimmed = secret.trim();
-    secrets::set(&account, trimmed)?;
-    if account == secrets::relay_account("local") && !trimmed.is_empty() {
-        secrets::write_host_vault_secrets(&[
-            ("RELAY_WEB_TOKEN", trimmed),
-            ("RELAY_SECRET", trimmed),
-        ])?;
-    }
-    Ok(())
+async fn secret_set(account: String, secret: String) -> Result<(), String> {
+    // Keyring writes can block for seconds (Windows Credential Manager,
+    // vault lock wait up to 10s) — off the IPC handler thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        if !secrets::valid_account(&account) {
+            return Err("invalid secret account".into());
+        }
+        let trimmed = secret.trim();
+        secrets::set(&account, trimmed)?;
+        if account == secrets::relay_account("local") && !trimmed.is_empty() {
+            secrets::write_host_vault_secrets(&[
+                ("RELAY_WEB_TOKEN", trimmed),
+                ("RELAY_SECRET", trimmed),
+            ])?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -133,7 +139,11 @@ pub fn run() {
             if let Ok(hd) = desktop_host_dir() {
                 secrets::migrate_legacy_openrouter_key(&hd);
             }
-            serve::init(app.handle());
+            // init() runs blocking TCP probes, tasklist/netstat spawns and
+            // keyring I/O — keeping it on the setup path stalls first paint
+            // by seconds.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || serve::init(&handle));
             if let Err(err) = tray::setup_tray(app.handle()) {
                 eprintln!("tray setup failed: {err}");
             }

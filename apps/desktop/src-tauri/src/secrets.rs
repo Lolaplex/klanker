@@ -30,18 +30,25 @@ pub fn valid_account(account: &str) -> bool {
         && suffix.chars().all(|c| c.is_ascii_graphic())
 }
 
-fn cache() -> &'static Mutex<HashMap<String, String>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+/// Keyring reads cache because a Credential Manager / Secret Service call
+/// costs hundreds of ms — but an external writer (CLI, second app
+/// instance) can replace the OS credential underneath us. The TTL bounds
+/// how long a stale cached value can be served.
+const KEYRING_CACHE_TTL: Duration = Duration::from_secs(30);
+
+fn cache() -> &'static Mutex<HashMap<String, (String, Instant)>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, (String, Instant)>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn cache_get(account: &str) -> Option<String> {
-    cache().lock().ok()?.get(account).cloned()
+    let (value, at) = cache().lock().ok()?.get(account)?.clone();
+    (at.elapsed() < KEYRING_CACHE_TTL).then_some(value)
 }
 
 fn cache_set(account: &str, secret: &str) {
     if let Ok(mut map) = cache().lock() {
-        map.insert(account.to_string(), secret.to_string());
+        map.insert(account.to_string(), (secret.to_string(), Instant::now()));
     }
 }
 
@@ -94,14 +101,18 @@ pub fn set(account: &str, secret: &str) -> Result<(), String> {
     if secret.is_empty() {
         return Ok(());
     }
-    cache_set(account, secret);
     if cfg!(test) {
+        cache_set(account, secret);
         return Ok(());
     }
     let entry = keyring::Entry::new(SERVICE, account).map_err(|_| "credential store rejected the value")?;
     entry
         .set_password(secret)
-        .map_err(|_| "credential store rejected the value".to_string())
+        .map_err(|_| "credential store rejected the value".to_string())?;
+    // Cache only after the store accepted the write — caching first
+    // poisons every read with a value the OS rejected.
+    cache_set(account, secret);
+    Ok(())
 }
 
 pub fn delete(account: &str) {
@@ -152,6 +163,25 @@ fn vault_lock_path(vault: &Path) -> PathBuf {
 fn is_sharing_violation(e: &std::io::Error) -> bool {
     // ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33) — Windows.
     matches!(e.raw_os_error(), Some(32) | Some(33))
+}
+
+/// Retry os error 32/33 briefly: on Windows a peer (indexer, AV, the
+/// Python side holding the file open without share-delete) can transiently
+/// block a read or rename of host.json — one shot is not a real failure.
+fn retry_sharing_violation<T>(
+    mut op: impl FnMut() -> Result<T, std::io::Error>,
+) -> Result<T, std::io::Error> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut delay = Duration::from_millis(5);
+    loop {
+        match op() {
+            Err(e) if is_sharing_violation(&e) && Instant::now() < deadline => {
+                std::thread::sleep(delay);
+                delay = (delay * 2).min(Duration::from_millis(100));
+            }
+            other => return other,
+        }
+    }
 }
 
 fn acquire_vault_lock(vault: &Path) -> Result<VaultLock, String> {
@@ -273,7 +303,8 @@ pub(crate) fn write_host_vault_secrets_at(path: &Path, pairs: &[(&str, &str)]) -
     let _lock = acquire_vault_lock(path)?;
 
     let mut map: Map<String, Value> = if path.exists() {
-        let raw = fs::read_to_string(path).map_err(|e| format!("read host vault: {e}"))?;
+        let raw = retry_sharing_violation(|| fs::read_to_string(path))
+            .map_err(|e| format!("read host vault: {e}"))?;
         if raw.trim().is_empty() {
             Map::new()
         } else {
@@ -334,7 +365,7 @@ pub(crate) fn write_host_vault_secrets_at(path: &Path, pairs: &[(&str, &str)]) -
         return Err(err);
     }
 
-    if let Err(err) = fs::rename(&tmp, path) {
+    if let Err(err) = retry_sharing_violation(|| fs::rename(&tmp, path)) {
         let _ = fs::remove_file(&tmp);
         return Err(format!("rename host vault: {err}"));
     }

@@ -474,6 +474,17 @@ export function App() {
         } catch (e) {
           console.error("autostart toggle failed", e);
         }
+        // The bind host only applies at spawn — a hub_mode flip without a
+        // restart silently keeps the old 127.0.0.1/0.0.0.0 binding.
+        if (next.hub_mode !== settings.hub_mode) {
+          void api.serveRestart(next.hub_mode).then(() =>
+            activeInstance
+              ? api.getGatewayStatus(activeInstance).then((st) =>
+                  inst.setHerd((prev) => ({ ...prev, [activeInstance.id]: st }))
+                )
+              : undefined
+          );
+        }
       }
       setSettingsOpen(false);
     } catch (e) {
@@ -1025,6 +1036,7 @@ export function App() {
           onSave={handleSaveSettings}
           onAddInstance={() => setIsNewModalOpen(true)}
           onEditInstance={(i) => setInstanceSheetInst(i)}
+          onInstancesChanged={() => void inst.refreshInstances()}
         />
       )}
       {manageOpen && activeInstance && (
