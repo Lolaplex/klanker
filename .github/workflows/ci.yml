@@ -32,7 +32,11 @@ jobs:
           # Stacked-suite pins: this branch ships against unreleased legs of
           # its sibling repos. dev-suite.py honours <NAME>_REF first; the
           # head-ref guard makes the pins self-expire once merged to dev.
-          if [ "${GITHUB_HEAD_REF:-}" = "feat/ws-share-acl" ]; then
+          # The BASE_REF arm covers PRs stacked on top of feat/ws-share-acl
+          # (e.g. fix/windows-test-robustness) — their own head ref never
+          # exists in the siblings, so without it they resolve to dev.
+          if [ "${GITHUB_HEAD_REF:-}" = "feat/ws-share-acl" ] || \
+             [ "${GITHUB_BASE_REF:-}" = "feat/ws-share-acl" ]; then
             export AGENTS_STORE_REF=feat/store-migration-scrub-hlc
             export AGENTS_WORKSPACE_REF=feat/failclosed-policy-identity-secrets
             export AGENTS_RELAY_REF=feat/store-projection-readers
