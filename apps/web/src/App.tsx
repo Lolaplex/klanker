@@ -45,7 +45,7 @@ import { useChatSync } from "./hooks/useChatSync";
 import { useApprovals } from "./hooks/useApprovals";
 import { useRelayCompat } from "./hooks/useRelayCompat";
 
-const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false };
+const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false, hub_mode: false };
 
 function loadedSettings(loaded: DesktopSettings): DesktopSettings {
   return { ...DEFAULT_SETTINGS, ...loaded };
@@ -424,7 +424,7 @@ export function App() {
       // against its spawn-time token and would 401 forever otherwise.
       const staleAuth = inst.herd[saved.id]?.detail === "unauthorized";
       if (saved.kind === "local" && caps.spawn && saved.secret && (saved.secret !== prevSecret || staleAuth)) {
-        void api.serveRestart(saved.workspace || undefined).then(() =>
+        void api.serveRestart(settingsRef.current.hub_mode).then(() =>
           api.getGatewayStatus(saved).then((st) =>
             inst.setHerd((prev) => ({ ...prev, [saved.id]: st }))
           )
@@ -466,6 +466,7 @@ export function App() {
         ...current,
         workspace: next.workspace.trim(),
         autostart: next.autostart,
+        hub_mode: next.hub_mode,
       }));
       if (caps.spawn) {
         try {

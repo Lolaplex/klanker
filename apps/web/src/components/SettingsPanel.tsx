@@ -190,15 +190,30 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
           {desktop && (
             <div>
               <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Desktop</div>
-              <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={draft.autostart}
-                  onChange={(e) => setDraft({ ...draft, autostart: e.target.checked })}
-                  className="accent-white"
-                />
-                Launch klanker on login
-              </label>
+              <div className="space-y-1">
+                <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={draft.autostart}
+                    onChange={(e) => setDraft({ ...draft, autostart: e.target.checked })}
+                    className="accent-white"
+                  />
+                  Launch klanker on login
+                </label>
+                <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={!!draft.hub_mode}
+                    onChange={(e) => setDraft({ ...draft, hub_mode: e.target.checked })}
+                    className="accent-white"
+                  />
+                  Hub mode — serve on LAN (0.0.0.0) not loopback
+                </label>
+                <p className="text-[10px] text-[#525252]">
+                  On: the local serve binds 0.0.0.0 so tailnet/LAN peers can reach the hub. Off: 127.0.0.1 only.
+                  Applies to the next spawn/restart.
+                </p>
+              </div>
             </div>
           )}
 

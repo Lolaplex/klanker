@@ -41,6 +41,8 @@ export interface DesktopSettings {
   workspace: string;
   /** Launch the desktop app on OS login (tauri-plugin-autostart). */
   autostart: boolean;
+  /** Bind the managed serve on 0.0.0.0 (LAN hub) instead of 127.0.0.1. */
+  hub_mode: boolean;
 }
 
 export interface KlankerInstance {
@@ -58,8 +60,12 @@ export interface KlankerInstance {
   sensors?: Record<string, boolean>;
   kind: InstanceKind;
   /** "relay" = mounted through the serving relay's /v1/remote/<id> proxy —
-   *  the remote secret lives server-side, never in the client. */
-  via?: "relay";
+   *  the remote secret lives server-side, never in the client.
+   *  "channel" = hub-paired device row (dev-<device_id>) proxied over the
+   *  live hub channel — removal revokes the device, not a remotes row. */
+  via?: "relay" | "channel";
+  /** Paired device id on via="channel" rows (remote id is `dev-<id>`). */
+  device_id?: string;
   endpoint?: InstanceEndpoint;
   tailscale?: InstanceTailscale;
   created_at: string;
@@ -114,6 +120,9 @@ export interface DiscoveredPeer {
   ip: string;
   fqdn?: string;
   endpoint: string;
+  /** From GET /health — hub-connect suggestion inputs (host_id + url). */
+  host_id?: string;
+  version?: string;
 }
 
 export interface PendingApproval {
@@ -173,4 +182,112 @@ export interface RelayCapabilities {
   store: boolean;
   voice: boolean;
   caldav: boolean;
+}
+
+// --- hub links / paired devices / ws-share (agents-relay#43) -------------
+
+/** GET /v1/hub/links row: a live paired-hub link on THIS relay (spoke side). */
+export interface HubLink {
+  hub_id: string;
+  hub_url: string;
+  device_id: string;
+  label: string;
+  connected_at: number;
+  connected: boolean;
+}
+
+/** POST /v1/hub/connect result (200); failures throw with the relay error. */
+export interface HubConnectResult {
+  ok: boolean;
+  hub_id?: string;
+  device_id?: string;
+  connected?: boolean;
+  error?: string;
+}
+
+/** GET /v1/hub/devices row: a device paired with THIS relay (hub side). */
+export interface HubDevice {
+  id: string;
+  label: string;
+  host_id: string;
+  role: string;
+  created_at: number;
+  last_seen: number;
+  has_token: boolean;
+  connected: boolean;
+}
+
+/** GET /v1/hub/leases row: active (ws, session) execution lease. */
+export interface HubLease {
+  ws: string;
+  session: string;
+  holder: string;
+  run_id: string;
+  fence: number;
+  expires_in: number;
+}
+
+/** POST /v1/ws/invite result — single-use pair+grant code. */
+export interface WsInvite {
+  ok?: boolean;
+  mode?: string;
+  code: string;
+  token: string;
+  pair_url: string;
+  expires_in: number;
+  expires_at: number;
+  host_id: string;
+  ws?: string;
+  granted_by?: string;
+}
+
+/** Ownership/share keys of PATCH /v1/workspaces/<id> (admin-only). */
+export interface WorkspacePolicyPatch {
+  sync_policy?: "local" | "synced" | "shared" | string;
+  sync_hosts?: string[];
+  default_host?: string | null;
+  repos?: Record<string, unknown>;
+  execution?: Record<string, unknown>;
+}
+
+/** GET /v1/workspaces/<ws>/hosts payload. */
+export interface WorkspaceHosts {
+  workspace: string;
+  sync_policy: string;
+  owner: string;
+  default_host: string;
+  hub_offline: boolean;
+  hosts: WorkspaceHost[];
+}
+
+export interface WorkspaceHost {
+  device_id: string;
+  label: string;
+  role: string;
+  self: boolean;
+  online: boolean;
+  via: string;
+  last_seen: number;
+  status: string;
+  leases: WorkspaceHostLease[];
+}
+
+export interface WorkspaceHostLease {
+  session: string;
+  run_id: string;
+  fence: number;
+  expires_in: number;
+}
+
+/** POST /v1/workspaces/<ws>/sessions/<sid>/host payload — returned parsed
+ *  (never thrown) so 409 lease conflicts surface `holder` to the caller. */
+export interface SessionHostSwitch {
+  ok?: boolean;
+  session?: string;
+  host?: string;
+  unchanged?: boolean;
+  checkpoint?: Record<string, unknown>;
+  holder?: string;
+  error?: string;
+  status?: number;
 }
