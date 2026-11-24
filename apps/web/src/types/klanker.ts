@@ -138,6 +138,10 @@ export interface WorkspaceRow {
   workdir_lock?: boolean;
   browser_profile?: string;
   approval_mode?: "off" | "ask" | "strict" | string;
+  // Ownership/sync policy — present on relays that serve the full
+  // workspace row; absent on older ones (missing reads local).
+  sync_policy?: string;
+  sync_hosts?: string[];
 }
 
 /** Relay session/trace event (`GET .../sessions/<id>` → events[]).

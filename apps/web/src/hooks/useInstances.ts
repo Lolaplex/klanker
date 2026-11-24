@@ -111,7 +111,16 @@ export function useInstances(args: {
     void (async () => {
       try {
         // Runtime global only — no @tauri-apps dependency, PWA-safe.
-        const listen = (window as any).__TAURI__?.event?.listen;
+        const listen = (window as {
+          __TAURI__?: {
+            event?: {
+              listen?: (
+                name: string,
+                cb: (ev: { payload?: { port?: number; pid?: number; state?: string } }) => void
+              ) => Promise<() => void>;
+            };
+          };
+        }).__TAURI__?.event?.listen;
         if (typeof listen !== "function") return;
         unlisten = await listen(
           "klanker:serve-state",
