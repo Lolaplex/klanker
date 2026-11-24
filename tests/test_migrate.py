@@ -20,6 +20,16 @@ def _view(store, e):
     return store.view(e)
 
 
+
+def _can_symlink(tmp_path):
+    probe = tmp_path / ".symlink-probe"
+    try:
+        probe.symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        return False
+    probe.unlink()
+    return True
+
 def test_persona_import(tmp_path):
     ws = _ws(tmp_path)
     (ws / "personas" / "coder" / "persona.json").write_text(json.dumps(
@@ -269,6 +279,8 @@ def test_memory_nested_md_and_yaml_read_and_scrubbed(tmp_path):
 
 
 def test_memory_symlinks_and_dotdirs_skipped(tmp_path):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
     ws = _ws(tmp_path)
     outside = tmp_path / "outside.md"
     outside.write_text("# outside")
@@ -397,6 +409,7 @@ def test_cli_warns_sources_keep_raw_tokens(tmp_path, monkeypatch, capsys):
     from klanker import updates
     monkeypatch.setattr(updates, "check_for_updates", lambda *a, **k: None)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
     monkeypatch.setattr(agents_workspace.Workspace, "from_env",
                         classmethod(lambda cls: _WS()))
@@ -449,6 +462,7 @@ def _cli_env(tmp_path, monkeypatch, ws):
 
     monkeypatch.setattr(updates, "check_for_updates", lambda *a, **k: None)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
     monkeypatch.setattr(agents_workspace.Workspace, "from_env",
                         classmethod(lambda cls: _WS()))

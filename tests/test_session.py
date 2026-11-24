@@ -24,6 +24,16 @@ def _git(repo, *args):
                           capture_output=True, text=True, check=True)
 
 
+
+def _can_symlink(tmp_path):
+    probe = tmp_path / ".symlink-probe"
+    try:
+        probe.symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        return False
+    probe.unlink()
+    return True
+
 @pytest.fixture
 def repo(tmp_path):
     r = tmp_path / "repo"
@@ -216,6 +226,8 @@ def test_checkpoint_and_switch_refuse_invalid_id(conn, repo):
 
 
 def test_symlinked_repo_dir_under_root_refused(repo, tmp_path):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
     outside = tmp_path / "outside"
     outside.mkdir()
     probe = worktree_path(repo, "sessaaaa")
@@ -227,6 +239,8 @@ def test_symlinked_repo_dir_under_root_refused(repo, tmp_path):
 
 
 def test_symlinked_session_dir_refused(repo, tmp_path):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
     outside = tmp_path / "outside2"
     outside.mkdir()
     probe = worktree_path(repo, "sessbbbb")
@@ -238,6 +252,8 @@ def test_symlinked_session_dir_refused(repo, tmp_path):
 
 
 def test_symlinked_root_is_resolved_and_allowed(repo, tmp_path, monkeypatch):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
     real = tmp_path / "realroot"
     real.mkdir()
     link = tmp_path / "linkroot"
@@ -321,6 +337,9 @@ def test_link_swapped_during_worktree_add_is_undone(repo, tmp_path,
     outside = tmp_path / "outside-swap"
     outside.mkdir()
     real_git = session_mod._git
+
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
 
     def racing_git(r, *args, **kw):
         if args[:2] == ("worktree", "add"):
