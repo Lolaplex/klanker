@@ -129,6 +129,9 @@ export interface PendingApproval {
   id: string;
   tool: string;
   summary: string;
+  /** Owning workspace when the relay serves it (remote asks mirror into
+   *  the same /v1/approvals feed — klanker#148/#152). */
+  workspace?: string;
 }
 
 export interface WorkspaceRow {

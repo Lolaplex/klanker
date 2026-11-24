@@ -34,6 +34,16 @@ import {
   sendHeld,
 } from "./chatBuckets";
 import { reconcileChat } from "./chatSync";
+import {
+  applyPresence,
+  checkpointBranch,
+  hostBinding,
+  hostEventEffect,
+  hostLabelFor,
+  hostPickerRows,
+  providerScope,
+  runHostSwitch,
+} from "./hostPicker";
 import { Kicker, runResumableTurn } from "./turnStream";
 import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
@@ -99,6 +109,9 @@ export function App() {
   const [voiceSupported, setVoiceSupported] = useState(false);
   const [storeRev, setStoreRev] = useState(0);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
+  // Per-chat host switch (klanker#152): in-flight flag + result note.
+  const [hostSwitching, setHostSwitching] = useState(false);
+  const [hostNote, setHostNote] = useState<string | null>(null);
 
   const { kbBox, idleH } = useKeyboardViewport();
 
@@ -320,6 +333,42 @@ export function App() {
     setStreamStatus,
   });
 
+  // --- per-chat host (klanker#152) ----------------------------------------
+  // Member devices + presence + leases for the open workspace — the same
+  // /v1/workspaces/<ws>/hosts payload the sidebar badges use.
+  const wsHosts = selWs ? tree.wsHostsOf(selWs) : undefined;
+  // Bound host for the open chat: the server session row wins; the chat's
+  // remembered pick covers drafts and sessions the relay never listed.
+  const sessionBoundHost = (() => {
+    const sess = openChat?.session || "";
+    const server = sess
+      ? tree.serverSessions[selKey]?.find((s) => s.id === sess)?.host
+      : undefined;
+    return server ?? openChat?.host ?? "";
+  })();
+  // A live turn or an active (ws, session) lease locks the picker.
+  const chatHostBinding = hostBinding({
+    sessionHost: sessionBoundHost,
+    session: openChat?.session || "",
+    hosts: wsHosts,
+    running: isLoadingTurn || sendHold || remoteActive,
+  });
+  // Provider manifest follows the effective execution host — remote member
+  // hosts are read over the /v1/remote/dev-<id> mount, never mixed.
+  const chatProviderScope = providerScope(chatHostBinding.host, wsHosts);
+  const providerScopeKey =
+    chatProviderScope.kind === "remote" ? chatProviderScope.mountId : "local";
+  const providersDisabled =
+    chatProviderScope.kind === "remote" && !chatProviderScope.online;
+  const chatProviderScopeRef = useRef(chatProviderScope);
+  chatProviderScopeRef.current = chatProviderScope;
+  // A pending ask on a remote-bound turn is a mirrored remote approval —
+  // the banner names the host the user is deciding for.
+  const remoteApprovalLabel =
+    approvals.pending && chatProviderScope.kind === "remote"
+      ? hostLabelFor(wsHosts, chatProviderScope.deviceId)
+      : null;
+
   useRelayEvents({
     activeInstance,
     status: herdStatus,
@@ -339,6 +388,59 @@ export function App() {
         approvals.refresh();
       } else if (ev.kind === "store.changed") {
         setStoreRev((n) => n + 1);
+      } else {
+        // Host/presence surface: device.* badges, member joins, lease locks,
+        // session:host rebinds (klanker#152).
+        const eff = hostEventEffect(ev);
+        if (!eff) return;
+        if (eff.presence) {
+          const presence = eff.presence;
+          tree.setWsHosts((prev) => {
+            let touched = false;
+            const next = { ...prev };
+            for (const k of Object.keys(next)) {
+              const payload = next[k];
+              if (!payload?.hosts?.some((h) => h.device_id === presence.deviceId)) continue;
+              next[k] = applyPresence(payload, presence.deviceId, presence.online);
+              touched = true;
+            }
+            return touched ? next : prev;
+          });
+          // Presence flip on the chat's provider host → re-resolve rows
+          // (offline host falls back to its cached manifest).
+          const scope = chatProviderScopeRef.current;
+          if (scope.kind === "remote" && scope.deviceId === presence.deviceId) {
+            refreshProviders();
+          }
+        }
+        if (eff.sessionBound) {
+          const b = eff.sessionBound;
+          tree.setServerSessions((prev) => {
+            const next = { ...prev };
+            for (const k of Object.keys(next)) {
+              if (!k.startsWith(`${b.ws} `)) continue;
+              next[k] = next[k].map((s) => (s.id === b.session ? { ...s, host: b.host } : s));
+            }
+            return next;
+          });
+          setChats((prev) => {
+            let touched = false;
+            const next = { ...prev };
+            for (const k of Object.keys(next)) {
+              if (!k.startsWith(`${b.ws} `)) continue;
+              const bucket = next[k];
+              const items = bucket.items.map((i) => (i.session === b.session ? { ...i, host: b.host } : i));
+              if (items.some((it, idx) => it !== bucket.items[idx])) {
+                next[k] = { ...bucket, items };
+                touched = true;
+              }
+            }
+            return touched ? next : prev;
+          });
+          refreshProviders();
+        }
+        if (eff.refreshAll) tree.refreshHosts();
+        for (const ws of eff.refreshHosts) tree.refreshHosts(ws);
       }
     },
   });
@@ -476,15 +578,27 @@ export function App() {
   };
 
   // Provider rows (incl. acp.* agents + models) + host-side favorites for
-  // the unified picker. Stale rows keep an offline host pickable.
+  // the unified picker — scoped to the chat's execution host: a remote
+  // bound member reads its own manifest over the relay mount, self/local
+  // reads the serving relay's (klanker#152). Stale rows keep an offline
+  // host pickable.
   const refreshProviders = useCallback(() => {
     const inst = activeInstance;
     if (!inst) return;
-    void api.listProviders(inst).then((r) => {
-      setChatProviders(r.rows);
-      setProvidersStale(r.stale);
-    });
+    const scope = chatProviderScopeRef.current;
+    if (scope.kind === "remote") {
+      void api.listRemoteProviders(scope.deviceId).then((r) => {
+        setChatProviders(r.rows);
+        setProvidersStale(r.stale);
+      });
+    } else {
+      void api.listProviders(inst).then((r) => {
+        setChatProviders(r.rows);
+        setProvidersStale(r.stale);
+      });
+    }
     void api.listFavorites(inst).then(setChatFavorites);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInstance?.id]);
 
   useEffect(() => {
@@ -493,7 +607,7 @@ export function App() {
     setProvidersStale(false);
     refreshProviders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeInstance?.id]);
+  }, [activeInstance?.id, providerScopeKey]);
 
   const handleSaveSettings = async (next: DesktopSettings) => {
     try {
@@ -576,6 +690,58 @@ export function App() {
     if (!busy) return;
     const inst0 = inst.instancesRef.current.find((i) => i.id === busy.instanceId);
     if (inst0) void api.stopRun(inst0, busy.run).catch(() => undefined);
+  };
+
+  // Per-chat host switch (klanker#152): checkpoint → rebind via
+  // POST /v1/workspaces/<ws>/sessions/<sid>/host. A 409 wip_unpushed or
+  // host_offline-under-failover-none conflict gates the retry behind an
+  // explicit confirm — force:true is never sent unprompted.
+  const handleSwitchHost = async (deviceId: string) => {
+    const ws = selWs;
+    const chat = openChat;
+    if (!ws || !chat || hostSwitching) return;
+    if (chatHostBinding.kind === "locked") return;
+    // Draft chat: mint the session now so the bind has a server-side
+    // target — the first send then rides the freshly bound host. The item
+    // leaves draft state so normBucket keeps the session on reload.
+    let session = chat.session;
+    if (!session) {
+      session = mintSessionId();
+      setChats((prev) =>
+        mapChat(prev, selKey, chat.id, (item) => ({ ...item, session, draft: false }))
+      );
+    }
+    const label = hostLabelFor(wsHosts, deviceId);
+    setHostSwitching(true);
+    setHostNote(`checkpoint → ${checkpointBranch(session)}`);
+    try {
+      const out = await runHostSwitch({
+        ws,
+        session,
+        host: deviceId,
+        hostLabel: label,
+        post: (w, s, h, f) => api.switchSessionHost(w, s, h, f),
+        confirm: (msg) => dialogs.confirm(msg, { danger: true }),
+      });
+      setHostNote(out.note);
+      const note = out.note;
+      window.setTimeout(() => setHostNote((cur) => (cur === note ? null : cur)), 10_000);
+      if (out.switched && !out.unchanged) {
+        // Optimistic mirror; session.bound + the hosts refresh confirm it.
+        setChats((prev) => mapChat(prev, selKey, chat.id, (item) => ({ ...item, host: deviceId })));
+        tree.setServerSessions((prev) => ({
+          ...prev,
+          [selKey]: (prev[selKey] || []).map((s) => (s.id === session ? { ...s, host: deviceId } : s)),
+        }));
+        tree.refreshHosts(ws);
+      }
+    } catch (e) {
+      const note = `host switch failed: ${e instanceof Error ? e.message : e}`;
+      setHostNote(note);
+      window.setTimeout(() => setHostNote((cur) => (cur === note ? null : cur)), 10_000);
+    } finally {
+      setHostSwitching(false);
+    }
   };
 
   const handleSendMessage = async (text: string, attachments?: { data: string; mime?: string; name?: string }[]) => {
@@ -1021,6 +1187,19 @@ export function App() {
                     pick={chatPicks[selKey]}
                     favorites={chatFavorites}
                     providersStale={providersStale}
+                    providersDisabled={providersDisabled}
+                    host={
+                      wsHosts
+                        ? {
+                            rows: hostPickerRows(wsHosts),
+                            binding: chatHostBinding,
+                            switching: hostSwitching,
+                            note: hostNote,
+                            onSwitch: (id) => void handleSwitchHost(id),
+                          }
+                        : null
+                    }
+                    remoteApprovalLabel={remoteApprovalLabel}
                     onStar={(p, star) => {
                       if (activeInstance) {
                         void api

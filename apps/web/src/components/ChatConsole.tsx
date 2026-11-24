@@ -6,6 +6,8 @@ import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow }
 import { CopyButton } from "./CopyButton";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { HostPicker } from "./HostPicker";
+import type { HostBinding, HostRow } from "../hostPicker";
 
 export interface OutAttachment {
   data: string;
@@ -41,6 +43,19 @@ interface ChatConsoleProps {
   onStar?: (p: ModelPick, star: boolean) => void;
   /** Provider rows came from the offline cache. */
   providersStale?: boolean;
+  /** Bound host offline — picker stays read-only on cached rows. */
+  providersDisabled?: boolean;
+  /** Per-chat host picker state (klanker#152); null hides the chip. */
+  host?: {
+    rows: HostRow[];
+    binding: HostBinding;
+    switching: boolean;
+    note: string | null;
+    onSwitch: (deviceId: string) => void;
+  } | null;
+  /** Label of the remote host whose turn paused for this approval —
+   *  renders the remote banner variant inside the approval card. */
+  remoteApprovalLabel?: string | null;
   pending: PendingApproval | null;
   deciding: boolean;
   decideError: string | null;
@@ -67,6 +82,9 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   favorites = [],
   onStar,
   providersStale = false,
+  providersDisabled = false,
+  host = null,
+  remoteApprovalLabel = null,
   pending,
   deciding,
   decideError,
@@ -219,11 +237,21 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               <option value="json">.json</option>
             </select>
           )}
+          {host && (
+            <HostPicker
+              rows={host.rows}
+              binding={host.binding}
+              switching={host.switching}
+              note={host.note}
+              onSwitch={host.onSwitch}
+            />
+          )}
           {onPick && (
             <ProviderModelPicker
               providers={providers}
               favorites={favorites}
               stale={providersStale}
+              disabled={providersDisabled}
               pick={pick ?? { provider: "", model: "" }}
               onPick={onPick}
               onStar={(p, star) => onStar?.(p, star)}
@@ -252,7 +280,12 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
       {pending && (
         <div className="mx-3 mt-3 border border-[#262626] bg-[#0a0a0a] rounded p-3">
-          <div className="text-[10px] uppercase tracking-wider text-[#737373]">Approval</div>
+          <div className="text-[10px] uppercase tracking-wider text-[#737373]">
+            Approval
+            {remoteApprovalLabel && (
+              <span className="normal-case"> · remote turn on {remoteApprovalLabel} paused — decide here to resume</span>
+            )}
+          </div>
           <div className="mt-1 text-white whitespace-pre-wrap break-words select-text">
             {pending.summary || pending.tool}
           </div>

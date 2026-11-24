@@ -49,6 +49,7 @@ export function useSidebarTree(args: {
   refreshWorkspaces: () => void;
   refreshPersonas: (ws?: string) => void;
   refreshSessions: (ws?: string, persona?: string) => void;
+  refreshHosts: (ws?: string) => void;
   wsHostsOf: (ws: string) => WorkspaceHosts | undefined;
   personasOf: (ws: string) => PersonaRow[] | undefined;
   sessionRowsOf: (ws: string, persona: string) => SessionRow[] | undefined;
@@ -318,6 +319,19 @@ export function useSidebarTree(args: {
     }
   };
 
+  // Live member presence + leases (klanker#152): SSE device/lease/ws
+  // events re-pull the affected ws payloads — or every loaded one when
+  // the event carries no workspace scope (device.connected has none).
+  const refreshHosts = (wsId?: string) => {
+    const targets = wsId ? [wsId] : Object.keys(wsHostsRef.current);
+    for (const ws of targets) {
+      void api
+        .fetchWorkspaceHosts(ws)
+        .then((h) => setWsHosts((prev) => ({ ...prev, [ws]: h })))
+        .catch(() => {});
+    }
+  };
+
   return {
     workspaces,
     setWorkspaces,
@@ -334,6 +348,7 @@ export function useSidebarTree(args: {
     refreshWorkspaces,
     refreshPersonas,
     refreshSessions,
+    refreshHosts,
     wsHostsOf,
     personasOf,
     sessionRowsOf,

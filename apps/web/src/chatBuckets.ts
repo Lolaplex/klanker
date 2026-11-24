@@ -8,6 +8,9 @@ export interface DeskChat {
   draft?: boolean;
   /** Persisted composer text (survives chat switches and reloads). */
   input?: string;
+  /** Last known session:host binding (klanker#152) — server session rows
+   *  win when present; this covers drafts the server never listed. */
+  host?: string;
 }
 
 export interface ChatBucket {

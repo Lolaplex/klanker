@@ -30,6 +30,7 @@ import type {
   WsInvite,
 } from "../types/klanker";
 import { parseSseChunk, parseStoreListResponse } from "../relayEvents.ts";
+import { remoteMountId } from "../hostPicker.ts";
 
 const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false, hub_mode: false };
 
@@ -939,6 +940,57 @@ export const api = {
   cachedProviders(inst: KlankerInstance): ProviderRow[] {
     try {
       const raw = localStorage.getItem(`klanker.providers.${inst.id}`);
+      const list = raw ? (JSON.parse(raw) as ProviderRow[]) : [];
+      return Array.isArray(list) ? list.filter((p) => p && p.name) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  /** GET /v1/remote/dev-<id>/v1/providers through the local relay's mount
+   *  (klanker#152): the provider manifest of a ws member host for the
+   *  host-scoped chat picker — never proxied into a different host's chat.
+   *  Successful fetches cache per mount id so an offline member still
+   *  shows its last rows (marked stale); a member that never answered
+   *  yields empty rows. */
+  async listRemoteProviders(deviceId: string): Promise<{ rows: ProviderRow[]; stale: boolean }> {
+    const mount = remoteMountId(deviceId);
+    const cacheKey = `klanker.providers.${mount}`;
+    try {
+      const r = await localRelayJson<{ providers?: any[] }>(
+        `/v1/remote/${encodeURIComponent(mount)}/v1/providers`
+      );
+      const rows = (r.providers || [])
+        .map((p) => ({
+          name: String(p.name || ""),
+          kind: p.kind,
+          model: p.model,
+          when: p.when,
+          models: Array.isArray(p.models)
+            ? p.models.filter((m: unknown) => typeof m === "string" && m)
+            : undefined,
+          modes: Array.isArray(p.modes) ? p.modes : undefined,
+          source: p.source,
+          configurable: p.configurable,
+          command: p.command,
+          error: p.error,
+        }))
+        .filter((p) => p.name);
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(rows));
+      } catch {}
+      return { rows, stale: false };
+    } catch {
+      const cached = this.cachedHostProviders(deviceId);
+      return { rows: cached, stale: cached.length > 0 };
+    }
+  },
+
+  /** Last fetched provider rows for a remote member host (dev-<id> mount
+   *  cache); [] when never seen. */
+  cachedHostProviders(deviceId: string): ProviderRow[] {
+    try {
+      const raw = localStorage.getItem(`klanker.providers.${remoteMountId(deviceId)}`);
       const list = raw ? (JSON.parse(raw) as ProviderRow[]) : [];
       return Array.isArray(list) ? list.filter((p) => p && p.name) : [];
     } catch {
