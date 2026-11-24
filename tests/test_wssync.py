@@ -438,7 +438,9 @@ def test_tick_projects_once_per_ws_dir_and_drains(tmp_path):
     n = w1.conn.execute(
         "SELECT COUNT(*) FROM tx WHERE origin_actor = 'proj@nodeA:s1'"
     ).fetchone()[0]
-    assert n == 1
+    # tx 1: msg datoms; tx 2: session:title/last_active refresh — both
+    # exactly once across both workers on the same ws_dir
+    assert n == 2
     assert ("dev1", "op") in sent and ("dev2", "op") in sent
     w1.conn.close(); w2.conn.close()
 

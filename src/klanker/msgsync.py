@@ -37,6 +37,9 @@ MSG_ATTRS = {
     "msg:text": ("text", "one"),
     "msg:ts": ("instant", "one"),
     "msg:host": ("text", "one"),
+    "msg:persona": ("text", "one"),
+    "msg:user": ("text", "one"),
+    "msg:frame_id": ("text", "one"),
     "msg:deleted": ("bool", "one"),
     # session binding state (klanker#136) -- slow fields only; the run
     # lock itself lives in hub leases, never in the log.
@@ -44,6 +47,20 @@ MSG_ATTRS = {
     "session:branch": ("text", "one"),
     "session:repo": ("text", "one"),
     "session:wip_unpushed": ("bool", "one"),
+    # projection-maintained summary: title = earliest live user message,
+    # last_active = newest live message ts (maintained by _refresh_session).
+    "session:title": ("text", "one"),
+    "session:last_active": ("instant", "one"),
+    # coverage frames (/undo /retry /compress): a frame entity marks every
+    # msg in its summarized_from span deleted and retires covered frames,
+    # so undone/superseded turns never resurrect on a synced peer.
+    "frame:session": ("text", "one"),
+    "frame:kind": ("text", "one"),
+    "frame:first_ts": ("instant", "one"),
+    "frame:last_ts": ("instant", "one"),
+    "frame:ts": ("instant", "one"),
+    "frame:host": ("text", "one"),
+    "frame:retired": ("bool", "one"),
 }
 
 PROJ_ROLES = ("user", "assistant", "system")
@@ -132,6 +149,56 @@ def _ms(ts: str) -> int:
         return 0
 
 
+def _proj_hlc(ts: str) -> str:
+    """Deterministic ord for a projected datom: the event's own clock."""
+    ms = _ms(ts)
+    return f"{ms:013d}.00000.proj" if ms else "0000000000000.00000.proj"
+
+
+def _node_part(node: str) -> str:
+    try:
+        from agents_store.hlc import normalize_node_id
+
+        return normalize_node_id(node)
+    except Exception:  # noqa: BLE001 - older agents-store without hlc module
+        import re
+
+        return re.sub(r"[^A-Za-z0-9_-]", "_", node or "proj")[:32] or "proj"
+
+
+def _fresh_ord(conn, node: str) -> str:
+    """Ord strictly above every datom already in the store.
+
+    Deletion marks and session:* maintenance are rewrites relative to the
+    projected event stream, so they need a live clock (not a ts-derived
+    ord) to win v_current's max-ord rule on every host, replay included.
+    """
+    import time
+
+    ms = int(time.time() * 1000)
+    row = conn.execute("SELECT MAX(ord) FROM datom").fetchone()
+    head = str(row[0]).split(".", 1)[0] if row and row[0] else ""
+    if head.isdigit():
+        ms = max(ms, int(head) + 1)
+    return f"{ms:013d}.00000.{_node_part(node)}"
+
+
+def _redact_local_paths(text: str, ws_dir) -> str:
+    """Host-local absolute paths mean nothing on a peer -- strip them from
+    the synced body before it lands in store.db."""
+    roots = {str(Path.home())}
+    for raw in (os.environ.get("AGENTS_HOST_DIR") or "",
+                str(ws_dir) if ws_dir else ""):
+        if raw:
+            roots.add(raw)
+    for root in sorted((r for r in roots if len(r) > 3), key=len,
+                       reverse=True):
+        text = text.replace(root, "~")
+        if os.sep != "/":
+            text = text.replace(root.replace(os.sep, "/"), "~")
+    return text
+
+
 def message_key(ts: str, role: str, body: str) -> str:
     h = hashlib.sha256(f"{ts}\x1f{role}\x1f{body}".encode("utf-8"))
     return h.hexdigest()[:20]
@@ -139,6 +206,21 @@ def message_key(ts: str, role: str, body: str) -> str:
 
 def message_entity(session_id: str, ts: str, role: str, body: str) -> str:
     return f"msg:{session_id}:{message_key(ts, role, body)}"
+
+
+def _frame_key(ev, first_ts: str, last_ts: str, kind: str,
+               content: str) -> str:
+    raw = "\x1f".join(
+        [str(getattr(ev, "ts", "") or ""), kind, first_ts, last_ts, content])
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+
+def _frame_bounds(meta: dict) -> tuple[str, str]:
+    span = meta.get("summarized_from") or {}
+    if isinstance(span, dict):
+        return (str(span.get("first_ts") or ""),
+                str(span.get("last_ts") or ""))
+    return "", ""
 
 
 def _body(ev, traces_dir) -> str:
@@ -157,9 +239,156 @@ def _body(ev, traces_dir) -> str:
     return body
 
 
+def _session_entities(conn, session_id: str, attr: str) -> list[str]:
+    return [r[0] for r in conn.execute(
+        "SELECT e FROM v_current WHERE a = ? AND v = ?",
+        (attr, session_id))]
+
+
+def _retired_frames(conn, session_id: str) -> set[str]:
+    return {r[0] for r in conn.execute(
+        "SELECT r.e FROM v_current r JOIN v_current s ON s.e = r.e"
+        " WHERE r.a = 'frame:retired' AND r.v = 'true'"
+        " AND s.a = 'frame:session' AND s.v = ?", (session_id,))}
+
+
+def _entity_ord(conn, entities: list[str]) -> dict[str, str]:
+    if not entities:
+        return {}
+    marks = ",".join("?" for _ in entities)
+    return {e: o for e, o in conn.execute(
+        f"SELECT e, MAX(ord) FROM datom WHERE e IN ({marks}) GROUP BY e",
+        entities)}
+
+
+def _live_msgs(conn, session_id: str) -> list[dict]:
+    """msg:* entities of a session minus deleted/superseded ones."""
+    rows: dict[str, dict] = {}
+    for e, a, v in conn.execute(
+            "SELECT e, a, v FROM v_current WHERE e IN ("
+            " SELECT e FROM v_current WHERE a = 'msg:session' AND v = ?)",
+            (session_id,)):
+        rows.setdefault(e, {"e": e})[a.split(":", 1)[1]] = v
+    retired = _retired_frames(conn, session_id)
+    live = [r for r in rows.values()
+            if r.get("deleted") != "true"
+            and str(r.get("frame_id") or "") not in retired]
+    ords = _entity_ord(conn, [r["e"] for r in live])
+    for r in live:
+        r["ord"] = ords.get(r["e"], "")
+    return sorted(live, key=lambda r: (r.get("ts") or "",
+                                       r.get("ord") or "", r["e"]))
+
+
+def _refresh_session(conn, session_id: str, node: str) -> None:
+    """Maintain session:title / session:last_active from live msg:* rows.
+
+    Card-one LWW keeps the newest ord, so a change rewrites both attrs in
+    one tx at a fresh ord -- retracts stale values, asserts the wanted
+    ones. No-op when the stored view already matches; converges under
+    cross-host op replay because every host recomputes the same wanted.
+    """
+    live = _live_msgs(conn, session_id)
+    e = f"session:{session_id}"
+    title = next(
+        (str(r.get("text") or "")[:160] for r in live
+         if r.get("role") == "user" and str(r.get("text") or "").strip()),
+        "")
+    last_active = live[-1].get("ts") if live else ""
+    want = {"session:title": title or None,
+            "session:last_active": str(last_active or "") or None}
+    cur = {a: v for a, v in conn.execute(
+        "SELECT a, v FROM v_current WHERE e = ?"
+        " AND a IN ('session:title', 'session:last_active')", (e,))}
+    datoms: list[tuple] = []
+    for a, wanted in want.items():
+        have = cur.get(a)
+        if have == wanted or (have is None and wanted is None):
+            continue
+        if have is not None:
+            datoms.append((e, a, have, False))
+        if wanted is not None:
+            datoms.append((e, a, wanted, True))
+    if not datoms:
+        return
+    origin = actor("proj", node, session_id)
+    ingest(conn, origin, next_seq(conn, origin), _fresh_ord(conn, node),
+           datoms)
+
+
+def project_frame(conn, node: str, ev, *, traces_dir=None) -> str:
+    """Project one trace ``frame`` event (coverage tombstone + summary).
+
+    The frame entity itself is content-addressed like msg:*; every msg in
+    its ``summarized_from`` span is marked ``msg:deleted`` + ``msg:frame_id``
+    at the frame's ord, and covered frames are retired. A non-empty
+    ``content`` (compaction summary) lands as a live system msg whose
+    ``msg:frame_id`` retires it with the frame.
+    """
+    session_id = str(getattr(ev, "session", "") or "")
+    meta = getattr(ev, "metadata", None) or {}
+    first_ts, last_ts = _frame_bounds(meta)
+    if not session_id or not first_ts or not last_ts:
+        return "skipped"
+    kind = str(meta.get("kind") or "")
+    content = _redact_local_paths(
+        str(meta.get("content") or ""),
+        Path(traces_dir).parent if traces_dir else None)
+    ts = str(getattr(ev, "ts", "") or "")
+    fe = f"frame:{session_id}:{_frame_key(ev, first_ts, last_ts, kind, content)}"
+    if conn.execute(
+            "SELECT 1 FROM datom WHERE e = ? AND a = 'frame:session' LIMIT 1",
+            (fe,)).fetchone():
+        return "skipped"  # same frame already projected
+    hlc = _proj_hlc(ts)
+    origin = actor("proj", node, session_id)
+    seq = next_seq(conn, origin)
+    datoms = [
+        (fe, "frame:session", session_id, True),
+        (fe, "frame:kind", kind, True),
+        (fe, "frame:first_ts", first_ts, True),
+        (fe, "frame:last_ts", last_ts, True),
+        (fe, "frame:ts", ts, True),
+        (fe, "frame:host", node, True),
+    ]
+    covered = _session_entities(conn, session_id, "msg:session")
+    for me in covered:
+        mts = conn.execute(
+            "SELECT v FROM v_current WHERE e = ? AND a = 'msg:ts'",
+            (me,)).fetchone()
+        if mts and str(first_ts) <= str(mts[0]) <= str(last_ts):
+            datoms.append((me, "msg:deleted", "true", True))
+            datoms.append((me, "msg:frame_id", fe, True))
+    for other in _session_entities(conn, session_id, "frame:session"):
+        if other == fe:
+            continue
+        ots = conn.execute(
+            "SELECT v FROM v_current WHERE e = ? AND a = 'frame:ts'",
+            (other,)).fetchone()
+        if ots and str(first_ts) <= str(ots[0]) <= str(last_ts):
+            datoms.append((other, "frame:retired", "true", True))
+    if content.strip():
+        se = message_entity(session_id, ts, "system", content)
+        datoms.extend([
+            (se, "msg:session", session_id, True),
+            (se, "msg:role", "system", True),
+            (se, "msg:text", content, True),
+            (se, "msg:ts", ts, True),
+            (se, "msg:host", node, True),
+            (se, "msg:frame_id", fe, True),
+        ])
+    res = ingest(conn, origin, seq, hlc, datoms)
+    if res.applied:
+        _refresh_session(conn, session_id, node)
+    return "projected" if res.applied else "skipped"
+
+
 def project_event(conn, node: str, ev, *, traces_dir=None) -> str:
     """Project one trace event. Returns "projected" | "skipped"."""
-    if getattr(ev, "type", "") != "message":
+    etype = getattr(ev, "type", "")
+    if etype == "frame":
+        return project_frame(conn, node, ev, traces_dir=traces_dir)
+    if etype != "message":
         return "skipped"
     session_id = str(getattr(ev, "session", "") or "")
     meta = getattr(ev, "metadata", None) or {}
@@ -169,6 +398,8 @@ def project_event(conn, node: str, ev, *, traces_dir=None) -> str:
     body = _body(ev, traces_dir)
     if not body.strip():
         return "skipped"
+    body = _redact_local_paths(
+        body, Path(traces_dir).parent if traces_dir else None)
     ts = str(getattr(ev, "ts", "") or "")
     e = message_entity(session_id, ts, role, body)
     # Same event already present (own earlier projection, or a peer's
@@ -177,40 +408,46 @@ def project_event(conn, node: str, ev, *, traces_dir=None) -> str:
             "SELECT 1 FROM datom WHERE e = ? AND a = 'msg:text' LIMIT 1",
             (e,)).fetchone():
         return "skipped"
-    ms = _ms(ts)
-    hlc = f"{ms:013d}.00000.proj" if ms else ""
     origin = actor("proj", node, session_id)
-    res = ingest(
-        conn, origin, next_seq(conn, origin), hlc,
-        [(e, "msg:session", session_id, True),
-         (e, "msg:role", role, True),
-         (e, "msg:text", body, True),
-         (e, "msg:ts", ts, True),
-         (e, "msg:host", node, True)],
-    )
+    datoms = [(e, "msg:session", session_id, True),
+              (e, "msg:role", role, True),
+              (e, "msg:text", body, True),
+              (e, "msg:ts", ts, True),
+              (e, "msg:host", node, True)]
+    persona = str(meta.get("persona") or "")
+    if persona:
+        datoms.append((e, "msg:persona", persona, True))
+    # display alias ("telegram:5712") is the portable handle; raw user id
+    # is the fallback when no alias was recorded
+    user = str(meta.get("alias") or meta.get("user") or "")
+    if user:
+        datoms.append((e, "msg:user", user, True))
+    res = ingest(conn, origin, next_seq(conn, origin), _proj_hlc(ts), datoms)
     return "projected" if res.applied else "skipped"
 
 
 def project_session(conn, ws_dir, session_id: str, events, *,
                     node: str | None = None, traces_dir=None) -> dict:
-    """Project the message events of one session (explicit event list).
+    """Project the message/frame events of one session (explicit list).
 
     Safe to re-run: entities are content-addressed, replays skip.
     """
     ensure_domain(conn)
     node = node or local_node_id()
     stats = {"projected": 0, "skipped": 0}
-    msgs = sorted(
-        (e for e in events if getattr(e, "type", "") == "message"
+    evs = sorted(
+        (e for e in events
+         if getattr(e, "type", "") in ("message", "frame")
          and str(getattr(e, "session", session_id) or session_id) == session_id),
         key=lambda e: getattr(e, "ts", "") or "")
-    for ev in msgs:
+    for ev in evs:
         if not getattr(ev, "session", None):
             try:
                 ev.session = session_id
             except AttributeError:
                 pass
         stats[project_event(conn, node, ev, traces_dir=traces_dir)] += 1
+    _refresh_session(conn, session_id, node)
     return stats
 
 
@@ -237,6 +474,7 @@ def project_traces(conn, ws_dir, traces_dir=None, *,
     if not isinstance(offsets, dict):
         offsets = {}
     changed = False
+    touched: set[str] = set()
     for path in sorted(tdir.glob("*.jsonl")):
         try:
             size = path.stat().st_size
@@ -255,14 +493,19 @@ def project_traces(conn, ws_dir, traces_dir=None, *,
             continue  # partial line still being written
         stats["files"] += 1
         for raw in chunk[: end + 1].splitlines():
-            if b'"message"' not in raw:
-                continue  # cheap pre-filter: not a message event
+            if b'"message"' not in raw and b'"frame"' not in raw:
+                continue  # cheap pre-filter: only message/frame events
             ev = TraceEvent.from_json(raw.decode("utf-8", errors="replace"))
             if ev is None:
                 continue
             stats[project_event(conn, node, ev, traces_dir=tdir)] += 1
+            sid = str(getattr(ev, "session", "") or "")
+            if sid:
+                touched.add(sid)
         offsets[path.name] = off + end + 1
         changed = True
+    for sid in touched:
+        _refresh_session(conn, sid, node)
     if changed:
         cursors["files"] = offsets
         _save_cursors(ws_dir, cursors)
@@ -270,20 +513,45 @@ def project_traces(conn, ws_dir, traces_dir=None, *,
 
 
 def list_sessions(conn) -> list[str]:
-    """Session ids that have projected messages."""
+    """Session ids that still hold at least one live projected message."""
     ensure_domain(conn)
-    return sorted(
-        r[0] for r in conn.execute(
-            "SELECT DISTINCT v FROM v_current WHERE a = 'msg:session'"))
+    sids = [r[0] for r in conn.execute(
+        "SELECT DISTINCT v FROM v_current WHERE a = 'msg:session'")]
+    return sorted(s for s in sids if _live_msgs(conn, s))
 
 
 def session_messages(conn, session_id: str) -> list[dict]:
-    """Merged cross-host history of one session, ordered by event ts."""
+    """Merged cross-host history of one session.
+
+    Live messages only -- ``msg:deleted`` and retired-frame supersession
+    (``msg:frame_id`` -> retired frame) drop covered turns -- ordered by
+    ``(ts, ord, entity)`` so concurrent-host interleaves are stable.
+    """
     ensure_domain(conn)
-    rows: dict[str, dict] = {}
-    for e, a, v in conn.execute(
-            "SELECT e, a, v FROM v_current WHERE e IN ("
-            " SELECT e FROM v_current WHERE a = 'msg:session' AND v = ?)",
-            (session_id,)):
-        rows.setdefault(e, {"e": e})[a.split(":", 1)[1]] = v
-    return sorted(rows.values(), key=lambda r: (r.get("ts") or "", r["e"]))
+    return _live_msgs(conn, session_id)
+
+
+def session_summary(conn, session_id: str) -> dict:
+    """session:* + first-live-persona/user view used by session listings."""
+    ensure_domain(conn)
+    e = f"session:{session_id}"
+    out = {"id": session_id}
+    for a, v in conn.execute(
+            "SELECT a, v FROM v_current WHERE e = ? AND a LIKE 'session:%'",
+            (e,)):
+        out[a.split(":", 1)[1]] = v
+    for r in _live_msgs(conn, session_id):
+        if r.get("persona") or r.get("user"):
+            out.setdefault("persona", str(r.get("persona") or ""))
+            out.setdefault("user", str(r.get("user") or ""))
+            break
+    if not out.get("title") or not out.get("last_active"):
+        live = _live_msgs(conn, session_id)
+        if live:
+            out.setdefault("last_active", str(live[-1].get("ts") or ""))
+            if not out.get("title"):
+                out["title"] = next(
+                    (str(r.get("text") or "")[:160] for r in live
+                     if r.get("role") == "user"
+                     and str(r.get("text") or "").strip()), "")
+    return out
