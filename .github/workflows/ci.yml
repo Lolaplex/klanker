@@ -38,6 +38,7 @@ jobs:
             export AGENTS_RELAY_REF=feat/store-projection-readers
             export AGENTS_HARNESS_REF=feat/store-projection-readers
             export AGENTS_TRACES_REF=feat/store-projection-readers
+            export AGENTS_SYNC_REF=feat/opdist-seen-starvation-peerbook
           fi
           if [ "${GITHUB_BASE_REF:-}" != "main" ] && [ "${GITHUB_REF_NAME:-}" != "main" ]; then
             python scripts/dev-suite.py

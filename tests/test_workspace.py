@@ -31,6 +31,9 @@ def test_prompt_names_edit_and_write():
 def test_git_workspace_adds_coding_block(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     (repo / ".git").mkdir(parents=True)
+    # workspace_path() prefers AGENTS_WORKDIR over the legacy alias —
+    # clear both so no earlier test's leaked selection decides the path.
+    monkeypatch.delenv("AGENTS_WORKDIR", raising=False)
     monkeypatch.setenv("AGENTS_WORKSPACE_DIR", str(repo))
     text = build_system_prompt(probe_host())
     assert "Coding workspace" in text
