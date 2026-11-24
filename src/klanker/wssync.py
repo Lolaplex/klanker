@@ -298,6 +298,30 @@ class SyncRuntime:
         for w in workers:
             _try_drain(w)  # catch-up on connect
 
+    def detach_client(self, hub_id: str) -> bool:
+        """Live unlink: stop the ChannelClient thread and retire its
+        ws workers — DELETE /v1/hub/links/<id> (agents-relay#43)."""
+        with self._lock:
+            client = self._clients.pop(hub_id, None)
+            workers = self._client_workers.pop(hub_id, [])
+        for w in workers:
+            try:
+                w.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if client is not None:
+            try:
+                client.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            log.info("hub channel detached live: %s", hub_id)
+            return True
+        return False
+
+    def client_connected(self, hub_id: str) -> bool:
+        with self._lock:
+            return hub_id in self._clients
+
     def _spoke_ws_frame(self, client, workers, kind, payload) -> None:
         """ws-share control frames on the spoke (klanker#145): announce
         provisions/adopts the ws and starts a worker; revoke freezes it."""

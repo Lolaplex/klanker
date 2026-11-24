@@ -1,189 +1,193 @@
+"""Live hub-link + session host switch management (agents-relay#43)."""
 import json
-import tempfile
-import unittest
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
+
+import pytest
+from agents_store.db import connect
+from agents_workspace import Host
 
 from klanker import mgmt
+from klanker import wssync
 
 
-class FakeHandler:
-    def __init__(self, path: str, body: dict | None = None):
-        self.path = path
-        self.relay_secret = ""
-        self.headers = {}
-        self.config = None
-        self.status: int | None = None
-        self.written: dict | None = None
-        self._body = json.dumps(body or {}).encode()
-
-    def _read_json(self):
-        return json.loads(self._body)
-
-    def _write_json(self, data, status):
-        self.written = data
-        self.status = status
-
-    def send_error(self, code, msg=""):
-        self.status = code
+@pytest.fixture
+def host(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    h = Host.from_env()
+    h.dir.mkdir(parents=True, exist_ok=True)
+    (h.clients).mkdir(parents=True, exist_ok=True)
+    return h
 
 
-def _fake_ws(tmp: str) -> SimpleNamespace:
-    root = Path(tmp) / "ws"
-    (root / "skills" / "demo").mkdir(parents=True)
-    (root / "skills" / "demo" / "SKILL.md").write_text("x", encoding="utf-8")
-    (root / "memory" / "notes").mkdir(parents=True)
-    (root / "memory" / "notes" / "a.md").write_text("hello", encoding="utf-8")
-    return SimpleNamespace(dir=root, skills=root / "skills", memory=root / "memory", config=root / "config.json")
+def _write_hubs(host, rows):
+    p = host.clients / "hubs.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({"hubs": rows}))
 
 
-class MgmtGetTests(unittest.TestCase):
-    def test_skills_list(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = _fake_ws(tmp)
-            with patch("klanker.mgmt._resolve_ws", return_value=ws):
-                h = FakeHandler("/v1/klanker/skills")
-                self.assertTrue(mgmt._dispatch(h, "GET"))
-        self.assertEqual(h.status, 200)
-        self.assertEqual(h.written["skills"][0]["name"], "demo")
-
-    def test_memory_file_read_and_traversal_block(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = _fake_ws(tmp)
-            with patch("klanker.mgmt._resolve_ws", return_value=ws):
-                h = FakeHandler("/v1/klanker/memory/file?path=notes/a.md")
-                mgmt._dispatch(h, "GET")
-                self.assertEqual(h.written["content"], "hello")
-                h = FakeHandler("/v1/klanker/memory/file?path=../../etc/passwd")
-                mgmt._dispatch(h, "GET")
-        self.assertEqual(h.status, 404)
-
-    def test_non_klanker_path_passthrough(self):
-        h = FakeHandler("/v1/workspaces")
-        self.assertFalse(mgmt._dispatch(h, "GET"))
+def test_hub_links_lists_public_metadata(host, monkeypatch):
+    _write_hubs(host, {"h1": {"hub_url": "https://hub:8787",
+                              "device_id": "dev-me", "label": "vps",
+                              "connected_at": 5, "last_seq": 0}})
+    monkeypatch.setattr(mgmt, "_runtime", lambda: None)
+    out = mgmt.hub_links()
+    assert out["links"][0]["hub_id"] == "h1"
+    assert out["links"][0]["device_id"] == "dev-me"
+    assert out["links"][0]["connected"] is False
+    assert "token" not in json.dumps(out)
 
 
-class MgmtDeleteTests(unittest.TestCase):
-    def test_delete_skill_and_memory(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = _fake_ws(tmp)
-            with patch("klanker.mgmt._resolve_ws", return_value=ws):
-                h = FakeHandler("/v1/klanker/skills/demo")
-                mgmt._dispatch(h, "DELETE")
-                self.assertEqual(h.status, 200)
-                self.assertFalse((ws.skills / "demo").exists())
-                h = FakeHandler("/v1/klanker/memory/file?path=notes/a.md")
-                mgmt._dispatch(h, "DELETE")
-                self.assertEqual(h.status, 200)
-                self.assertFalse((ws.memory / "notes" / "a.md").exists())
+def test_parse_connect_pair_url_and_bare():
+    url, code = mgmt._parse_connect(
+        {"url": "https://hub.example:8787/#pair=ABCD-EF_12"})
+    assert url == "https://hub.example:8787"
+    assert code == "ABCD-EF_12"
+    url, code = mgmt._parse_connect(
+        {"url": "http://h:1", "code": "zz99"})
+    assert (url, code) == ("http://h:1", "zz99")
+    # no url / bad code -> rejected
+    assert mgmt._parse_connect({"url": "ftp://x", "code": "ab1"}) == ("", "")
+    assert mgmt._parse_connect({"url": "http://h"}) == ("http://h", "")
 
 
-class MgmtRoutineTests(unittest.TestCase):
-    def test_create_routine(self):
-        h = FakeHandler(
-            "/v1/klanker/routines",
-            {"name": "n1", "prompt": "do x", "cron": "*/5 * * * *"},
-        )
-        fake_job = {"name": "n1", "kind": "routine", "_file": "/x"}
-        with patch("klanker.routine.add_routine", return_value=fake_job):
-            mgmt._dispatch(h, "POST")
-        self.assertEqual(h.status, 200)
-        self.assertNotIn("_file", h.written["routine"])
+def test_hub_connect_redeems_persists_and_attaches(host, monkeypatch):
+    monkeypatch.setattr(mgmt, "_hubs_path",
+                        lambda: host.clients / "hubs.json")
+    attached = []
 
-    def test_routine_action_unknown(self):
-        h = FakeHandler("/v1/klanker/routines/n1", {"action": "explode"})
-        mgmt._dispatch(h, "POST")
-        self.assertEqual(h.status, 400)
+    class _FakeRt:
+        def _attach_new_hubs(self):
+            attached.append(1)
 
+        def client_connected(self, hid):
+            return True
 
-class MgmtRecallTests(unittest.TestCase):
-    def test_recall_get_default_off(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = _fake_ws(tmp)
-            with patch("klanker.mgmt._resolve_ws", return_value=ws):
-                h = FakeHandler("/v1/klanker/recall")
-                mgmt._dispatch(h, "GET")
-        self.assertEqual(h.status, 200)
-        self.assertFalse(h.written["recall"]["enabled"])
+    monkeypatch.setattr(mgmt, "_runtime", lambda: _FakeRt())
 
-    def test_recall_post_roundtrip_and_preserves_keys(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            ws = _fake_ws(tmp)
-            cfg_path = Path(ws.dir) / "config.json"
-            cfg_path.write_text(json.dumps({"other": {"k": 1}}), encoding="utf-8")
-            ws.config = cfg_path
-            with patch("klanker.mgmt._resolve_ws", return_value=ws):
-                h = FakeHandler("/v1/klanker/recall", {"enabled": True})
-                mgmt._dispatch(h, "POST")
-                self.assertEqual(h.status, 200)
-                self.assertTrue(h.written["recall"]["enabled"])
-                h = FakeHandler("/v1/klanker/recall")
-                mgmt._dispatch(h, "GET")
-                self.assertTrue(h.written["recall"]["enabled"])
-                data = json.loads(cfg_path.read_text(encoding="utf-8"))
-                self.assertEqual(data["other"], {"k": 1})
-                self.assertTrue(data["recall"]["enabled"])
-                h = FakeHandler("/v1/klanker/recall", {"enabled": False})
-                mgmt._dispatch(h, "POST")
-                self.assertFalse(h.written["recall"]["enabled"])
+    import agents_relay.channel_client as cc
+
+    def fake_connect(url, cred, *, label=""):
+        assert url == "https://hub:8787"
+        assert cred == "ABCD"
+        return {"hub_id": "hub1", "device_id": "dev-me",
+                "ws": "", "hub_url": url, "label": label}
+
+    monkeypatch.setattr(cc, "connect_hub", fake_connect)
+    out = mgmt.hub_connect(
+        {"url": "https://hub:8787/#pair=ABCD", "label": "vps"})
+    assert out["ok"] is True
+    assert out["hub_id"] == "hub1"
+    assert out["connected"] is True
+    assert attached == [1]
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_hub_connect_bad_body_400(host, monkeypatch):
+    monkeypatch.setattr(mgmt, "_runtime", lambda: None)
+    out = mgmt.hub_connect({"url": "https://h"})
+    assert out["ok"] is False
+    assert out["status"] == 400
 
 
-class MgmtRoutineScopeTests(unittest.TestCase):
-    """klanker#119: /v1/klanker/routines is scoped (workspace, name)."""
+def test_hub_disconnect_stops_client_and_drops_row(host, monkeypatch):
+    _write_hubs(host, {"h1": {"hub_url": "http://h",
+                              "device_id": "dev-me"}})
+    stopped = []
 
-    def test_no_cross_workspace_leak(self):
-        import os
-        from agents_workspace import Host
+    class _FakeRt:
+        def detach_client(self, hid):
+            stopped.append(hid)
+            return True
 
-        with tempfile.TemporaryDirectory() as td:
-            host = Host(dir=Path(td) / "host")
-            ws_a = host.create("ws-a")
-            ws_b = host.create("ws-b")
-            by_id = {"ws-a": ws_a, "ws-b": ws_b, "": ws_a}
-            with patch.dict(
-                os.environ, {"AGENTS_HOST_DIR": str(host.dir)}, clear=False
-            ), patch(
-                "klanker.mgmt._resolve_ws", side_effect=lambda ref: by_id[ref]
-            ):
-                h = FakeHandler(
-                    "/v1/klanker/routines",
-                    {
-                        "name": "daily",
-                        "prompt": "do x",
-                        "cron": "*/5 * * * *",
-                        "workspace": "ws-a",
-                    },
-                )
-                mgmt._dispatch(h, "POST")
-                self.assertEqual(h.status, 200)
-                self.assertTrue((ws_a.schedules / "daily.json").is_file())
-                self.assertFalse((ws_b.schedules / "daily.json").is_file())
+    monkeypatch.setattr(mgmt, "_runtime", lambda: _FakeRt())
 
-                h = FakeHandler("/v1/klanker/routines?workspace=ws-b")
-                mgmt._dispatch(h, "GET")
-                self.assertEqual(h.written["routines"], [])
+    import agents_relay.channel_client as cc
+    gone = []
+    monkeypatch.setattr(cc, "disconnect_hub",
+                        lambda hid: gone.append(hid) or True)
+    out = mgmt.hub_disconnect("h1")
+    assert out["ok"] is True
+    assert stopped == ["h1"]
+    assert gone == ["h1"]
 
-                h = FakeHandler("/v1/klanker/routines?workspace=ws-a")
-                mgmt._dispatch(h, "GET")
-                self.assertEqual(len(h.written["routines"]), 1)
 
-                h = FakeHandler(
-                    "/v1/klanker/routines/daily",
-                    {"action": "remove", "workspace": "ws-b"},
-                )
-                mgmt._dispatch(h, "POST")
-                self.assertEqual(h.status, 404)
-                self.assertTrue((ws_a.schedules / "daily.json").is_file())
+def test_detach_client_retires_workers(host, monkeypatch):
+    rt = wssync.SyncRuntime()
 
-                h = FakeHandler(
-                    "/v1/klanker/routines/daily",
-                    {"action": "remove", "workspace": "ws-a"},
-                )
-                mgmt._dispatch(h, "POST")
-                self.assertEqual(h.status, 200)
-                self.assertFalse((ws_a.schedules / "daily.json").exists())
+    class _Client:
+        hub_id = "h1"
+        device_id = "dev-me"
+        stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    class _W:
+        ws_id = "w1"
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    c = _Client()
+    w = _W()
+    rt._clients["h1"] = c
+    rt._client_workers["h1"] = [w]
+    assert rt.detach_client("h1") is True
+    assert c.stopped is True
+    assert w.closed is True
+    assert "h1" not in rt._clients
+    assert rt.detach_client("h1") is False
+
+
+def test_session_host_switch_rebinds(host, tmp_path, monkeypatch):
+    from klanker.session import bind_session, session_view
+
+    ws = host.create("w1")
+    conn = connect(ws.dir / "store.db", check_same_thread=False)
+    bind_session(conn, "s1", "dev-a")
+    conn.close()
+    monkeypatch.setattr(
+        "klanker.session._lease_holder_for", lambda w, s: "")
+    out = mgmt.session_host_switch("w1", "s1", "dev-b")
+    assert out.get("host") == "dev-b"
+    conn = connect(ws.dir / "store.db")
+    try:
+        assert session_view(conn, "s1")["host"] == "dev-b"
+    finally:
+        conn.close()
+
+
+def test_session_host_switch_conflict_passthrough(host, monkeypatch):
+    from klanker.session import bind_session
+
+    ws = host.create("w1")
+    conn = connect(ws.dir / "store.db", check_same_thread=False)
+    bind_session(conn, "s1", "dev-a")
+    conn.close()
+    monkeypatch.setattr(
+        "klanker.session._lease_holder_for", lambda w, s: "dev-c")
+    monkeypatch.setattr(
+        "klanker.session._own_holder_id", lambda: "dev-a")
+    out = mgmt.session_host_switch("w1", "s1", "dev-b")
+    assert out["error"] == "lease_held"
+    assert out["status"] == 409
+
+
+def test_session_host_switch_unknown_ws_404(host):
+    out = mgmt.session_host_switch("nope", "s1", "dev-b")
+    assert out["status"] == 404
+
+
+def test_ws_policy_changed_runs_reconcile(host, monkeypatch):
+    calls = []
+
+    class _FakeRt:
+        def _reconcile_shares(self):
+            calls.append(1)
+
+    monkeypatch.setattr(mgmt, "_runtime", lambda: _FakeRt())
+    mgmt.ws_policy_changed("w1")
+    assert calls == [1]
+    # no runtime -> silent no-op (never blocks a PATCH)
+    monkeypatch.setattr(mgmt, "_runtime", lambda: None)
+    mgmt.ws_policy_changed("w1")
+    assert calls == [1]

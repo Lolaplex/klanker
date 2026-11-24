@@ -884,6 +884,18 @@ def main(argv: list[str] | None = None) -> int:
                 _ch.hub().set_approval_handler(approval_apply)
                 _appr.on_pending_fn = approval_mirror_pending
                 _appr.on_decided_fn = approval_mirror_decided
+            # live management surface (agents-relay#43): hub links,
+            # session host switch, policy reconcile — all wired to the
+            # running SyncRuntime, no restart needed.
+            from . import mgmt as _mgmt
+            from agents_relay import http_adapter as _http
+            from agents_relay import workspaces as _wsmod
+
+            _http.hub_links_fn = _mgmt.hub_links
+            _http.hub_connect_fn = _mgmt.hub_connect
+            _http.hub_disconnect_fn = _mgmt.hub_disconnect
+            _http.session_host_switch_fn = _mgmt.session_host_switch
+            _wsmod.ws_policy_changed_fn = _mgmt.ws_policy_changed
             # First host-local tool in a turn subprocess binds
             # session:host into the ws store (klanker#145 R6).
             os.environ.setdefault(
