@@ -331,13 +331,16 @@ def build_parser() -> argparse.ArgumentParser:
     ws_share.add_argument(
         "--to", required=True,
         help="Target channel device id (hub /v1/hub/devices)")
+    ws_share.add_argument(
+        "--hub", default="",
+        help="Scope to one paired hub's own device id (hubs.json)")
     ws_unshare = ws_sub.add_parser(
         "unshare", help="Revoke a device's access to a workspace")
     ws_unshare.add_argument("id", help="Workspace id")
     ws_unshare.add_argument("--to", default="", help="Device id to revoke")
     ws_unshare.add_argument(
-        "--open", action="store_true",
-        help="Reopen the workspace to every paired device")
+        "--hub", default="",
+        help="Scope to one paired hub's own device id (hubs.json)")
     ws_members = ws_sub.add_parser(
         "members", help="Show ws sync policy, owner and member devices")
     ws_members.add_argument("id", help="Workspace id")
@@ -345,9 +348,13 @@ def build_parser() -> argparse.ArgumentParser:
         "invite", help="Mint a ws-scoped pair code/QR on the hub")
     ws_invite.add_argument("id", help="Workspace id")
     ws_invite.add_argument("--hub", default="", help="Hub id (hubs.json)")
+    ws_invite.add_argument(
+        "--json", action="store_true",
+        help="Machine output — required on non-TTY stdout")
     ws_join = ws_sub.add_parser(
         "join", help="Redeem a ws invite (pairs device + grants ws)")
     ws_join.add_argument("invite", help="Invite code or pair URL")
+    ws_join.add_argument("--label", default="", help="Device label")
 
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
@@ -427,7 +434,6 @@ def build_parser() -> argparse.ArgumentParser:
     remote_add.add_argument("name", help="Display name (also the default id slug)")
     remote_add.add_argument("url", help="Remote base URL (http/https)")
     remote_add.add_argument("--id", default="", help="Explicit remote id slug")
-    remote_add.add_argument("--token", default="", help="Remote token (prefer --token-stdin)")
     remote_add.add_argument("--token-stdin", action="store_true", help="Read token from stdin")
     remote_add.add_argument("--prompt", action="store_true", help="Ask for the token via getpass")
     remote_rm = remote_sub.add_parser("rm", help="Remove a remote and its vault token")
@@ -444,6 +450,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     pair_p = sub.add_parser("pair", help="Create a single-use 60s pairing code/QR for Web or remote CLI")
     pair_p.add_argument("--remote", action="store_true", help="Mint a remote CLI pairing code")
+    pair_p.add_argument(
+        "--ws", default="",
+        help="Shortcut: mint a workspace invite on the hub (klanker workspace invite)")
+    pair_p.add_argument("--hub", default="", help="Hub id for --ws (hubs.json)")
     pair_p.add_argument("--ttl", type=int, default=60, help="Validity window in seconds (15-120)")
 
     return parser

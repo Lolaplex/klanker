@@ -762,6 +762,7 @@ class SyncRuntime:
             return
         seq = int(time.time() * 1000)
         state_changed = False
+        self._attach_new_hubs()
 
         # spoke role: announce member-set changes; retire gone-local ws
         with self._lock:
@@ -901,6 +902,34 @@ class SyncRuntime:
                 self._evict_hub_worker(wid, dev)
         if state_changed:
             self._save_share_state()
+
+    def _attach_new_hubs(self) -> None:
+        """hubs.json rows that appeared after serve boot (e.g. a fresh
+        `workspace join`) get a live ChannelClient + all registered
+        client hooks — no serve restart needed (klanker#147)."""
+        try:
+            from agents_relay import channel_client as _cc
+
+            hubs = _cc._load_hubs()
+        except Exception:  # noqa: BLE001
+            return
+        with self._lock:
+            missing = [h for h in hubs if h not in self._clients]
+        for hub_id in missing:
+            try:
+                c = _cc.ChannelClient(hub_id)
+                for hook in list(getattr(_cc, "CLIENT_HOOKS", [])):
+                    try:
+                        hook(c)
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning(
+                            "hub %s client hook failed: %s", hub_id, exc)
+                threading.Thread(target=c.run_forever, daemon=True).start()
+                with self._lock:
+                    self._clients[hub_id] = c
+                log.info("hub channel attached live: %s", hub_id)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("hub channel %s attach failed: %s", hub_id, exc)
 
     def _ws_owner(self, ws_id: str) -> str:
         try:
