@@ -1,13 +1,13 @@
-import type { ChatMessage, KlankerInstance } from "./types/klanker";
+import type { ChatMessage, KlankerInstance, SessionEvent } from "./types/klanker";
 import { api } from "./services/api";
 
-export function eventsToMessages(events: any[]): ChatMessage[] {
+export function eventsToMessages(events: SessionEvent[]): ChatMessage[] {
   return events
     .filter((e) => e?.type === "message" && e?.metadata?.content)
     .map((e) => ({
       id: crypto.randomUUID(),
-      role: e.metadata.role === "user" ? "user" : "klanker",
-      content: String(e.metadata.content),
+      role: e.metadata?.role === "user" ? "user" : "klanker",
+      content: String(e.metadata?.content ?? ""),
       timestamp: e.ts || new Date().toISOString(),
     }));
 }

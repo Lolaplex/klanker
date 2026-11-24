@@ -255,11 +255,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                       chatSelected ? "text-white" : "text-[#a3a3a3]"
                                     }`}
                                   >
-                                    <span className="truncate">
-                                      <span className="text-[#525252]">{s.session}</span>
-                                      {": "}
-                                      {s.label}
-                                    </span>
+                                    <span className="truncate">{s.label}</span>
                                     {s.host && (
                                       <span
                                         className="shrink-0 px-1.5 py-0.5 rounded-full border border-[#262626] text-[9px] uppercase tracking-wider text-[#737373]"

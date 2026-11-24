@@ -66,19 +66,23 @@ export const EMPTY_BUCKET: ChatBucket = { openId: "", items: [] };
 export const STANDALONE =
   typeof window !== "undefined" && window.matchMedia("(display-mode: standalone)").matches;
 
-/** Merge legacy/dup drafts into one, drop draft flags off real chats. */
+/** Dedupe drafts by chat id (the same unsent chat re-listed keeps its
+ *  richer input), drop draft flags off real chats. Drafts with distinct
+ *  ids are different unsent chats — merging two instances' buckets must
+ *  not silently fold one user's composer text into the other's. */
 export function normBucket(b: ChatBucket): ChatBucket {
   const items: DeskChat[] = [];
-  let draft: DeskChat | null = null;
+  const drafts = new Map<string, DeskChat>();
   for (const i of b.items) {
     if (!i.draft && i.session) {
       items.push({ ...i, draft: false });
       continue;
     }
     const d: DeskChat = { ...i, session: "", draft: true };
-    draft = draft === null ? d : { ...(draft as DeskChat), input: draft.input || d.input };
+    const prev = drafts.get(d.id);
+    drafts.set(d.id, prev ? { ...prev, input: prev.input || d.input } : d);
   }
-  const all = draft ? [...items, draft] : items;
+  const all = [...items, ...drafts.values()];
   const openId = all.some((i) => i.id === b.openId) ? b.openId : (all[all.length - 1]?.id ?? "");
   return { openId, items: all };
 }
