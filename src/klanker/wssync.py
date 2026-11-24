@@ -986,6 +986,18 @@ def sync_workspaces() -> dict:
     return out
 
 
+def _execution_lease_sec(ws_id: str) -> float:
+    """ws.execution.lease_sec for the relay lease ttl hook (klanker#148)."""
+    try:
+        from agents_workspace import Host
+
+        ws = Host.from_env().workspace(ws_id)
+        return float(
+            (getattr(ws, "execution", None) or {}).get("lease_sec") or 0)
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
 def ws_invite_auth(device_id: str, ws_id: str) -> bool:
     """`/v1/ws/invite` gate (klanker#145): only the ws owner may mint
     invites. Owner is recorded in workspace.json execution.owner by
@@ -1046,3 +1058,161 @@ def _fanout_safe(workers, payload: dict, method: str) -> None:
             getattr(w, method)(payload)
         except Exception as exc:  # noqa: BLE001
             log.warning("ws %s: %s failed: %s", ws_id, method, exc)
+
+
+# -- approval mirroring (klanker#148) ---------------------------------------
+#
+# Pending approvals are host-local files; in a shared ws the operator may
+# be watching ANY member's UI. A turn executing on a spoke mirrors its
+# pending asks upstream as ``approval-req``; the hub keeps a local mirror
+# record (so its own /v1/approvals surface shows them) and fans out to
+# ws members. Decisions ride back as ``approval-res`` — the origin's own
+# wait_for_decision unblocks, and mirrors learn the terminal state.
+# All applies are idempotent by approval id; mirror-apply suppresses the
+# outbound hook so a mirror can never echo itself forever.
+
+def approval_mirror_pending(record: dict) -> None:
+    """approvals.on_pending_fn: fan a local pending ask to ws members.
+
+    Spoke -> upstream via every channel client; hub -> publish to ws
+    member devices. The origin device id rides inside ``request`` as
+    ``__device`` so the decision can be routed back.
+    """
+    try:
+        from agents_relay.channel_client import _load_hubs
+
+        rows = _load_hubs()
+    except Exception:  # noqa: BLE001
+        rows = {}
+    req = dict(record.get("request") or {})
+    ws_id = str(record.get("workspace") or req.get("workspace") or "")
+    if rows:
+        own = next(iter(rows.values()), {}).get("device_id") or ""
+        req["__device"] = str(own)
+        payload = {"id": str(record.get("id") or ""), "ws": ws_id,
+                   "request": req}
+        _send_upstream("approval-req", payload)
+        return
+    # hub side: publish to the ws member devices directly
+    try:
+        from agents_relay.channel import hub as _hub
+
+        req["__device"] = ""
+        for dev in _ws_member_ids(ws_id):
+            _hub().publish(dev, "approval-req",
+                           {"id": str(record.get("id") or ""),
+                            "ws": ws_id, "request": req})
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def approval_mirror_decided(record: dict) -> None:
+    """approvals.on_decided_fn: relay a terminal decision.
+
+    A record mirrored FROM another device carries ``request.__device`` —
+    the res goes back there (hub publish or spoke upstream). A decision
+    on a locally-created record fans out to ws members so their mirror
+    copies close too.
+    """
+    req = dict(record.get("request") or {})
+    target = str(req.get("__device") or "")
+    payload = {"id": str(record.get("id") or ""),
+               "status": str(record.get("status") or ""),
+               "note": str(record.get("note") or ""),
+               "device": target,
+               "ws": str(record.get("workspace")
+                         or req.get("workspace") or "")}
+    try:
+        from agents_relay.channel_client import _load_hubs
+
+        rows = _load_hubs()
+    except Exception:  # noqa: BLE001
+        rows = {}
+    if rows:
+        _send_upstream("approval-res", payload)
+        return
+    try:
+        from agents_relay.channel import hub as _hub
+
+        if target:
+            _hub().publish(target, "approval-res", payload)
+        else:
+            for dev in _ws_member_ids(payload["ws"]):
+                _hub().publish(dev, "approval-res", payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def approval_apply(kind: str, payload: dict, device_id: str = "") -> None:
+    """Inbound approval frame — hub ws-handler AND spoke client hook.
+
+    ``approval-req``: keep a local mirror record (suppressed hooks —
+    never echo). ``approval-res``: apply the terminal decision locally;
+    on the hub the mirror is updated AND the res is forwarded to the
+    origin device named in ``payload["device"]``.
+    """
+    from agents_relay.approvals import create_pending, record_decision
+    from agents_relay.config import RelayConfig
+
+    cfg = RelayConfig.from_env()
+    if kind == "approval-req":
+        req = dict(payload.get("request") or {})
+        if device_id and "__device" not in req:
+            req["__device"] = device_id
+        req.setdefault("id", str(payload.get("id") or ""))
+        create_pending(cfg, 0, req,
+                       workspace=str(payload.get("ws") or ""),
+                       from_mirror=True)
+        return
+    # approval-res: close the local/mirror record first
+    ident = str(payload.get("id") or "")
+    record_decision(
+        cfg, ident,
+        status=str(payload.get("status") or ""),
+        note=str(payload.get("note") or "remote decision"),
+        decided_by=None, from_mirror=True)
+    try:
+        from agents_relay.channel import hub as _hub
+
+        target = str(payload.get("device") or "")
+        if target:
+            _hub().publish(target, "approval-res", payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _send_upstream(kind: str, payload: dict) -> None:
+    """Push a channel frame upstream via any attached SyncRuntime client."""
+    rt = _runtime()
+    if rt is None:
+        return
+    with rt._lock:
+        clients = list(rt._clients.values())
+    for c in clients:
+        try:
+            c.send(kind, payload)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("upstream %s send failed: %s", kind, exc)
+
+
+def _ws_member_ids(ws_id: str) -> list[str]:
+    try:
+        from agents_workspace import Host
+
+        ws = Host.from_env().workspace(ws_id)
+        return sorted(str(d) for d in
+                      (getattr(ws, "sync_hosts", None) or ()) if d)
+    except Exception:  # noqa: BLE001
+        return []
+
+
+_RUNTIME = None
+
+
+def _runtime():
+    return _RUNTIME
+
+
+def _set_runtime(rt) -> None:
+    global _RUNTIME
+    _RUNTIME = rt

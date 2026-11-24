@@ -81,12 +81,34 @@ def session_view(conn, session_id: str) -> dict:
     return out
 
 
+_bind_clocks: dict[str, object] = {}
+
+
+def _bind_clock(conn, node: str):
+    """Real monotonic HLC for bind writes — a synthetic ``.00000.bind``
+    tie lets two hosts' card-one writes collide at the same ord and split
+    v_current (klanker#148). Seeded from the store's max ord once so a
+    restarted process continues ABOVE everything already synced."""
+    clock = _bind_clocks.get(node)
+    if clock is None:
+        from agents_store.hlc import Hlc, HLC_GLOB
+
+        clock = Hlc(node)
+        row = conn.execute(
+            "SELECT MAX(ord) FROM datom WHERE ord GLOB ?",
+            (HLC_GLOB,)).fetchone()
+        if row and row[0]:
+            clock.observe(row[0])
+        _bind_clocks[node] = clock
+    return clock
+
+
 def _bind_tx(conn, session_id: str, datoms, node: str | None) -> None:
     ensure_domain(conn)
-    origin = actor("bind", node or local_node_id(), session_id)
-    ms = _now_ms()
+    node = node or local_node_id()
+    origin = actor("bind", node, session_id)
     ingest(conn, origin, next_seq(conn, origin),
-           f"{ms:013d}.00000.bind", datoms)
+           _bind_clock(conn, node).tick(), datoms)
 
 
 def bind_session(conn, session_id: str, host_id: str, *,
@@ -299,13 +321,15 @@ def checkpoint(repo: str | Path, session_id: str, host_id: str = "", *,
     if not remotes:
         out["unpushed"] = True
         return out
-    if not _git_ok(wt, "ls-remote", "--heads", remotes[0],
+    # the canonical remote is origin — remotes[0] order is arbitrary
+    remote = "origin" if "origin" in remotes else remotes[0]
+    if not _git_ok(wt, "ls-remote", "--heads", remote,
                    timeout=REMOTE_PROBE_SEC):
         out["unpushed"] = True
         out["error"] = "remote unreachable"
         return out
     try:
-        _git(wt, "push", "-u", remotes[0], branch, timeout=PUSH_TIMEOUT_SEC)
+        _git(wt, "push", "-u", remote, branch, timeout=PUSH_TIMEOUT_SEC)
         out["pushed"] = True
     except subprocess.CalledProcessError as exc:
         out["unpushed"] = True
@@ -363,22 +387,38 @@ def remove_worktree(repo: str | Path, session_id: str, *,
 def switch_host(conn, session_id: str, new_host: str, *,
                 repo: str | Path | None = None,
                 old_host: str = "", node: str | None = None,
-                root: str | Path | None = None) -> dict:
-    """Host switch between prompts: checkpoint -> rebind -> flag state.
+                root: str | Path | None = None,
+                ws_id: str = "", force: bool = False) -> dict:
+    """Host switch between prompts: lease-free -> checkpoint -> rebind.
 
-    Caller decides what to do with unpushed=True (warn / refuse per
-    workspace execution policy). A session without a worktree (pure
-    conversation) rebinds without a checkpoint.
+    ``409 lease_held`` while a run holds the (ws, session) lease;
+    ``409 wip_unpushed`` when the old host has unpushed work and the
+    caller did not pass ``force=True`` (klanker#148 — never silently
+    strand work). A session without a worktree (pure conversation)
+    rebinds without a checkpoint; an orphaned session worktree is
+    cleaned up after a successful rebind.
     """
-    result = {"checkpoint": None, "bound": False}
+    result = {"checkpoint": None, "bound": False, "status": 0}
+    if ws_id:
+        held = _lease_holder_for(ws_id, session_id)
+        if held and held != _own_holder_id():
+            result["error"] = "lease_held"
+            result["holder"] = held
+            result["status"] = 409
+            return result
+    view = session_view(conn, session_id)
+    if view.get("wip_unpushed") and not force:
+        result["error"] = "wip_unpushed"
+        result["status"] = 409
+        return result
     if repo is not None:
         cp = checkpoint(repo, session_id, old_host, root=root)
         result["checkpoint"] = cp
         if cp["error"] and not cp["committed"] \
                 and cp["error"] != "no session worktree" \
                 and not cp["unpushed"]:
+            result["error"] = cp["error"]
             return result
-    view = session_view(conn, session_id)
     bind_session(conn, session_id, new_host,
                  branch=view["branch"], repo=view["repo"], node=node)
     if repo is not None:
@@ -386,6 +426,55 @@ def switch_host(conn, session_id: str, new_host: str, *,
                          bool(result["checkpoint"]["unpushed"]), node=node)
     result["bound"] = True
     return result
+
+
+def _own_holder_id() -> str:
+    from .remote_dispatch import _lease_holder
+
+    return _lease_holder()
+
+
+def _lease_holder_for(ws_id: str, session_id: str) -> str:
+    """Current (ws, session) lease holder — in-process book on the hub,
+    GET /v1/hub/leases on a spoke; '' when free/unknown."""
+    import json
+    import urllib.request
+
+    try:
+        from .remote_dispatch import _hub_rows
+
+        rows = _hub_rows()
+    except Exception:  # noqa: BLE001
+        rows = {}
+    if not rows:
+        try:
+            from agents_relay.leases import hub_leases
+
+            for s in hub_leases().snapshot():
+                if s["ws"] == ws_id and s["session"] == session_id:
+                    return str(s["holder"])
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+    for hub_id, row in rows.items():
+        try:
+            from agents_relay.channel_client import hub_token
+
+            token = hub_token(hub_id)
+            if not token:
+                continue
+            req = urllib.request.Request(
+                row["hub_url"].rstrip("/") + "/v1/hub/leases",
+                headers={"Authorization": f"Bearer {token}",
+                         "X-Device-Id": str(row.get("device_id") or "")})
+            data = json.loads(
+                urllib.request.urlopen(req, timeout=10).read())
+            for s in data.get("leases") or []:
+                if s.get("ws") == ws_id and s.get("session") == session_id:
+                    return str(s.get("holder") or "")
+        except Exception:  # noqa: BLE001
+            continue
+    return ""
 
 
 def session_bind_gate(session_id: str, tool: str = "",
@@ -396,13 +485,12 @@ def session_bind_gate(session_id: str, tool: str = "",
     — ``klanker.turn`` registers it, ``workspace`` is ignored, the turn env
     selects the store) or via ``AGENTS_SESSION_BIND_CMD``. Idempotent: an
     already-bound session is left alone (a switch made explicitly wins).
-    ``session:repo``/``session:branch`` are written when the workdir is a
-    git checkout; the repo slug is resolved against ``ws.repos`` (R7).
+    ``session:repo`` carries the canonical ws.repos SLUG only (never an
+    absolute path); each host resolves its own checkout via
+    ``host_paths.json`` (klanker#148).
     """
     from agents_store.db import connect
     from agents_workspace import Host
-
-    from .wshare import _own_device_ids
 
     session_id = str(session_id or "").strip()
     if not session_id:
@@ -418,23 +506,30 @@ def session_bind_gate(session_id: str, tool: str = "",
         conn = connect(ws.dir / "store.db", check_same_thread=False)
         if session_view(conn, session_id).get("host"):
             return False
-        host_id = (sorted(_own_device_ids()) or ["local"])[0]
-        repo, branch = "", ""
+        host_id = _canonical_device_id(host)
+        repo, branch, workdir_out = "", "", ""
         workdir = os.environ.get("AGENTS_WORKDIR", "").strip()
         if workdir and _git_ok(Path(workdir), "rev-parse",
                                "--is-inside-work-tree"):
             main = _main_repo(Path(workdir))
             slug = _repo_slug(ws, main)
-            repo = f"{slug}:{main}" if slug else str(main)
+            if slug:
+                from .remote_dispatch import write_host_path
+
+                write_host_path(ws.id, slug, str(main))
+                repo = slug
             branch = session_branch(session_id)
             # coding sessions get an isolated worktree up front —
             # ws.repos checkout_mode="shared" opts out (klanker#145 R7)
             if _checkout_mode(ws, main) == "worktree":
                 try:
-                    ensure_worktree(main, session_id)
+                    wt = ensure_worktree(main, session_id)
+                    workdir_out = str(wt)
                 except Exception:  # noqa: BLE001
                     pass  # bind still lands; worktree retries on switch
         bind_session(conn, session_id, host_id, branch=branch, repo=repo)
+        _last_bind_result.update(
+            {"bound": True, "workdir": workdir_out})
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -443,9 +538,56 @@ def session_bind_gate(session_id: str, tool: str = "",
             conn.close()
 
 
+_last_bind_result: dict = {"bound": False, "workdir": ""}
+
+
+def _canonical_device_id(host) -> str:
+    """Hub: the hub's own host_id. Spoke: its channel device_id.
+    NEVER "local" once any identity exists (klanker#148)."""
+    own = sorted(_own_channel_ids())
+    if own:
+        return own[0]
+    try:
+        return str(host.host_id())
+    except Exception:  # noqa: BLE001
+        return "local"
+
+
+def _own_channel_ids() -> set[str]:
+    import json
+
+    try:
+        from agents_workspace import Host
+
+        rows = (json.loads(
+            (Host.from_env().clients / "hubs.json").read_text(
+                encoding="utf-8")) or {}).get("hubs") or {}
+    except (OSError, json.JSONDecodeError):
+        rows = {}
+    return {str(r.get("device_id") or "") for r in rows.values()
+            if r.get("device_id")}
+
+
 def _repo_slug(ws, main: Path) -> str:
-    """ws.repos slug for a checkout path — host-local paths resolve
-    through the repo's own dir name / remote tail against the mapping."""
+    """Canonical ws.repos slug for a checkout: `git remote get-url
+    origin` matched against ws.repos[].url FIRST, basename fallback."""
+    remote_url = ""
+    try:
+        remote_url = _git(main, "remote", "get-url", "origin",
+                          timeout=GIT_TIMEOUT_SEC).stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        pass
+
+    def _norm(u: str) -> str:
+        u = u.strip().rstrip("/").removesuffix(".git").lower()
+        return u
+
+    if remote_url:
+        nr = _norm(remote_url)
+        for r in getattr(ws, "repos", ()) or ():
+            url = str(r.get("url") or "")
+            if url and _norm(url) == nr:
+                return str(r.get("slug") or "")
     want = main.name.lower()
     for r in getattr(ws, "repos", ()) or ():
         slug = str(r.get("slug") or "")
@@ -453,7 +595,9 @@ def _repo_slug(ws, main: Path) -> str:
         tail = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git").lower()
         if want == slug.lower() or (tail and want == tail):
             return slug
-    return ""
+    # unmapped checkout: the directory basename is the canonical slug —
+    # session:repo never carries an absolute path (klanker#148)
+    return str(main.name) if want else ""
 
 
 def _checkout_mode(ws, main: Path) -> str:
@@ -466,7 +610,85 @@ def _checkout_mode(ws, main: Path) -> str:
     return "worktree"
 
 
+def cmd_session(args) -> int:
+    """`klanker session show|switch` — the production caller of
+    switch_host: checkpoint -> rebind -> cleanup (klanker#148)."""
+    import json as _json
+    import sys
+
+    from agents_store.db import connect
+    from agents_workspace import Host
+
+    host = Host.from_env()
+    ws_id = os.environ.get("AGENTS_WORKSPACE", "").strip()
+    try:
+        ws = host.workspace(ws_id) if ws_id else host.select_workspace()
+    except Exception:  # noqa: BLE001
+        print("Error: no workspace selected", file=sys.stderr)
+        return 2
+    conn = None
+    try:
+        conn = connect(ws.dir / "store.db", check_same_thread=False)
+        if args.session_cmd == "show":
+            print(_json.dumps(
+                {"session": args.id,
+                 **session_view(conn, args.id)}, indent=1))
+            return 0
+        if args.session_cmd == "switch":
+            view = session_view(conn, args.id)
+            checkout = _switch_checkout(ws, view)
+            old = str(view.get("host") or "")
+            if old == args.host:
+                print(f"session {args.id}: already bound to {old}")
+                return 0
+            res = switch_host(
+                conn, args.id, args.host,
+                repo=checkout, old_host=old, ws_id=ws.id,
+                force=bool(getattr(args, "force", False)))
+            if not res.get("bound"):
+                print(_json.dumps(
+                    {"ok": False, "error": res.get("error"),
+                     "status": res.get("status") or 0,
+                     "holder": res.get("holder", "")}, indent=1),
+                    file=sys.stderr)
+                return 2
+            print(_json.dumps(
+                {"ok": True, "session": args.id,
+                 "host": args.host,
+                 "checkpoint": res.get("checkpoint")}, indent=1))
+            if checkout is not None and res.get("checkpoint", {}) \
+                    and not res["checkpoint"].get("unpushed"):
+                # clean rebind: the old session worktree is orphaned
+                remove_worktree(checkout, args.id)
+            return 0
+        print("Error: session subcommand required (show|switch)",
+              file=sys.stderr)
+        return 2
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _switch_checkout(ws, view: dict):
+    """Host-local checkout for the session's repo slug via
+    host_paths.json — the session may point at a worktree of it."""
+    from .remote_dispatch import _host_path_for
+
+    repo_ref = str(view.get("repo") or "")
+    slug = repo_ref.split(":", 1)[0] if repo_ref else ""
+    if not slug:
+        return None
+    return _host_path_for(ws, slug)
+
+
 def cmd_session_gate(args) -> int:
-    """Internal: harness bind hook via ``AGENTS_SESSION_BIND_CMD``."""
+    """Internal: harness bind hook via ``AGENTS_SESSION_BIND_CMD``.
+
+    Emits the W09 contract ``{"bound": bool, "workdir": str}`` so the
+    gate can route the tool call into the session worktree."""
+    import json as _json
+
+    _last_bind_result.update({"bound": False, "workdir": ""})
     session_bind_gate(args.session, getattr(args, "tool", "") or "")
+    print(_json.dumps(dict(_last_bind_result)))
     return 0

@@ -448,6 +448,19 @@ def build_parser() -> argparse.ArgumentParser:
     gate_p.add_argument("session", help="Session id")
     gate_p.add_argument("tool", nargs="?", default="", help="First host-local tool")
 
+    ses_p = sub.add_parser(
+        "session", help="Session host binding (klanker#148)")
+    ses_sub = ses_p.add_subparsers(dest="session_cmd")
+    ses_show = ses_sub.add_parser("show", help="Show session:host binding state")
+    ses_show.add_argument("id", help="Session id")
+    ses_sw = ses_sub.add_parser(
+        "switch", help="Move a session to another host (checkpoint first)")
+    ses_sw.add_argument("id", help="Session id")
+    ses_sw.add_argument("host", help="Target channel device id")
+    ses_sw.add_argument(
+        "--force", action="store_true",
+        help="Switch even with wip_unpushed on the old host")
+
     pair_p = sub.add_parser("pair", help="Create a single-use 60s pairing code/QR for Web or remote CLI")
     pair_p.add_argument("--remote", action="store_true", help="Mint a remote CLI pairing code")
     pair_p.add_argument(
@@ -693,6 +706,11 @@ def main(argv: list[str] | None = None) -> int:
 
         return cmd_session_gate(args)
 
+    elif args.command == "session":
+        from .session import cmd_session
+
+        return cmd_session(args)
+
     elif args.command == "doctor":
         from .doctor import run as doctor_run
 
@@ -828,22 +846,44 @@ def main(argv: list[str] | None = None) -> int:
             from agents_relay import http_adapter as _ha
 
             from .wssync import (
-                SyncRuntime, sync_workspaces, ws_grant_apply,
-                ws_invite_auth)
+                SyncRuntime, _execution_lease_sec, _set_runtime,
+                approval_apply, approval_mirror_decided,
+                approval_mirror_pending, sync_workspaces,
+                ws_grant_apply, ws_invite_auth)
 
             _sync_rt = SyncRuntime()
+            _set_runtime(_sync_rt)
             _ws_map = sync_workspaces()
             _sync_rt.attach_hub(_ch.hub(), _ws_map, str(host.host_id()))
             _cc.on_client(lambda c: _sync_rt.attach_client(
                 c, [(ws_id, e["dir"]) for ws_id, e in _ws_map.items()]))
+            _cc.on_client(
+                lambda c: setattr(c, "on_approval", approval_apply))
             _sync_rt.start()
             if hasattr(_ha, "ws_invite_auth"):
                 _ha.ws_invite_auth = ws_invite_auth
                 _ha.ws_grant_hook = ws_grant_apply
             if hasattr(_ha, "remote_turn_dispatch"):
-                from .remote_dispatch import remote_turn_dispatch
+                from .remote_dispatch import (
+                    remote_query_dispatch, remote_turn_dispatch,
+                    run_done_release, turn_lease_guard,
+                    turn_lease_release)
 
                 _ha.remote_turn_dispatch = remote_turn_dispatch
+                _ha.remote_query_dispatch = remote_query_dispatch
+                _ha.turn_lease_hook = turn_lease_guard
+                _ha.turn_lease_release_hook = turn_lease_release
+                from agents_relay import leases as _leases, web as _web
+
+                _leases.lease_ttl_fn = lambda ws_id: (
+                    _execution_lease_sec(ws_id))
+                _web.run_done_hook = run_done_release
+            if hasattr(_ch.hub(), "set_approval_handler"):
+                from agents_relay import approvals as _appr
+
+                _ch.hub().set_approval_handler(approval_apply)
+                _appr.on_pending_fn = approval_mirror_pending
+                _appr.on_decided_fn = approval_mirror_decided
             # First host-local tool in a turn subprocess binds
             # session:host into the ws store (klanker#145 R6).
             os.environ.setdefault(

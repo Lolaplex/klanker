@@ -393,7 +393,8 @@ def test_session_gate_binds_once(tmp_path, monkeypatch, repo):
     try:
         v = session_view(conn, "ses_gate1")
         assert v["host"] == "dev-self"
-        assert v["repo"] == str(repo.resolve())
+        # canonical slug only — never an absolute path (klanker#148)
+        assert v["repo"] == "repo"
         assert v["branch"] == "klanker/s-ses_gate1"
         # second fire is a no-op (existing binding wins)
         bind_session(conn, "ses_gate1", "dev-other")
@@ -425,7 +426,7 @@ def test_session_gate_repo_slug_from_ws_repos(tmp_path, monkeypatch, repo):
     assert session_bind_gate("ses_map", "git") is True
     conn = connect(h.dir / "workspaces" / "wgate" / "store.db")
     try:
-        assert session_view(conn, "ses_map")["repo"].startswith("myrepo:")
+        assert session_view(conn, "ses_map")["repo"] == "myrepo"
     finally:
         conn.close()
     # checkout_mode=worktree: session worktree exists on its branch
@@ -467,7 +468,9 @@ def test_session_gate_without_repo_binds_local(tmp_path, monkeypatch):
     conn = connect(h.dir / "workspaces" / "wgate" / "store.db")
     try:
         v = session_view(conn, "ses_chat")
-        assert v["host"] == "local"
+        # canonical id: no channel pairing -> the host's own host_id,
+        # never a synthetic "local" (klanker#148)
+        assert v["host"] == str(h.host_id())
         assert v["repo"] == "" and v["branch"] == ""
     finally:
         conn.close()

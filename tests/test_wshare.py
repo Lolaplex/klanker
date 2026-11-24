@@ -177,6 +177,9 @@ def test_remote_dispatch_proxies_bound_session(
         _data = [b"data: ok\n\n"]
         def read(self, n=-1):
             return self._data.pop(0) if self._data else b""
+        read1 = read
+        def close(self):
+            pass
 
     def fake_urlopen(req, timeout=0, **kw):
         calls.append(req)
@@ -192,6 +195,9 @@ def test_remote_dispatch_proxies_bound_session(
         def send_response(self, s): self.status = s
         def send_header(self, k, v): pass
         def end_headers(self): pass
+        def _write_json(self, payload, status):
+            self.status = status
+            self.json_body = payload
 
     body = {"session": "ses_1", "workspace": "w1", "text": "hi"}
     assert remote_turn_dispatch(Handler(), "/v1/chat/stream", body)
