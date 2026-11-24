@@ -7,6 +7,7 @@ KLANKER_GATE_TICK=2 / KLANKER_GATE_SCENARIOS=<csv>.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -16,6 +17,16 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 GATE = REPO / "scripts" / "gate-two-host.py"
+_spec = importlib.util.spec_from_file_location("gate_two_host_script", GATE)
+GATE_MOD = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(GATE_MOD)
+
+
+def test_gate_env_drops_inherited_parent_session(monkeypatch):
+    """The suite can leak an in-process turn's parent-session binding;
+    the hermetic gate must never bind its sessions to that stale id."""
+    monkeypatch.setenv("AGENTS_PARENT_SESSION", "ses_flag")
+    assert "AGENTS_PARENT_SESSION" not in GATE_MOD.base_env()
 
 
 def test_two_host_gate():

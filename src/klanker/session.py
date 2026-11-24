@@ -510,6 +510,12 @@ def switch_host(conn, session_id: str, new_host: str, *,
     _notify_sync(ws_id)
     if new_host and new_host not in _own_device_ids_host():
         _remote_session_op(new_host, ws_id, session_id, "prepare")
+    remote = result.get("remote_checkpoint")
+    if old and old not in _own_device_ids_host() \
+            and remote is not None and not remote.get("unpushed"):
+        # orphan cleanup rides the same RPC plane: the old host's
+        # worktree is only removed once its checkpoint left the device
+        _remote_session_op(old, ws_id, session_id, "cleanup")
     return result
 
 
