@@ -195,12 +195,18 @@ def test_session_show_prints_binding(host, monkeypatch, capsys):
 # -- msgsync redaction is case-insensitive ----------------------------------
 
 def test_msgsync_path_redaction_case_insensitive(tmp_path, monkeypatch):
-    """Windows path compare is case-insensitive — the redaction must be
-    too (klanker#155)."""
+    """Windows path compare is case-insensitive — the redaction is too
+    there; POSIX stays exact-case (klanker#155)."""
+    import os
+
     from klanker.msgsync import _redact_local_paths
 
     ws = tmp_path / "Work" / "Space"
     ws.mkdir(parents=True)
-    text = f"checkout at {str(ws).upper()}\\repo and {ws}/other"
+    text = f"checkout at {str(ws).upper()}/repo and {ws}/other"
     out = _redact_local_paths(text, ws)
-    assert str(ws).upper() not in out and str(ws) not in out
+    assert str(ws) not in out
+    if os.name == "nt":
+        assert str(ws).upper() not in out
+    else:
+        assert str(ws).upper() in out  # case-sensitive fs, no redaction
