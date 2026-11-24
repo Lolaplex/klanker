@@ -20,7 +20,9 @@ export function useChatSync(args: {
   turnBusyRef: React.MutableRefObject<Record<string, TurnBusy>>;
   evCache: React.MutableRefObject<Map<string, ChatMessage[]>>;
   setSessionTitles: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  setStreamStatus: (s: string | null) => void;
+  /** Status line scoped per busyKey (ws::session) — parallel turns must
+   *  not overwrite each other's progress. */
+  setStreamStatus: (key: string, s: string | null) => void;
 }): { remoteActive: boolean; remoteActiveRef: React.MutableRefObject<boolean> } {
   const {
     activeInstance, openChat, selKey, selWs, selPersona,
@@ -130,7 +132,7 @@ export function useChatSync(args: {
                 })
               );
             } else if (ev.type === "status" && ev.text) {
-              setStreamStatus(ev.text);
+              setStreamStatus(`${ws}::${session}`, ev.text);
             } else if (ev.type === "trailer" || ev.type === "error") {
               ended = true;
               break;
@@ -140,7 +142,7 @@ export function useChatSync(args: {
           // old relay without /v1/runs/stream, or run ended between poll + attach
         }
         dropRemoteBubble();
-        setStreamStatus(null);
+        setStreamStatus(`${ws}::${session}`, null);
         if (ended || remoteActiveRef.current) void run();
       })();
     };

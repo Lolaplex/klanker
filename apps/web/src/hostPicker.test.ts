@@ -336,9 +336,22 @@ test("hostEventEffect scopes refresh to the event's workspace", () => {
   const devChange = hostEventEffect(ev("device.changed", { action: "revoke", id: "dev-c" }));
   assert.equal(devChange?.refreshAll, true);
 
+  // workspace.changed (policy/default_host writes) must refresh hosts.
+  const wc = hostEventEffect(ev("workspace.changed", { ws: "w1" }, "w1"));
+  assert.deepEqual(wc?.refreshHosts, ["w1"]);
+
   // Kinds this surface ignores return null.
   assert.equal(hostEventEffect(ev("approval.changed", { action: "pending", id: "a1" }, "w1")), null);
   assert.equal(hostEventEffect(ev("store.changed", {})), null);
+});
+
+test("classifySwitch surfaces checkpoint.unpushed on a successful switch", () => {
+  const ok = classifySwitch({ ok: true, session: "s1", host: "dev-b", checkpoint: { unpushed: true } });
+  assert.equal(ok.kind, "switched");
+  if (ok.kind === "switched") assert.equal(ok.unpushed, true);
+  const clean = classifySwitch({ ok: true, session: "s1", host: "dev-b" });
+  assert.equal(clean.kind, "switched");
+  if (clean.kind === "switched") assert.equal(clean.unpushed, false);
 });
 
 test("hostLabelFor resolves member labels and falls back to the id", () => {

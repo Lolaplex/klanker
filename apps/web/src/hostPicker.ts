@@ -175,7 +175,7 @@ export function providerScope(
 // --- host switch: checkpoint -> rebind -> optional force retry -----------
 
 export type SwitchOutcome =
-  | { kind: "switched"; unchanged?: boolean }
+  | { kind: "switched"; unchanged?: boolean; unpushed?: boolean }
   /** Confirmable conflicts — wip_unpushed, or host_offline while the ws
    *  failover policy is "none" (a standby policy reroutes server-side). */
   | { kind: "confirm"; reason: "wip_unpushed" | "host_offline"; holder?: string }
@@ -184,7 +184,13 @@ export type SwitchOutcome =
 /** Classify a POST .../sessions/<sid>/host payload (parsed, never thrown). */
 export function classifySwitch(res: SessionHostSwitch | null | undefined): SwitchOutcome {
   if (!res) return { kind: "refused", reason: "no response" };
-  if (res.ok) return { kind: "switched", unchanged: !!res.unchanged };
+  if (res.ok) {
+    return {
+      kind: "switched",
+      unchanged: !!res.unchanged,
+      unpushed: !!res.checkpoint?.unpushed,
+    };
+  }
   const err = String(res.error || "failed");
   if (err === "wip_unpushed") return { kind: "confirm", reason: "wip_unpushed" };
   if (err === "host_offline") {
@@ -249,7 +255,8 @@ export async function runHostSwitch(args: {
 
   const first = classifySwitch(await args.post(ws, session, host, false));
   if (first.kind === "switched") {
-    return { switched: true, forced: false, unchanged: first.unchanged, note: first.unchanged ? `already on ${label}` : `bound: ${label} · ${checkpointBranch(session)}` };
+    const wip = first.unpushed ? " · unpushed WIP kept" : "";
+    return { switched: true, forced: false, unchanged: first.unchanged, note: first.unchanged ? `already on ${label}` : `bound: ${label} · ${checkpointBranch(session)}${wip}` };
   }
   if (first.kind !== "confirm") return refuse(first);
 
@@ -262,7 +269,8 @@ export async function runHostSwitch(args: {
   const second = await args.post(ws, session, host, true);
   const retry = classifySwitch(second);
   if (retry.kind === "switched") {
-    return { switched: true, forced: true, unchanged: retry.unchanged, note: retry.unchanged ? `already on ${label}` : `bound: ${label} · ${checkpointBranch(session)}` };
+    const wip = retry.unpushed ? " · unpushed WIP kept" : "";
+    return { switched: true, forced: true, unchanged: retry.unchanged, note: retry.unchanged ? `already on ${label}` : `bound: ${label} · ${checkpointBranch(session)}${wip}` };
   }
   return refuse(retry.kind === "confirm" ? { reason: retry.reason } : retry, true);
 }
@@ -347,7 +355,9 @@ export function hostEventEffect(ev: RelayEvent): HostEventEffect | null {
     const ws = String(ev.workspace || p.ws || "").trim();
     return ws ? { refreshHosts: [ws] } : null;
   }
-  if (ev.kind === "lease.changed") {
+  if (ev.kind === "lease.changed" || ev.kind === "workspace.changed") {
+    // lease set or policy/default_host mutated — the hosts payload is the
+    // authoritative refresh for either (klanker#152 R12).
     const ws = String(ev.workspace || p.ws || "").trim();
     return ws ? { refreshHosts: [ws] } : null;
   }

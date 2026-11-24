@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { KlankerInstance, PendingApproval, ProcessStatus } from "../types/klanker";
 import { api, notify } from "../services/api";
 
@@ -11,6 +11,12 @@ export function useApprovals(args: {
   activeInstance: KlankerInstance | null;
   status: ProcessStatus | null;
   workspaceId?: string;
+  /** Owning session + deciding device of the open chat — approvals that
+   *  name a different session/device are skipped (never decide a foreign
+   *  session's ask under this banner). Refs: the caller's chat/binding
+   *  state is declared after this hook. */
+  sessionRef?: MutableRefObject<string>;
+  deviceRef?: MutableRefObject<string>;
 }): {
   pending: PendingApproval | null;
   deciding: boolean;
@@ -19,7 +25,7 @@ export function useApprovals(args: {
   refresh: () => void;
   reset: () => void;
 } {
-  const { activeInstance, status, workspaceId = "" } = args;
+  const { activeInstance, status, workspaceId = "", sessionRef, deviceRef } = args;
   const [pending, setPending] = useState<PendingApproval | null>(null);
   const [deciding, setDeciding] = useState(false);
   const [decideError, setDecideError] = useState<string | null>(null);
@@ -48,7 +54,10 @@ export function useApprovals(args: {
     const tick = async () => {
       const mine = ++pollSeq.current;
       try {
-        const next = await api.pendingApproval(inst, workspaceId);
+        const next = await api.pendingApproval(inst, workspaceId, {
+          session: sessionRef?.current || "",
+          device: deviceRef?.current || "",
+        });
         if (!stop && mine === pollSeq.current) {
           if (
             next &&

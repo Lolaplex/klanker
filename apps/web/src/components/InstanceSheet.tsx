@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Trash2, FolderOpen, LogIn, LogOut, X } from "lucide-react";
-import { KlankerInstance, ProcessStatus } from "../types/klanker";
+import { JobRow, KlankerInstance, ProcessStatus } from "../types/klanker";
 import { SecretField } from "./SecretField";
 import { TracesPanel } from "./TracesPanel";
 import { ProvidersPanel } from "./ProvidersPanel";
@@ -44,7 +44,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   const [jobWs, setJobWs] = useState("");
   const [jobPersona, setJobPersona] = useState("");
   const [jobGoal, setJobGoal] = useState("");
-  const [jobList, setJobList] = useState<any[]>([]);
+  const [jobList, setJobList] = useState<JobRow[]>([]);
   const [jobBusy, setJobBusy] = useState(false);
   const [jobNote, setJobNote] = useState<string | null>(null);
   const [newPersona, setNewPersona] = useState("");
@@ -253,7 +253,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Workspace</label>
-                <select value={jobWsEff} onChange={(e) => setJobWs(e.target.value)} className={inputClass}>
+                <select value={jobWsEff} onChange={(e) => setJobWs(e.target.value)} style={{ colorScheme: "dark" }} className={inputClass}>
                   {!jobWsEff && <option value="">(pick)</option>}
                   {workspaces.map((w) => (
                     <option key={w.id} value={w.id}>{w.label || w.id}</option>
@@ -262,7 +262,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
               </div>
               <div>
                 <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Persona</label>
-                <select value={jobPersonaEff} onChange={(e) => setJobPersona(e.target.value)} className={inputClass}>
+                <select value={jobPersonaEff} onChange={(e) => setJobPersona(e.target.value)} style={{ colorScheme: "dark" }} className={inputClass}>
                   {personas.map((p) => (
                     <option key={p.id} value={p.id}>{p.name || p.id}</option>
                   ))}

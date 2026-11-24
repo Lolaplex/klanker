@@ -101,7 +101,18 @@ export function App() {
   const [selPersona, setSelPersona] = useState(() => readWsSel().persona || "default");
   const [wsNote, setWsNote] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
-  const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  // Live harness status line per ws::session — parallel turns must not
+  // overwrite each other's progress (klanker#152 R12).
+  const [streamStatus, setStreamStatus] = useState<Record<string, string>>({});
+  const setStreamStatusFor = useCallback((key: string, s: string | null) => {
+    setStreamStatus((prev) => {
+      if (s ? prev[key] === s : !(key in prev)) return prev;
+      const next = { ...prev };
+      if (s) next[key] = s;
+      else delete next[key];
+      return next;
+    });
+  }, []);
   const [wsSettingsId, setWsSettingsId] = useState<string | null>(null);
   const [pairOpen, setPairOpen] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
@@ -174,7 +185,18 @@ export function App() {
   const herdStatus = activeInstance ? inst.herd[activeInstance.id] ?? null : null;
   const devicesInst = inst.instances.find((i) => i.id === "local") ?? activeInstance ?? inst.instances[0] ?? null;
 
-  const approvals = useApprovals({ activeInstance, status: herdStatus, workspaceId: selWs });
+  // Approval matching needs the open chat's session + bound host — both
+  // declared further down; refs carry them in (same pattern as
+  // chatProviderScopeRef below) and are read live on every poll.
+  const approvalsSessionRef = useRef("");
+  const approvalsDeviceRef = useRef("");
+  const approvals = useApprovals({
+    activeInstance,
+    status: herdStatus,
+    workspaceId: selWs,
+    sessionRef: approvalsSessionRef,
+    deviceRef: approvalsDeviceRef,
+  });
   const relayCompat = useRelayCompat({ activeInstance, managedId: inst.managedId, herd: inst.herd });
 
   // Probe optional store / voice capabilities for active running relay.
@@ -296,30 +318,6 @@ export function App() {
     []
   );
 
-  // Model pick lives on the relay (/v1/model): a session-scoped pick
-  // always wins; the workspace last-used pick only seeds chats that don't
-  // have their own selection yet.
-  useEffect(() => {
-    const inst = activeInstance;
-    if (!inst || !selKey) return;
-    let stop = false;
-    void api
-      .getModelPick(inst, selWs, openChat?.session || "")
-      .then((pick) => {
-        if (stop || (!pick.provider && !pick.model)) return;
-        setChatPicks((prev) =>
-          pick.scope === "session" || !prev[selKey]
-            ? { ...prev, [selKey]: { provider: pick.provider, model: pick.model } }
-            : prev
-        );
-      })
-      .catch(() => {});
-    return () => {
-      stop = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selKey, openChat?.session]);
-
   const { remoteActive } = useChatSync({
     activeInstance,
     openChat,
@@ -330,7 +328,7 @@ export function App() {
     turnBusyRef,
     evCache,
     setSessionTitles: tree.setSessionTitles,
-    setStreamStatus,
+    setStreamStatus: setStreamStatusFor,
   });
 
   // --- per-chat host (klanker#152) ----------------------------------------
@@ -362,6 +360,38 @@ export function App() {
     chatProviderScope.kind === "remote" && !chatProviderScope.online;
   const chatProviderScopeRef = useRef(chatProviderScope);
   chatProviderScopeRef.current = chatProviderScope;
+  approvalsSessionRef.current = openChat?.session || "";
+  approvalsDeviceRef.current = chatHostBinding.host || "";
+  // The remembered provider/model pick keys on ws + chat + effective host
+  // — provider manifests differ per host, so a pick must never bleed into
+  // a differently-hosted chat (klanker#152 R12).
+  const pickKey = `${selWs || "default"}::${openChat?.session || selPersona || "default"}::${chatHostBinding.host || "local"}`;
+  // Model pick lives on the relay (/v1/model): a session-scoped pick
+  // always wins; the workspace last-used pick only seeds chats that don't
+  // have their own selection yet. Remote-bound chats skip the local
+  // relay's pick store entirely — their pick rides the turn payload.
+  useEffect(() => {
+    const inst = activeInstance;
+    if (!inst || !selKey) return;
+    if (chatProviderScope.kind === "remote") return;
+    let stop = false;
+    void api
+      .getModelPick(inst, selWs, openChat?.session || "")
+      .then((pick) => {
+        if (stop || (!pick.provider && !pick.model)) return;
+        setChatPicks((prev) =>
+          pick.scope === "session" || !prev[pickKey]
+            ? { ...prev, [pickKey]: { provider: pick.provider, model: pick.model } }
+            : prev
+        );
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selKey, pickKey, openChat?.session]);
+
   // A pending ask on a remote-bound turn is a mirrored remote approval —
   // the banner names the host the user is deciding for.
   const remoteApprovalLabel =
@@ -462,9 +492,10 @@ export function App() {
       if (hit) {
         return current.openId === hit.id ? prev : { ...prev, [key]: { ...current, openId: hit.id } };
       }
+      const row = tree.sessionRowsOf(ws, persona)?.find((r) => r.chatId === chatId);
       const items = [
         ...current.items.filter((i) => i.session !== chatId),
-        { id: crypto.randomUUID(), session: chatId, messages: [] },
+        { id: crypto.randomUUID(), session: chatId, messages: [], host: row?.host || undefined },
       ];
       return { ...prev, [key]: { openId: items[items.length - 1].id, items } };
     });
@@ -804,7 +835,7 @@ export function App() {
     const started = Date.now();
     let sawTrailer = false;
 
-    setStreamStatus(null);
+    setStreamStatusFor(bk, null);
 
     // SSE deltas land per token; merge them into one setChats per frame.
     const deltas = createDeltaQueue((text) => {
@@ -822,7 +853,7 @@ export function App() {
     try {
       // Provider = raw host manifest name (acp.devin, lmstudio.local, …);
       // "" = host default. The relay resolves session pick > ws pick > env.
-      const pick = chatPicks[selKey];
+      const pick = chatPicks[pickKey];
       const instProvider = inst0.provider.trim();
       const provider = pick?.provider.trim() || (instProvider !== "inherit" ? instProvider : "");
       const model = (pick && (pick.provider || pick.model) ? pick.model : inst0.model).trim();
@@ -857,14 +888,14 @@ export function App() {
       try {
         outcome = await runResumableTurn({
           open: () => api.streamChat(inst0, sendBody),
-          reattach: () => api.attachRun(inst0, { run: busy.run }),
+          reattach: () => api.attachRun(inst0, { run: busy.run, session, workspace: selWs || undefined }),
           onEvent: (ev) => {
             lastEventAt = Date.now();
             if (ev.type === "delta" && ev.text) {
               replyBuf += ev.text;
               deltas.push(ev.text);
             } else if (ev.type === "status" && ev.text) {
-              setStreamStatus(ev.text);
+              setStreamStatusFor(bk, ev.text);
             } else if (ev.type === "trailer") {
               deltas.flush();
               sawTrailer = true;
@@ -878,7 +909,7 @@ export function App() {
                 }))
               );
               if (ev.returncode && ev.returncode !== 0) {
-                setStreamStatus(`turn exited ${ev.returncode}`);
+                setStreamStatusFor(bk, `turn exited ${ev.returncode}`);
               }
             }
           },
@@ -893,7 +924,7 @@ export function App() {
               }))
             );
           },
-          onStatus: (s) => setStreamStatus(s),
+          onStatus: (s) => setStreamStatusFor(bk, s),
           idleMs: STREAM_IDLE_MS,
           maxReattach: 6,
           kicker,
@@ -918,7 +949,7 @@ export function App() {
         // The run is no longer attachable (finished + reaped, relay restart,
         // or an old relay without /v1/runs/stream). The reconcile in
         // `finally` converges the bubble to the session history.
-        setStreamStatus(null);
+        setStreamStatusFor(bk, null);
         return;
       }
       if (voiceSupported && voiceEnabled && replyBuf.trim() && typeof SpeechSynthesisUtterance !== "undefined") {
@@ -953,7 +984,7 @@ export function App() {
         Object.entries(turnBusyRef.current).filter(([, b]) => !(b.chatId === chatId && b.run === busy.run))
       );
       setTurnBusy(turnBusyRef.current);
-      setStreamStatus(null);
+      setStreamStatusFor(bk, null);
       if (document.hidden || !document.hasFocus()) {
         void notify("Klanker turn finished", inst0.name || inst0.id);
       }
@@ -1180,11 +1211,14 @@ export function App() {
                     onStop={handleStop}
                     isLoading={isLoadingTurn}
                     remoteActive={remoteActive}
-                    streamStatus={streamStatus}
-                    sessionLabel={`${selWs || "default"} · ${selPersona || "default"} · ${openChat?.session || "new"}`}
+                    title={`${selWs || "default"} · ${selPersona || "default"}`}
+                    streamStatus={
+                      openChat ? streamStatus[busyKey(selWs || "default", openChat.session || "")] || null : null
+                    }
+                    sessionLabel={openChat?.session || "new"}
                     sendHold={sendHold}
                     providers={chatProviders}
-                    pick={chatPicks[selKey]}
+                    pick={chatPicks[pickKey]}
                     favorites={chatFavorites}
                     providersStale={providersStale}
                     providersDisabled={providersDisabled}
@@ -1211,13 +1245,16 @@ export function App() {
                     onPick={(p) => {
                       setChatPicks((prev) => {
                         const next = { ...prev };
-                        if (p.provider || p.model) next[selKey] = p;
-                        else delete next[selKey];
+                        if (p.provider || p.model) next[pickKey] = p;
+                        else delete next[pickKey];
                         return next;
                       });
                       // Session pick wins server-side; the ws pick stays the
-                      // last-used seed for new chats.
-                      if (activeInstance) {
+                      // last-used seed for new chats. Remote-bound chats must
+                      // NEVER write the local /v1/model store — their pick
+                      // rides the turn payload only (provider/model already
+                      // travel in sendBody).
+                      if (activeInstance && chatProviderScope.kind !== "remote") {
                         void api
                           .setModelPick(activeInstance, selWs, p.provider || "", p.model || "", openChat?.session || "")
                           .catch(() => {});
@@ -1320,6 +1357,9 @@ export function App() {
           workspace={tree.workspaces.find((w) => w.id === wsSettingsId) ?? { id: wsSettingsId }}
           onSaved={(row) => {
             tree.setWorkspaces((tree.workspaces || []).map((w) => (w.id === row.id ? { ...w, ...row } : w)));
+            // Policy/default_host may have changed — refresh the hosts
+            // payload instead of waiting for workspace.changed.
+            tree.refreshHosts(row.id);
           }}
           onClose={() => setWsSettingsId(null)}
         />

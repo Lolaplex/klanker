@@ -22,6 +22,9 @@ export type ChatProviderRow = ProviderRow;
 
 interface ChatConsoleProps {
   instance: KlankerInstance;
+  /** Console headline — `Workspace · Persona` for the open chat
+   *  (instance.name used to render here; the console is workspace-first). */
+  title?: string;
   speakerName?: string;
   messages: ChatMessage[];
   input: string;
@@ -64,6 +67,7 @@ interface ChatConsoleProps {
 
 export const ChatConsole: React.FC<ChatConsoleProps> = ({
   instance,
+  title,
   speakerName,
   messages,
   input,
@@ -197,6 +201,9 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const last = messages[messages.length - 1];
   const streamingBubble = isLoading && last?.role === "klanker";
   const displaySpeaker = speakerName || instance.name;
+  const headlineTitle = title || instance.name;
+  const sessionText = sessionLabel || "new";
+  const exportSessionLabel = `${headlineTitle} · ${sessionText}`;
 
   return (
     <div className="flex-1 flex flex-col bg-[#000000] overflow-hidden font-mono text-xs">
@@ -205,8 +212,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         <div className="flex min-w-0 items-center space-x-2">
           <Terminal className="w-3.5 h-3.5 shrink-0 text-white" />
           <span className="font-semibold text-white tracking-wider uppercase truncate">
-            {instance.name}
-            <span className="text-[#525252] font-normal normal-case"> · {sessionLabel || "new"}</span>
+            {headlineTitle}
+            <span className="text-[#525252] font-normal normal-case"> · {sessionText}</span>
           </span>
         </div>
 
@@ -221,10 +228,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
                 const doc = {
                   agent: instance.name,
                   speaker: displaySpeaker,
-                  session: sessionLabel || "new",
+                  session: exportSessionLabel,
                   messages,
                 };
-                const stem = exportStem(sessionLabel || "chat");
+                const stem = exportStem(exportSessionLabel || "chat");
                 if (fmt === "md") downloadText(`${stem}.md`, chatToMarkdown(doc), "text/markdown");
                 else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
               }}

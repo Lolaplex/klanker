@@ -287,7 +287,7 @@ async function authedFetch(
   return res;
 }
 
-async function req<T = any>(
+async function req<T = unknown>(
   inst: KlankerInstance,
   path: string,
   init: RequestInit = {}
@@ -313,7 +313,7 @@ async function req<T = any>(
   }
 }
 
-const jsonReq = <T = any>(inst: KlankerInstance, path: string, body: object) =>
+const jsonReq = <T = unknown>(inst: KlankerInstance, path: string, body: object) =>
   req<T>(inst, path, { method: "POST", headers: headers(inst, true), body: JSON.stringify(body) });
 
 function load<T>(key: string, fallback: T): T {
@@ -957,23 +957,25 @@ export const api = {
     const mount = remoteMountId(deviceId);
     const cacheKey = `klanker.providers.${mount}`;
     try {
-      const r = await localRelayJson<{ providers?: any[] }>(
+      const r = await localRelayJson<{ providers?: WireRow[] }>(
         `/v1/remote/${encodeURIComponent(mount)}/v1/providers`
       );
       const rows = (r.providers || [])
         .map((p) => ({
-          name: String(p.name || ""),
-          kind: p.kind,
-          model: p.model,
-          when: p.when,
+          name: wstr(p.name) || "",
+          kind: wstr(p.kind),
+          model: wstr(p.model),
+          when: wstr(p.when),
           models: Array.isArray(p.models)
-            ? p.models.filter((m: unknown) => typeof m === "string" && m)
+            ? p.models.filter((m): m is string => typeof m === "string" && m !== "")
             : undefined,
-          modes: Array.isArray(p.modes) ? p.modes : undefined,
-          source: p.source,
-          configurable: p.configurable,
-          command: p.command,
-          error: p.error,
+          modes: Array.isArray(p.modes)
+            ? p.modes.filter((m): m is string => typeof m === "string")
+            : undefined,
+          source: wstr(p.source),
+          configurable: wbool(p.configurable),
+          command: wstr(p.command),
+          error: wstr(p.error),
         }))
         .filter((p) => p.name);
       try {
@@ -1230,14 +1232,35 @@ export const api = {
 
   // --- approvals (agents-relay#12) -----------------------------------------
 
-  async pendingApproval(inst: KlankerInstance, workspaceId = ""): Promise<PendingApproval | null> {
+  /** First pending approval matching this chat. When `opts.session` or
+   *  `opts.device` is given, rows claiming a DIFFERENT session/device are
+   *  skipped — deciding a foreign session's ask under this banner would
+   *  resume the wrong turn (klanker#152 R12). Legacy rows without
+   *  session/device fields still match (old relays). */
+  async pendingApproval(
+    inst: KlankerInstance,
+    workspaceId = "",
+    opts?: { session?: string; device?: string }
+  ): Promise<PendingApproval | null> {
     try {
       const ws = workspaceId.trim();
       const q = ws ? `?workspace=${encodeURIComponent(ws)}` : "";
       const r = await req<{ approvals?: PendingApproval[] }>(inst, `/v1/approvals${q}`, {
         headers: headers(inst),
       });
-      return r.approvals?.[0] ?? null;
+      const rows = r.approvals || [];
+      const session = (opts?.session || "").trim();
+      const device = (opts?.device || "").trim();
+      if (!session && !device) return rows[0] ?? null;
+      const match = rows.find((a) => {
+        if (a.session && session && a.session !== session) return false;
+        // Draft chat (no session yet): a session-scoped row only matches
+        // when the deciding device agrees — the draft minted that session.
+        if (a.session && !session && !(device && a.device === device)) return false;
+        if (a.device && device && a.device !== device) return false;
+        return true;
+      });
+      return match ?? null;
     } catch {
       return null;
     }

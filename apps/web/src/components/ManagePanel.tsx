@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { Play, Pause, Plus, RefreshCw, Trash2, X } from "lucide-react";
-import { KlankerInstance } from "../types/klanker";
+import { KlankerInstance, RoutineRow } from "../types/klanker";
 import { api } from "../services/api";
 import { dialogs } from "../services/dialogs";
 
@@ -21,7 +21,7 @@ export const ManagePanel: React.FC<ManagePanelProps> = ({ instance, workspace, o
   const [tab, setTab] = useState<Tab>("skills");
   const [note, setNote] = useState("");
   const [skills, setSkills] = useState<{ name: string; files: number; bytes: number }[]>([]);
-  const [routines, setRoutines] = useState<any[]>([]);
+  const [routines, setRoutines] = useState<RoutineRow[]>([]);
   const [memFiles, setMemFiles] = useState<{ path: string; bytes: number }[]>([]);
   const [memQuery, setMemQuery] = useState("");
   const [memOpen, setMemOpen] = useState<{ path: string; content: string } | null>(null);
