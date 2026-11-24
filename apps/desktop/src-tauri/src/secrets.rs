@@ -1,9 +1,10 @@
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -119,9 +120,136 @@ fn host_vault_path() -> Result<PathBuf, String> {
     Ok(crate::desktop_host_dir()?.join("secrets").join("host.json"))
 }
 
-pub(crate) fn read_host_vault_secret_at(path: &Path, key: &str) -> Option<String> {
+// --- cross-process vault lock ----------------------------------------------
+//
+// Writers serialize on `<file>.lock` via an OS advisory lock (`try_lock`
+// — LockFileEx / flock) with exponential retry; the handle is the lock and
+// drops release it, so a crash can never leave a stale lockfile. Retried
+// on Windows sharing violations (os error 32) and ERROR_LOCK_VIOLATION
+// (os error 33), which surface when a peer holds the lock or opened the
+// file without share flags.
+//
+// ASYMMETRY: Python `agents_workspace.secrets.write_secret` performs an
+// unlocked read-modify-write today — this lock orders Rust-side writers
+// (desktop + future Rust tools) only. Python can join the protocol later
+// by flocking `host.json.lock` the same way; until then a Rust write can
+// still race a Python write and last-rename wins.
+const VAULT_LOCK_TIMEOUT: Duration = Duration::from_secs(10);
+
+struct VaultLock {
+    _file: File,
+}
+
+fn vault_lock_path(vault: &Path) -> PathBuf {
+    let mut name = vault
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| "host.json".into());
+    name.push(".lock");
+    vault.with_file_name(name)
+}
+
+fn is_sharing_violation(e: &std::io::Error) -> bool {
+    // ERROR_SHARING_VIOLATION (32) / ERROR_LOCK_VIOLATION (33) — Windows.
+    matches!(e.raw_os_error(), Some(32) | Some(33))
+}
+
+fn acquire_vault_lock(vault: &Path) -> Result<VaultLock, String> {
+    let lock_path = vault_lock_path(vault);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create vault lock dir: {e}"))?;
+    }
+    let deadline = Instant::now() + VAULT_LOCK_TIMEOUT;
+    let mut delay = Duration::from_millis(5);
+    loop {
+        let open_res = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&lock_path);
+        match open_res {
+            Ok(file) => match file.try_lock() {
+                Ok(()) => return Ok(VaultLock { _file: file }),
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(e)) => {
+                    if !is_sharing_violation(&e) {
+                        return Err(format!("lock host vault: {e}"));
+                    }
+                }
+            },
+            Err(e) => {
+                if !is_sharing_violation(&e) {
+                    return Err(format!("open vault lockfile: {e}"));
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "host vault lock timeout ({})",
+                lock_path.display()
+            ));
+        }
+        std::thread::sleep(delay);
+        delay = (delay * 2).min(Duration::from_millis(200));
+    }
+}
+
+// --- host.json read cache ----------------------------------------------------
+// The vault file is re-read only when (mtime, len) changed — callers poll
+// the vault on every serve status tick and a stat is cheaper than a
+// read+parse. Writes invalidate their own entry.
+
+#[derive(Clone)]
+struct VaultCacheEntry {
+    mtime: SystemTime,
+    len: u64,
+    value: Arc<Value>,
+}
+
+fn vault_cache() -> &'static Mutex<HashMap<PathBuf, VaultCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<PathBuf, VaultCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn vault_cache_get(path: &Path, mtime: SystemTime, len: u64) -> Option<Arc<Value>> {
+    let entry = vault_cache().lock().ok()?.get(path)?.clone();
+    (entry.mtime == mtime && entry.len == len).then_some(entry.value)
+}
+
+fn vault_cache_set(path: &Path, mtime: SystemTime, len: u64, value: &Value) {
+    if let Ok(mut map) = vault_cache().lock() {
+        map.insert(
+            path.to_path_buf(),
+            VaultCacheEntry {
+                mtime,
+                len,
+                value: Arc::new(value.clone()),
+            },
+        );
+    }
+}
+
+fn vault_cache_invalidate(path: &Path) {
+    if let Ok(mut map) = vault_cache().lock() {
+        map.remove(path);
+    }
+}
+
+/// Parsed host.json — served from cache while (mtime, len) is unchanged.
+pub(crate) fn read_host_vault_at(path: &Path) -> Option<Arc<Value>> {
+    let meta = fs::metadata(path).ok()?;
+    let mtime = meta.modified().ok()?;
+    if let Some(hit) = vault_cache_get(path, mtime, meta.len()) {
+        return Some(hit);
+    }
     let raw = fs::read_to_string(path).ok()?;
     let val: Value = serde_json::from_str(&raw).ok()?;
+    vault_cache_set(path, mtime, meta.len(), &val);
+    Some(Arc::new(val))
+}
+
+pub(crate) fn read_host_vault_secret_at(path: &Path, key: &str) -> Option<String> {
+    let val = read_host_vault_at(path)?;
     let obj = val.as_object()?;
     let value = obj.get(key)?.as_str()?.trim();
     (!value.is_empty()).then(|| value.to_string())
@@ -138,6 +266,11 @@ pub(crate) fn write_host_vault_secrets_at(path: &Path, pairs: &[(&str, &str)]) -
     #[cfg(unix)]
     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))
         .map_err(|e| format!("chmod secrets dir: {e}"))?;
+
+    // Whole read-merge-write under the OS advisory lock — concurrent
+    // writers (several serve spawn paths, future CLI) must not clobber
+    // each other's keys.
+    let _lock = acquire_vault_lock(path)?;
 
     let mut map: Map<String, Value> = if path.exists() {
         let raw = fs::read_to_string(path).map_err(|e| format!("read host vault: {e}"))?;
@@ -205,6 +338,8 @@ pub(crate) fn write_host_vault_secrets_at(path: &Path, pairs: &[(&str, &str)]) -
         let _ = fs::remove_file(&tmp);
         return Err(format!("rename host vault: {err}"));
     }
+
+    vault_cache_invalidate(path);
 
     #[cfg(unix)]
     let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o600));
@@ -413,5 +548,86 @@ mod tests {
             read_host_vault_secret_at(&vault, "RELAY_SECRET").as_deref(),
             Some("tok-new")
         );
+    }
+
+    #[test]
+    fn concurrent_vault_read_modify_writes_lose_no_keys() {
+        let tmp = TempDir::new("rmw-stress");
+        let vault = tmp.0.join("secrets").join("host.json");
+        const THREADS: usize = 8;
+        const KEYS_PER_THREAD: usize = 6;
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(THREADS));
+        let mut handles = Vec::new();
+        for t in 0..THREADS {
+            let vault = vault.clone();
+            let barrier = barrier.clone();
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                for k in 0..KEYS_PER_THREAD {
+                    let key = format!("KEY_T{t}_K{k}");
+                    let val = format!("v-{t}-{k}");
+                    write_host_vault_secret_at(&vault, &key, &val)
+                        .unwrap_or_else(|e| panic!("write {key}: {e}"));
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let raw = fs::read_to_string(&vault).unwrap();
+        let doc: Value = serde_json::from_str(&raw).unwrap();
+        let obj = doc.as_object().unwrap();
+        assert_eq!(obj.len(), THREADS * KEYS_PER_THREAD);
+        for t in 0..THREADS {
+            for k in 0..KEYS_PER_THREAD {
+                assert_eq!(
+                    obj.get(&format!("KEY_T{t}_K{k}")).and_then(Value::as_str),
+                    Some(format!("v-{t}-{k}").as_str())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn vault_read_cache_tracks_mtime_and_len_and_invalidates_on_write() {
+        let tmp = TempDir::new("vault-cache");
+        let vault = tmp.0.join("secrets").join("host.json");
+        fs::create_dir_all(vault.parent().unwrap()).unwrap();
+        fs::write(&vault, r#"{"A":"1"}"#).unwrap();
+
+        assert_eq!(read_host_vault_secret_at(&vault, "A").as_deref(), Some("1"));
+        // External (unlocked) write is re-read — the (mtime, len) guard
+        // never serves a stale map (len differs; sleep covers mtime
+        // granularity).
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        fs::write(&vault, r#"{"A":"2","B":"x"}"#).unwrap();
+        assert_eq!(read_host_vault_secret_at(&vault, "A").as_deref(), Some("2"));
+        assert_eq!(read_host_vault_secret_at(&vault, "B").as_deref(), Some("x"));
+
+        // Locked write invalidates its own entry.
+        write_host_vault_secret_at(&vault, "C", "y").unwrap();
+        assert_eq!(read_host_vault_secret_at(&vault, "C").as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn vault_lockfile_is_sibling_lock_and_lock_serializes() {
+        let tmp = TempDir::new("vault-lock");
+        let vault = tmp.0.join("secrets").join("host.json");
+        let guard = acquire_vault_lock(&vault).unwrap();
+        assert!(tmp.0.join("secrets").join("host.json.lock").exists());
+        // Second acquisition would block — prove the lock is held by
+        // checking try_lock fails from the same file handle path.
+        let lock_path = vault_lock_path(&vault);
+        let f2 = OpenOptions::new().read(true).write(true).open(&lock_path).unwrap();
+        assert!(matches!(
+            f2.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(f2);
+        drop(guard);
+        // Released lock is re-acquirable.
+        let _again = acquire_vault_lock(&vault).unwrap();
     }
 }

@@ -2,6 +2,10 @@ import type {
   DesktopBootstrap,
   DesktopSettings,
   DiscoveredPeer,
+  HubConnectResult,
+  HubDevice,
+  HubLease,
+  HubLink,
   KlankerInstance,
   ModelPick,
   PairCreateResult,
@@ -10,14 +14,18 @@ import type {
   ProviderRow,
   RelayCapabilities,
   RelayEvent,
+  SessionHostSwitch,
   StoreListResult,
   StorePaneResult,
   TracePage,
+  WorkspaceHosts,
+  WorkspacePolicyPatch,
   WorkspaceRow,
+  WsInvite,
 } from "../types/klanker";
 import { parseSseChunk, parseStoreListResponse } from "../relayEvents.ts";
 
-const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false };
+const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false, hub_mode: false };
 
 const LS_INSTANCES = "klanker.instances";
 const LS_INSTANCES_MIGRATED = "klanker.instances_migrated";
@@ -158,8 +166,13 @@ export async function ensureLocalServePort(): Promise<number | null> {
   return null;
 }
 
+/** via relay OR via hub channel — both ride the serving relay's
+ *  /v1/remote/<id> mount; the remote secret lives server-side. */
+const isMounted = (inst: KlankerInstance): boolean =>
+  inst.via === "relay" || inst.via === "channel";
+
 const base = (inst: KlankerInstance): string =>
-  inst.via === "relay"
+  isMounted(inst)
     ? `${caps.spawn ? localRelayBaseUrl() : ""}/v1/remote/${encodeURIComponent(inst.id)}`
     : inst.kind === "local" && caps.spawn
       ? `http://127.0.0.1:${localServePort}`
@@ -170,7 +183,7 @@ function headers(inst: KlankerInstance, json = false): Record<string, string> {
   const secret = (inst.secret || "").trim();
   // Mounted remotes: the relay injects the bearer — the client holds none.
   // Desktop still authenticates to its LOCAL relay for /v1/remote/* calls.
-  if (inst.via === "relay") {
+  if (isMounted(inst)) {
     if (caps.spawn) {
       const local = secretCache.get("relay.local");
       if (local) h["Authorization"] = `Bearer ${local}`;
@@ -210,7 +223,7 @@ export function secretAccount(inst: KlankerInstance): string {
 async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void> {
   if (!caps.keyring) return;
   // Relay-mounted remotes need the local relay's own token on Desktop.
-  if (inst.via === "relay") {
+  if (isMounted(inst)) {
     if (!caps.spawn) return;
     const local = secretCache.get("relay.local");
     if (local) {
@@ -299,7 +312,20 @@ const jsonReq = <T = any>(inst: KlankerInstance, path: string, body: object) =>
 function load<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback;
+    if (!raw) return fallback;
+    const parsed: unknown = JSON.parse(raw);
+    // Plain-object fallback merges stored partial state over defaults;
+    // arrays/scalars are returned verbatim — spreading an array would
+    // produce an object without .filter/.map.
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      !Array.isArray(fallback)
+    ) {
+      return { ...(fallback as object), ...(parsed as object) } as T;
+    }
+    return (parsed ?? fallback) as T;
   } catch {
     return fallback;
   }
@@ -364,6 +390,7 @@ export const api = {
     const clean: DesktopSettings = {
       workspace: settings.workspace,
       autostart: settings.autostart,
+      hub_mode: !!settings.hub_mode,
     };
     localStorage.setItem(LS_SETTINGS, JSON.stringify(clean));
     return clean;
@@ -381,49 +408,17 @@ export const api = {
       // `kind: "local"` rows were per-instance serves (monolith) — dead.
       const local = desktopLocalInstance();
       const fileRows = list.filter((i) => i.id !== "local" && i.kind !== "local");
-      // The local relay /v1/remotes registry is canonical on Desktop too.
-      // File-registry remote rows migrate up once (endpoint host wins —
-      // relay rows are never dropped), then the list renders only relay.
-      // Migration runs only against a CONFIRMED canonical read — a null
-      // (unreachable) or refused relay must never promote keyring secrets
-      // into the vault (klanker#144).
+      // The local relay /v1/remotes registry is canonical on Desktop.
+      // Listing is read-only: file rows are NOT migrated onto the relay
+      // here — that is the explicit one-time migrateLegacyInstances()
+      // step (klanker#149). A null (unreachable) relay just means fewer
+      // rendered rows plus the file fallback below.
       const relay = await localRelayRemotes();
-      let after = relay;
-      const keptFileRows: typeof fileRows = [];
-      if (relay !== null) {
-        const relayHosts = new Set((relay.remotes || []).map((m) => hostKey(m)).filter(Boolean));
-        for (const i of fileRows) {
-          const host = hostKey(i);
-          if (host && relayHosts.has(host)) continue;
-          await hydrateSecret(i);
-          try {
-            const wrote = await localRelayRemotes("POST", {
-              id: i.id,
-              base_url: i.endpoint?.base_url || i.base_url || "",
-              label: i.name,
-              // Keyring secret travels over loopback once so the relay can
-              // inject it on proxy turns — it is never written to disk here.
-              secret: i.secret || i.endpoint?.secret || "",
-            });
-            if (wrote === null) {
-              keptFileRows.push(i);
-              continue;
-            }
-          } catch {
-            keptFileRows.push(i);
-            continue;
-          }
-          if (host) relayHosts.add(host);
-        }
-        if (fileRows.length || keptFileRows.length) {
-          after = (await localRelayRemotes()) ?? relay;
-        }
-      }
       const fileByHost = new Map(fileRows.map((i) => [hostKey(i), i] as const));
       list = [local];
       const now = new Date().toISOString();
       const rendered = new Set<string>();
-      for (const m of after?.remotes || []) {
+      for (const m of relay?.remotes || []) {
         const host = hostKey(m);
         if (host) rendered.add(host);
         const f = host ? fileByHost.get(host) : undefined;
@@ -439,17 +434,18 @@ export const api = {
           port: 0,
           system_prompt: "",
           kind: "remote",
-          via: "relay",
+          via: m.via === "channel" ? "channel" : "relay",
+          device_id: m.device_id || undefined,
           endpoint: { base_url: m.base_url },
           has_secret: m.has_secret,
           created_at: f?.created_at || now,
           updated_at: now,
         });
       }
-      // Unmigrated file rows stay visible as direct remote entries — the
-      // relay registry being unreachable or refusing must not hide
-      // instances that can still be called directly.
-      for (const i of relay === null ? fileRows : keptFileRows) {
+      // File rows the relay never mounted stay visible as direct remote
+      // entries — an unreachable relay must not hide instances that can
+      // still be called directly.
+      for (const i of fileRows) {
         const host = hostKey(i);
         if (host && rendered.has(host)) continue;
         list.push({ ...i, kind: "remote", updated_at: now });
@@ -464,6 +460,71 @@ export const api = {
     return list;
   },
 
+  /** One-time explicit import: push stale stores onto the local relay's
+   *  /v1/remotes mount table —
+   *   1. localStorage bookmarks (plaintext-secret era), which the browser
+   *      then drops,
+   *   2. file-registry remote rows (`~/.klanker/instances/<id>`).
+   *  Runs ONLY when invoked — the old per-poll auto-migration is retired
+   *  (klanker#149). Idempotent: rows whose endpoint host is already
+   *  mounted are skipped, so re-running is a cheap no-op. Throws when
+   *  the relay is unreachable — a half migration is worse than none
+   *  (klanker#144). */
+  async migrateLegacyInstances(): Promise<{ migrated: number; skipped: number }> {
+    if (!caps.spawn) return { migrated: 0, skipped: 0 };
+    const relay = await localRelayRemotes();
+    if (relay === null) throw new Error("local relay unreachable — migration aborted");
+    const relayHosts = new Set((relay.remotes || []).map((m) => hostKey(m)).filter(Boolean));
+
+    const candidates: KlankerInstance[] = [];
+    const lsPending = !localStorage.getItem(LS_INSTANCES_MIGRATED);
+    if (lsPending) {
+      const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
+      for (const inst of Array.isArray(ls) ? ls : []) {
+        if (inst.id === "local" || inst.kind === "local") continue;
+        candidates.push(inst);
+      }
+    }
+    const fileRows = (await registryList()).filter((i) => i.id !== "local" && i.kind !== "local");
+    candidates.push(...fileRows);
+
+    let migrated = 0;
+    let skipped = 0;
+    for (const i of candidates) {
+      const baseUrl = i.endpoint?.base_url || i.base_url || "";
+      if (!baseUrl) {
+        // Channel/device rows and synthetic locals have no mountable URL.
+        skipped++;
+        continue;
+      }
+      const host = hostKey(i);
+      if (host && relayHosts.has(host)) {
+        skipped++;
+        continue;
+      }
+      await hydrateSecret(i);
+      const wrote = await localRelayRemotes("POST", {
+        id: i.id,
+        base_url: baseUrl,
+        label: i.name,
+        // Keyring/LS secret travels over loopback once so the relay can
+        // inject it on proxy turns — it is never written to disk here.
+        secret: i.secret || i.endpoint?.secret || "",
+      });
+      if (wrote === null) {
+        skipped++;
+        continue;
+      }
+      if (host) relayHosts.add(host);
+      migrated++;
+    }
+    if (lsPending) {
+      localStorage.setItem(LS_INSTANCES_MIGRATED, "1");
+      localStorage.removeItem(LS_INSTANCES);
+    }
+    return { migrated, skipped };
+  },
+
   async saveKlanker(inst: KlankerInstance): Promise<KlankerInstance> {
     if (inst.kind === "local" || inst.id === "local") {
       // Synthetic local entry — edits route through settings/workspace
@@ -471,6 +532,14 @@ export const api = {
       return { ...inst, updated_at: new Date().toISOString() };
     }
     if (caps.spawn && inst.kind === "remote") {
+      if (inst.via === "channel") {
+        // Channel rows are hub-paired devices owned by the relay — never
+        // POST /v1/remotes for them. Only client-side metadata (provider,
+        // model, workspace) lands in the file registry mirror.
+        const next = { ...inst, updated_at: new Date().toISOString() };
+        const stored = await registrySave(next);
+        return { ...stored, secret: inst.secret || inst.endpoint?.secret };
+      }
       // Canonical remote registry is the local relay /v1/remotes — no
       // parallel file write; the secret goes over loopback once and then
       // only lives in the relay-side vault.
@@ -526,16 +595,27 @@ export const api = {
     try {
       inst = (await registryList()).find((i) => i.id === id);
     } catch {}
+    // Channel rows (dev-<device_id>) are revoked at the hub — the relay
+    // drops its dev-<id> remote row itself. Relay mounts DELETE /v1/remotes.
+    const deviceId = inst?.device_id || (id.startsWith("dev-") ? id.slice(4) : "");
     if (isTauri()) {
-      // Canonical store is the relay; the file delete only cleans any
-      // legacy `instances/<id>/instance.json` left from pre-#120 installs.
-      localRelayRemotes("DELETE", undefined, id).catch(() => undefined);
+      if (deviceId) {
+        localRelayFetch(`/v1/hub/devices/${encodeURIComponent(deviceId)}`, "DELETE").catch(() => undefined);
+      } else {
+        // Canonical store is the relay; the file delete only cleans any
+        // legacy `instances/<id>/instance.json` left from pre-#120 installs.
+        localRelayRemotes("DELETE", undefined, id).catch(() => undefined);
+      }
       try {
         await invoke("instance_delete", { id });
       } catch {}
     } else {
       try {
-        await fetch(`/v1/remotes/${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (deviceId) {
+          await fetch(`/v1/hub/devices/${encodeURIComponent(deviceId)}`, { method: "DELETE" });
+        } else {
+          await fetch(`/v1/remotes/${encodeURIComponent(id)}`, { method: "DELETE" });
+        }
       } catch {}
       const list = load(LS_INSTANCES, [] as KlankerInstance[]).filter((i) => i.id !== id);
       localStorage.setItem(LS_INSTANCES, JSON.stringify(list));
@@ -548,7 +628,9 @@ export const api = {
       } catch {}
       // Remove relay-side mirror rows for the same endpoint — otherwise a
       // deleted instance resurfaces as a relay-only ghost on next list.
-      if (inst && inst.kind !== "local") {
+      // Channel rows are excluded: the relay drops its dev-<id> remote row
+      // itself when the hub device is revoked.
+      if (inst && inst.kind !== "local" && inst.via !== "channel") {
         const host = hostKey(inst);
         if (host) {
           const relay = await localRelayRemotes().catch(() => null);
@@ -1265,13 +1347,15 @@ export const api = {
     if (st.port) localServePort = st.port;
     return st;
   },
-  async serveEnsureLocal(workdir?: string): Promise<ServeStatus> {
-    const st = await invoke<ServeStatus>("serve_ensure_local", { workdir });
+  /** hubMode binds the spawned serve on 0.0.0.0 (LAN hub) — the desktop
+   *  settings toggle. Passed per call; the serve env is the only sink. */
+  async serveEnsureLocal(hubMode?: boolean): Promise<ServeStatus> {
+    const st = await invoke<ServeStatus>("serve_ensure_local", { hubMode });
     if (st.port) localServePort = st.port;
     return st;
   },
-  async serveRestart(workdir?: string): Promise<ServeStatus> {
-    const st = await invoke<ServeStatus>("serve_restart", { workdir });
+  async serveRestart(hubMode?: boolean): Promise<ServeStatus> {
+    const st = await invoke<ServeStatus>("serve_restart", { hubMode });
     if (st.port) localServePort = st.port;
     return st;
   },
@@ -1295,7 +1379,7 @@ export const api = {
   async desktopBootstrap(): Promise<DesktopBootstrap> {
     await this.importLegacy();
     const settings = await this.loadSettings();
-    const st = await this.serveEnsureLocal(settings.workspace || undefined);
+    const st = await this.serveEnsureLocal(settings.hub_mode);
     const inst = desktopLocalInstance();
     const secret = (await this.secretGet(secretAccount(inst))) || "";
     if (secret) rememberSecret(secretAccount(inst), secret);
@@ -1465,6 +1549,126 @@ export const api = {
       reader.releaseLock();
     }
   },
+
+  // --- hub links / paired devices / ws-share (agents-relay#43) ---------
+  // Operator surfaces on the LOCAL relay: desktop goes over loopback with
+  // the keyring bearer, PWA uses same-origin (cookie/bearer session).
+  // All deny ws_member device tokens server-side.
+
+  /** GET /v1/hub/links — live paired-hub links (this relay as spoke). */
+  async fetchHubLinks(): Promise<HubLink[]> {
+    const r = await localRelayJson<{ links?: HubLink[] }>("/v1/hub/links");
+    return r.links || [];
+  },
+
+  /** POST /v1/hub/connect — redeem a ws/hub invite (`url` may carry a
+   *  `#pair=` fragment) and attach the live channel without a restart. */
+  async connectHub(params: {
+    url: string;
+    code?: string;
+    token?: string;
+    label?: string;
+  }): Promise<HubConnectResult> {
+    return localRelayJson<HubConnectResult>("/v1/hub/connect", "POST", {
+      ...params,
+    });
+  },
+
+  /** DELETE /v1/hub/links/<hub_id> — stop the channel client, drop the
+   *  hubs.json row + vault token. */
+  async disconnectHub(id: string): Promise<void> {
+    await localRelayJson(`/v1/hub/links/${encodeURIComponent(id)}`, "DELETE");
+  },
+
+  /** GET /v1/hub/devices — devices paired with this relay (hub side). */
+  async fetchHubDevices(): Promise<HubDevice[]> {
+    const r = await localRelayJson<{ devices?: HubDevice[] }>("/v1/hub/devices");
+    return r.devices || [];
+  },
+
+  /** DELETE /v1/hub/devices/<id> — revoke a paired device (total: live
+   *  stream, leases and the dev-<id> remote row all drop). */
+  async revokeHubDevice(id: string): Promise<void> {
+    await localRelayJson(`/v1/hub/devices/${encodeURIComponent(id)}`, "DELETE");
+  },
+
+  /** GET /v1/hub/leases — active (ws, session) execution leases. */
+  async fetchHubLeases(): Promise<HubLease[]> {
+    const r = await localRelayJson<{ leases?: HubLease[] }>("/v1/hub/leases");
+    return r.leases || [];
+  },
+
+  /** POST /v1/ws/invite — single-use code redeeming as device pair +
+   *  workspace member grant. Owner device or admin token only. */
+  async createWsInvite(ws: string, ttlSec = 60): Promise<WsInvite> {
+    return localRelayJson<WsInvite>("/v1/ws/invite", "POST", {
+      ws,
+      ttl_sec: ttlSec,
+    });
+  },
+
+  /** PATCH /v1/workspaces/<ws> — ownership/share policy keys only.
+   *  ws_member tokens are denied these fields server-side. */
+  async patchWorkspacePolicy(
+    ws: string,
+    patch: WorkspacePolicyPatch
+  ): Promise<WorkspaceRow | null> {
+    const r = await localRelayJson<{ workspace?: any }>(
+      `/v1/workspaces/${encodeURIComponent(ws)}`,
+      "PATCH",
+      { ...patch }
+    );
+    const w = r.workspace;
+    if (!w || typeof w !== "object") return null;
+    return {
+      id: w.id || ws,
+      label: w.label || w.name || w.id || ws,
+      workdir: w.workdir,
+      workdir_lock: w.workdir_lock,
+      browser_profile: w.browser_profile,
+      approval_mode: w.approval_mode,
+    };
+  },
+
+  /** GET /v1/workspaces/<ws>/hosts — member devices + presence + active
+   *  leases for the host picker. */
+  async fetchWorkspaceHosts(ws: string): Promise<WorkspaceHosts> {
+    return localRelayJson<WorkspaceHosts>(
+      `/v1/workspaces/${encodeURIComponent(ws)}/hosts`
+    );
+  },
+
+  /** POST .../sessions/<sid>/host — checkpoint -> rebind -> cleanup.
+   *  Returns the parsed payload instead of throwing so a 409
+   *  `lease_held`/`wip_unpushed` conflict reaches the caller with the
+   *  lease holder intact. */
+  async switchSessionHost(
+    ws: string,
+    session: string,
+    host: string,
+    force = false
+  ): Promise<SessionHostSwitch> {
+    const path = `/v1/workspaces/${encodeURIComponent(ws)}/sessions/${encodeURIComponent(session)}/host`;
+    const body = { host, force };
+    let res: Response | null;
+    if (caps.keyring) {
+      res = await localRelayFetch(path, "POST", body as Record<string, unknown>);
+      if (res === null) throw new Error("local relay unreachable");
+    } else {
+      res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+    const text = await res.text().catch(() => "");
+    let data: SessionHostSwitch = {};
+    try {
+      data = JSON.parse(text);
+    } catch {}
+    if (!res.ok && !data.error) throw new Error(`session host switch: ${res.status}`);
+    return data;
+  },
 };
 
 export interface ServeStatus {
@@ -1472,6 +1676,8 @@ export interface ServeStatus {
   pid?: number;
   owned: boolean;
   port: number;
+  /** Bind host the spawned serve uses: 127.0.0.1 or 0.0.0.0 (hub mode). */
+  host?: string;
   klanker_version?: string | null;
   detail?: string | null;
 }
@@ -1563,44 +1769,19 @@ function uniqueSlug(base: string, taken: string[]): string {
 }
 
 async function registryList(): Promise<KlankerInstance[]> {
+  // Listing is pure: no implicit import of stale localStorage bookmarks.
+  // That move is the explicit one-time migrateLegacyInstances() — a poll
+  // must never write (klanker#149).
   if (isTauri()) {
-    let rows: KlankerInstance[] = [];
     try {
-      rows = (await invoke<Record<string, unknown>[]>("instances_list")).map(mapLegacyInstance);
-    } catch {}
-    // One-time move: localStorage-era bookmarks → file registry.
-    if (!localStorage.getItem(LS_INSTANCES_MIGRATED)) {
-      const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
-      for (const inst of Array.isArray(ls) ? ls : []) {
-        if (inst.id === "local" || rows.some((r) => r.id === inst.id)) continue;
-        const stored = stripSecrets(inst);
-        try {
-          await invoke("instance_save", { inst: stored });
-          rows.push(stored);
-        } catch {}
-      }
-      localStorage.setItem(LS_INSTANCES_MIGRATED, "1");
-      localStorage.removeItem(LS_INSTANCES);
+      return (await invoke<Record<string, unknown>[]>("instances_list")).map(mapLegacyInstance);
+    } catch {
+      return [];
     }
-    return rows;
   }
   // Web/PWA: the serving relay holds the registry + secrets server-side.
   const remote = await relayRemotes();
-  if (remote !== null) {
-    // One-time move: localStorage bookmarks (which held plaintext secrets)
-    // onto the relay — then the browser drops them.
-    if (!localStorage.getItem(LS_INSTANCES_MIGRATED)) {
-      const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
-      for (const inst of Array.isArray(ls) ? ls : []) {
-        if (inst.id === "local" || remote.some((r) => r.id === inst.id)) continue;
-        await remoteSave(inst);
-      }
-      localStorage.setItem(LS_INSTANCES_MIGRATED, "1");
-      localStorage.removeItem(LS_INSTANCES);
-      return relayRemotes().then((r) => r ?? remote);
-    }
-    return remote;
-  }
+  if (remote !== null) return remote;
   const ls = load(LS_INSTANCES, [] as KlankerInstance[]);
   return Array.isArray(ls) ? ls : [];
 }
@@ -1612,7 +1793,14 @@ async function relayRemotes(): Promise<KlankerInstance[] | null> {
     if (!r.ok) return null;
     const data = await r.json();
     const now = new Date().toISOString();
-    return ((data.remotes || []) as { id: string; base_url: string; label: string; has_secret: boolean }[]).map(
+    return ((data.remotes || []) as {
+      id: string;
+      base_url: string;
+      label: string;
+      via?: string;
+      device_id?: string;
+      has_secret: boolean;
+    }[]).map(
       (m): KlankerInstance => ({
         id: m.id,
         name: m.label || m.id,
@@ -1625,7 +1813,8 @@ async function relayRemotes(): Promise<KlankerInstance[] | null> {
         port: 0,
         system_prompt: "",
         kind: "remote",
-        via: "relay",
+        via: m.via === "channel" ? "channel" : "relay",
+        device_id: m.device_id || undefined,
         has_secret: m.has_secret,
         endpoint: { base_url: m.base_url },
         created_at: now,
@@ -1652,7 +1841,7 @@ function hostKey(inst: { endpoint?: { base_url?: string }; base_url?: string }):
  *  paths instead. */
 async function localRelayFetch(
   path: string,
-  method: "GET" | "POST" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
   body?: Record<string, unknown>
 ): Promise<Response | null> {
   if (!caps.keyring) return null;
@@ -1674,6 +1863,42 @@ async function localRelayFetch(
   }
 }
 
+/** JSON call against the managed local relay (desktop loopback + keyring
+ *  bearer) or, on PWA, the same-origin relay (cookie/session). Throws on
+ *  HTTP errors with the relay's `error` field attached as `payload` —
+ *  structured conflicts (409 holder) are readable off the Error. */
+async function localRelayJson<T>(
+  path: string,
+  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  body?: Record<string, unknown>
+): Promise<T> {
+  let res: Response | null;
+  if (caps.keyring) {
+    res = await localRelayFetch(path, method, body);
+    if (res === null) throw new Error("local relay unreachable");
+  } else {
+    res = await fetch(path, {
+      method,
+      headers: body ? { "Content-Type": "application/json" } : {},
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  }
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    let msg = text;
+    let payload: unknown;
+    try {
+      payload = JSON.parse(text);
+      msg = (payload as { error?: string }).error || text;
+    } catch {}
+    const err = new Error(`${res.status}${msg ? `: ${String(msg).slice(0, 200)}` : ""}`);
+    (err as Error & { status?: number; payload?: unknown }).status = res.status;
+    (err as Error & { payload?: unknown }).payload = payload;
+    throw err;
+  }
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
 /** Managed local relay `/v1/remotes` — the canonical remote graph shared
  *  with PWA clients of this host. The desktop file registry mirrors into
  *  it so an instance added on either surface appears on both (#60).
@@ -1685,7 +1910,9 @@ async function localRelayRemotes(
   method: "GET" | "POST" | "DELETE" = "GET",
   body?: Record<string, unknown>,
   id?: string
-): Promise<{ remotes?: { id: string; base_url: string; label: string; has_secret: boolean }[] } | null> {
+): Promise<{
+  remotes?: { id: string; base_url: string; label: string; via?: string; device_id?: string; has_secret: boolean }[];
+} | null> {
   const res = await localRelayFetch(`/v1/remotes${id ? `/${encodeURIComponent(id)}` : ""}`, method, body);
   if (res === null) return null;
   if (!res.ok) {
