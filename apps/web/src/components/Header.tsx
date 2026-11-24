@@ -1,10 +1,18 @@
 import React from "react";
 import { Globe, Layers, Menu, Minus, QrCode, Settings, SlidersHorizontal, Square, Volume2, VolumeX, X } from "lucide-react";
-import { KlankerInstance } from "../types/klanker";
+import { KlankerInstance, ProcessStatus } from "../types/klanker";
 
 interface HeaderProps {
   activeInstance: KlankerInstance | null;
   selWs: string;
+  /** Selected contact id (resolved display name wins via personaLabel). */
+  selPersona?: string;
+  personaLabel?: string;
+  /** Title of the open chat/session. */
+  chatTitle?: string;
+  /** Primary endpoint status — the pill opens the devices panel. */
+  status?: ProcessStatus | null;
+  onOpenDevices?: () => void;
   onOpenSettings: () => void;
   onOpenManage: () => void;
   onOpenNav: () => void;
@@ -24,9 +32,30 @@ function tauriWindow(): TauriWindow | null {
   return w.__TAURI__?.window?.getCurrentWindow?.() ?? null;
 }
 
+/** Status pill text/dot for the primary endpoint. */
+function statusMeta(status: ProcessStatus | null | undefined): { label: string; dot: string } {
+  if (status?.detail === "unauthorized") return { label: "auth", dot: "bg-red-500" };
+  switch (status?.state) {
+    case "running":
+    case "not_owned":
+      return { label: "online", dot: "bg-white animate-pulse" };
+    case "starting":
+      return { label: "starting", dot: "bg-white animate-pulse" };
+    case "port_busy":
+      return { label: "port busy", dot: "bg-[#a3a3a3]" };
+    default:
+      return { label: status?.state === "lost" ? "lost" : "offline", dot: "bg-[#525252]" };
+  }
+}
+
 export const Header: React.FC<HeaderProps> = ({
   activeInstance,
   selWs,
+  selPersona,
+  personaLabel,
+  chatTitle,
+  status,
+  onOpenDevices,
   onOpenSettings,
   onOpenManage,
   onOpenNav,
@@ -39,11 +68,11 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleVoice,
 }) => {
   const url = activeInstance?.endpoint?.base_url || activeInstance?.base_url || window.location.host;
-  const remote = activeInstance?.kind === "remote";
   const win = tauriWindow();
   const run = (fn: (w: TauriWindow) => Promise<void>) => () => {
     if (win) void fn(win).catch(() => undefined);
   };
+  const pill = statusMeta(status);
 
   return (
     <header data-tauri-drag-region className="min-h-12 shrink-0 bg-[#000000] border-b border-[#262626] flex items-center justify-between px-3 select-none z-30 touch-none">
@@ -56,22 +85,35 @@ export const Header: React.FC<HeaderProps> = ({
           <Menu className="w-4 h-4" />
         </button>
         {activeInstance && (
-          <>
-            <span className="md:hidden font-semibold text-white truncate">{activeInstance.name}</span>
-            <div className="hidden md:flex items-center space-x-1 text-[#737373] text-[11px] min-w-0">
-              <Globe className="w-3 h-3 text-[#525252] shrink-0" />
-              <span className="max-w-[280px] truncate">{url.replace(/^https?:\/\//, "")}</span>
-              {selWs && <span className="text-[#525252]">· ws {selWs}</span>}
-              {!remote && activeInstance.workspace && (
-                <span className="text-[#525252]">· {activeInstance.workspace}</span>
-              )}
-              {activeInstance.persona && <span className="text-[#525252]">· {activeInstance.persona}</span>}
-            </div>
-          </>
+          <div className="flex items-center space-x-1 min-w-0 text-[11px]">
+            <Globe className="w-3 h-3 text-[#525252] shrink-0 hidden md:inline" />
+            <span className="font-semibold text-white truncate" title={url.replace(/^https?:\/\//, "")}>
+              {selWs || activeInstance.name}
+            </span>
+            {selPersona && (
+              <>
+                <span className="text-[#525252] shrink-0">&gt;</span>
+                <span className="text-[#a3a3a3] truncate">{personaLabel || selPersona}</span>
+              </>
+            )}
+            {chatTitle && <span className="hidden md:inline text-[#525252] truncate">· {chatTitle}</span>}
+          </div>
         )}
       </div>
 
       <div className="flex items-center space-x-2 shrink-0">
+        {activeInstance && onOpenDevices && (
+          <button
+            type="button"
+            onClick={onOpenDevices}
+            aria-label="Devices"
+            title="Devices &amp; presence"
+            className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1.5 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
+          >
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pill.dot}`} />
+            <span className="hidden md:inline">{pill.label}</span>
+          </button>
+        )}
         {activeInstance && showStoreToggle && onToggleStore && (
           <button
             type="button"

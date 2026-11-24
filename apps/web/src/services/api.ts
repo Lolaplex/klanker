@@ -25,6 +25,7 @@ import type {
   WorkspaceHosts,
   WorkspacePolicyPatch,
   WorkspaceRow,
+  WsInbox,
   WsInvite,
 } from "../types/klanker";
 import { parseSseChunk, parseStoreListResponse } from "../relayEvents.ts";
@@ -848,14 +849,37 @@ export const api = {
     );
   },
 
-  async listPersonas(inst: KlankerInstance, workspace: string): Promise<{ id: string; name?: string }[]> {
+  async listPersonas(
+    inst: KlankerInstance,
+    workspace: string
+  ): Promise<{ id: string; name?: string; role?: string }[]> {
     const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
     const r = await req<{ personas?: (WireRow | string)[] }>(inst, `/v1/personas${q}`, { headers: headers(inst) });
     return (r.personas || []).map((p) => {
       const o: WireRow = typeof p === "object" && p !== null ? p : {};
       const fallback = typeof p === "string" ? p : "";
-      return { id: wstr(o.id) || fallback, name: wstr(o.name) || wstr(o.id) || fallback };
+      return {
+        id: wstr(o.id) || fallback,
+        name: wstr(o.name) || wstr(o.id) || fallback,
+        role: wstr(o.role),
+      };
     });
+  },
+
+  /** GET /v1/workspaces/<ws>/inbox — per-persona handoff/unread counts +
+   *  recent handoff events for the sidebar contacts badges. null when the
+   *  relay predates the feed or denies it (ws_member tokens). */
+  async wsInbox(inst: KlankerInstance, workspace: string): Promise<WsInbox | null> {
+    try {
+      const r = await req<{ personas?: WsInbox["personas"]; recent?: WsInbox["recent"] }>(
+        inst,
+        `/v1/workspaces/${encodeURIComponent(workspace)}/inbox`,
+        { headers: headers(inst) }
+      );
+      return { personas: r.personas || {}, recent: r.recent || [] };
+    } catch {
+      return null;
+    }
   },
 
   /** Server-side sessions for (workspace, persona). */
@@ -863,7 +887,7 @@ export const api = {
     inst: KlankerInstance,
     workspace: string,
     persona: string
-  ): Promise<{ id: string; goal?: string; title?: string; created_at?: string; last_active?: string }[]> {
+  ): Promise<{ id: string; goal?: string; title?: string; host?: string; created_at?: string; last_active?: string }[]> {
     try {
       const r = await req<{ sessions?: WireRow[] }>(
         inst,
@@ -874,6 +898,7 @@ export const api = {
         id: wstr(s.id) || wstr(s.session) || "",
         goal: wstr(s.goal),
         title: wstr(s.title),
+        host: wstr(s.host),
         created_at: wstr(s.created_at),
         last_active: wstr(s.last_active) || wstr(s.updated_at),
       }));
