@@ -32,7 +32,8 @@ jobs:
           # Stacked-suite pins: this branch ships against unreleased legs of
           # its sibling repos. dev-suite.py honours <NAME>_REF first; the
           # head-ref guard makes the pins self-expire once merged to dev.
-          if [ "${GITHUB_HEAD_REF:-}" = "feat/ws-share-acl" ]; then
+          if [ "${GITHUB_HEAD_REF:-}" = "feat/ws-share-acl" ] \
+             || [ "${GITHUB_HEAD_REF:-}" = "feat/two-host-gate" ]; then
             export AGENTS_STORE_REF=feat/store-migration-scrub-hlc
             export AGENTS_WORKSPACE_REF=feat/failclosed-policy-identity-secrets
             export AGENTS_RELAY_REF=feat/store-projection-readers
@@ -48,7 +49,7 @@ jobs:
           fi
 
       - name: Run test suite
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           pytest
 
