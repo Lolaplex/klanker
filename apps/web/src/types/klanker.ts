@@ -281,6 +281,22 @@ export interface WorkspacePolicyPatch {
   execution?: Record<string, unknown>;
 }
 
+/** GET /v1/workspaces/<ws>/inbox — team feed: per-persona handoff counts
+ *  plus the recent handoff/reply events (agents-relay wake.team_inbox). */
+export interface WsInbox {
+  personas: Record<string, WsInboxPersona>;
+  recent: { at?: string; task?: string; title?: string; status?: string; from?: string; to?: string }[];
+}
+
+export interface WsInboxPersona {
+  open?: number;
+  running?: number;
+  done?: number;
+  failed?: number;
+  unread?: number;
+  total?: number;
+}
+
 /** GET /v1/workspaces/<ws>/hosts payload. */
 export interface WorkspaceHosts {
   workspace: string;

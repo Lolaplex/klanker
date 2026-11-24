@@ -2,7 +2,14 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { kbDebugEnabled } from "./kbDebug";
+import { migrateLegacyStorage } from "./chatBuckets";
 import "./index.css";
+
+// One-time workspace-first storage migration (klanker#150): legacy
+// `klanker.chats.<inst> …` buckets, `klanker.sel.*` selection and
+// `klanker.titles` merge into the `klanker.ws.*` keyspace before any hook
+// reads localStorage.
+migrateLegacyStorage();
 
 if (
   import.meta.env.PROD &&

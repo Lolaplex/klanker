@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChatMessage, KlankerInstance } from "../types/klanker";
 import { api } from "../services/api";
-import { ChatBucket, DeskChat, TurnBusy, clipTitle, mapChat } from "../chatBuckets";
+import { ChatBucket, DeskChat, TurnBusy, busyForChat, clipTitle, mapChat } from "../chatBuckets";
 import { eventsToMessages, mergeMessages } from "../chatSync";
 
 /**
@@ -17,7 +17,7 @@ export function useChatSync(args: {
   selWs: string;
   selPersona: string;
   setChats: React.Dispatch<React.SetStateAction<Record<string, ChatBucket>>>;
-  turnBusyRef: React.MutableRefObject<TurnBusy | null>;
+  turnBusyRef: React.MutableRefObject<Record<string, TurnBusy>>;
   evCache: React.MutableRefObject<Map<string, ChatMessage[]>>;
   setSessionTitles: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setStreamStatus: (s: string | null) => void;
@@ -43,14 +43,14 @@ export function useChatSync(args: {
     const key = selKey;
     const chatId = chat.id;
     const session = chat.session;
-    const ck = `${inst.id} ${ws} ${persona} ${session}`;
+    const ck = `${ws} ${persona} ${session}`;
     remoteActiveRef.current = false;
     setRemoteActive(false);
     const apply = (restored: ChatMessage[]) => {
       if (restored.length === 0) return;
       setChats((prev) =>
         mapChat(prev, key, chatId, (item) => {
-          if (turnBusyRef.current?.chatId === chatId) return item;
+          if (busyForChat(turnBusyRef.current, chatId)) return item;
           const next = mergeMessages(item.messages, restored);
           return next === item.messages ? item : { ...item, messages: next };
         })
@@ -158,7 +158,7 @@ export function useChatSync(args: {
       pollTimer = window.setTimeout(
         () => {
           const rearm = () => tickPoll();
-          if (document.visibilityState !== "visible" || turnBusyRef.current?.chatId === chatId) {
+          if (document.visibilityState !== "visible" || busyForChat(turnBusyRef.current, chatId)) {
             rearm();
             return;
           }

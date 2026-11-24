@@ -56,7 +56,7 @@ export async function reconcileChat(
     const events = await api.sessionEvents(inst, ws, persona, session);
     if (events) {
       const serverMsgs = eventsToMessages(events);
-      ctx.evCache.set(`${inst.id} ${ws} ${persona} ${session}`, serverMsgs);
+      ctx.evCache.set(`${ws} ${persona} ${session}`, serverMsgs);
       ctx.applyToChat(key, chatId, (messages) => mergeMessages(messages, serverMsgs));
       const lastUser = serverMsgs.reduce((acc, m, i) => (m.role === "user" ? i : acc), -1);
       const replied = lastUser < 0 || serverMsgs.some((m, i) => i > lastUser && m.role === "klanker");

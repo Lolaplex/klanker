@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test src/chatUi.test.ts src/markdownSafety.test.ts src/chatPersist.test.ts src/chatExport.test.ts src/push.test.ts src/kbDebug.test.ts src/relayCompat.test.ts src/serveState.test.ts src/wave5.test.ts src/pairLink.test.ts src/providerPicker.test.ts src/turnStream.test.ts src/api.test.ts",
+    "test": "node --experimental-strip-types --test src/chatUi.test.ts src/markdownSafety.test.ts src/chatPersist.test.ts src/chatExport.test.ts src/push.test.ts src/kbDebug.test.ts src/relayCompat.test.ts src/serveState.test.ts src/wave5.test.ts src/pairLink.test.ts src/providerPicker.test.ts src/turnStream.test.ts src/api.test.ts src/wsTree.test.ts",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
