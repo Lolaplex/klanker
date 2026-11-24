@@ -101,7 +101,8 @@ def cmd_remote(args: Any) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
         token = _read_token(args)
-        body: dict[str, Any] = {"id": rid, "base_url": base_url}
+        body: dict[str, Any] = {"id": rid, "base_url": base_url,
+                                "label": name}
         if token:
             body["secret"] = token
         row, err = upsert_remote(_relay_config(), body)

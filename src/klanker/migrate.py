@@ -103,7 +103,7 @@ _INLINE_SECRETS = [
 # (``secret_key = 'd3ad…'``, ``client_secret: 0123…``).
 _HEX32_SECRET = re.compile(
     r"(?i)(?<![\w.])([A-Za-z0-9_.-]{0,40}secret[A-Za-z0-9_.-]{0,40}"
-    r"[ \t]*[:=][ \t]*[\"']?)[0-9a-f]{32}(?![0-9a-fA-F])")
+    r"[ \t]*[:=][ \t]*[\"']?)[0-9a-fA-F]{32}(?![0-9a-fA-F]*[\w-])")
 # scheme://user:password@host -> keep user, redact the password
 # bounded quantifiers + left boundary keep this linear on huge tokens
 _URL_PASSWORD = re.compile(
@@ -202,10 +202,20 @@ def redact_text(text: str) -> tuple[str, int]:
         if m and _is_secret_key(m.group("key")):
             val = m.group("val")
             raw = val.strip()
-            # strip an inline ` # comment` tail before the whitespace check
-            # so `api_key: abc123 # prod` still redacts; quoted values keep
-            # their inner # verbatim
-            if raw[:1] not in "\"'":
+            # strip an inline ` # comment` tail before the whitespace
+            # check so `api_key: abc123 # prod` still redacts; quoted
+            # values keep their inner # verbatim. A QUOTED value may
+            # also carry a trailing comment — `api_key: "sec" # note`
+            # must reduce to the quoted core or the whitespace test
+            # waves it through (klanker#155).
+            if raw[:1] in "\"'":
+                q = raw[0]
+                end = raw.find(q, 1)
+                if end >= 1:
+                    tail = raw[end + 1:].lstrip(" \t")
+                    if not tail or tail.startswith("#"):
+                        raw = raw[:end + 1]
+            else:
                 raw = re.sub(r"[ \t]+#.*$", "", raw).rstrip()
             if raw in ("|", ">", "|-", ">-", "|+", ">+"):
                 block_indent = len(line) - len(line.lstrip(" \t"))
@@ -370,13 +380,32 @@ class _Importer:
     same millisecond can never collide on ``ux_tx_origin``. Dedupe is
     content equality on ``v_current``: unchanged files produce no tx,
     changed files re-import under the next seq (LWW keeps the newer tx).
+
+    ``ord`` comes from a node-qualified :class:`Hlc` seeded on the
+    store's highest HLC ord (``HLC_GLOB``) — the old synthetic
+    ``"…00000.import"`` ords collided across hosts and never carried a
+    node suffix a peer could attribute (klanker#155).
     """
 
     def __init__(self, conn, node: str = ""):
         self.conn = conn
-        self.origin = actor("import", node or local_node_id(), "store")
+        self.node = node or local_node_id()
+        self.origin = actor("import", self.node, "store")
         self.seq = next_seq(conn, self.origin)
         self.units: list[_ImportTx] = []
+        self._clock = None
+
+    def _ord(self) -> str:
+        if self._clock is None:
+            from agents_store.hlc import Hlc, HLC_GLOB
+            from .msgsync import _node_part
+            self._clock = Hlc(_node_part(self.node))
+            row = self.conn.execute(
+                "SELECT MAX(ord) FROM datom WHERE ord GLOB ?",
+                (HLC_GLOB,)).fetchone()
+            if row and row[0]:
+                self._clock.observe(row[0])
+        return self._clock.tick()
 
     def submit(self, domain: str, relpath: str, line, datoms) -> _ImportTx:
         u = _ImportTx(domain, relpath, str(line), datoms)
@@ -391,7 +420,7 @@ class _Importer:
                 continue
             res = ingest(
                 self.conn, self.origin, self.seq,
-                f"{self.seq:013d}.00000.import", u.datoms)
+                self._ord(), u.datoms)
             self.seq += 1
             u.applied = bool(res.applied)
 
@@ -559,7 +588,7 @@ def _memory_files(root: Path):
             yield p, rel
 
 
-def _memory_unit(src: Path, rel: Path, stats: dict):
+def _memory_unit(src: Path, rel: Path, stats: dict, node: str = ""):
     """(slug, datoms, redactions) for one memory file, or None."""
     try:
         text = src.read_text(encoding="utf-8")
@@ -586,9 +615,38 @@ def _memory_unit(src: Path, rel: Path, stats: dict):
     e = f"mem:{slug}"
     datoms = [(e, "mem:file", rel.as_posix(), True),
               (e, "mem:text", text, True)]
+    if node:
+        # ownership marker: only the importing host may later retract
+        # this entity when the file vanishes (klanker#155)
+        datoms.append((e, "mem:host", node, True))
     if title:
         datoms.append((e, "mem:title", title, True))
     return slug, datoms
+
+
+def _retract_missing_memory(conn, imp: _Importer, seen: set[str],
+                            stats: dict) -> None:
+    """Files deleted from this host's ``memory/`` retract their ``mem:*``
+    datoms so the projection removes the note on every peer.
+
+    Scoped to ``mem:host == <this node>`` — a mem entity another host
+    imported must survive here even though the file never existed on
+    this disk (memory syncs through the store, not the filesystem).
+    Legacy entities without ``mem:host`` are never retracted.
+    """
+    cur: dict[str, dict] = {}
+    for e, a, v in conn.execute(
+            "SELECT e, a, v FROM v_current WHERE e LIKE 'mem:%'"):
+        cur.setdefault(e, {})[a] = v
+    for e in sorted(cur):
+        d = cur[e]
+        if str(d.get("mem:host") or "") != imp.node:
+            continue
+        rel = str(d.get("mem:file") or "")
+        if rel and rel not in seen:
+            datoms = [(e, a, v, False) for a, v in d.items()]
+            imp.submit("memory", f"memory/{rel}", f"retract:{e}", datoms)
+            stats["retracted"] += 1
 
 
 def _migrate_memory(conn, ws_dir: Path, imp: _Importer,
@@ -596,30 +654,33 @@ def _migrate_memory(conn, ws_dir: Path, imp: _Importer,
     """Collect memory units. Returns (stats, pending)."""
     root = ws_dir / "memory"
     stats = {"imported": 0, "dupes": 0, "archived": 0, "redacted": 0,
-             "skipped_large": 0}
+             "skipped_large": 0, "retracted": 0}
     pending = []
-    if not root.is_dir():
-        return stats, pending
     limit = _memory_max_bytes(max_bytes)
-    for src, rel in list(_memory_files(root)):
-        try:
-            size = src.stat().st_size
-        except OSError:
-            continue
-        if limit > 0 and size > limit:
-            stats["skipped_large"] += 1
-            msg = (f"memory/{rel.as_posix()}: {size} bytes > {limit},"
-                   " skipped (not imported, not archived)")
-            log.warning("migrate: %s", msg)
-            if warnings is not None:
-                warnings.append(msg)
-            continue
-        unit = _memory_unit(src, rel, stats)
-        if unit is None:
-            continue
-        slug, datoms = unit
-        u = imp.submit("memory", f"memory/{rel.as_posix()}", slug, datoms)
-        pending.append((u, src))
+    seen: set[str] = set()
+    if root.is_dir():
+        for src, rel in list(_memory_files(root)):
+            seen.add(rel.as_posix())
+            try:
+                size = src.stat().st_size
+            except OSError:
+                continue
+            if limit > 0 and size > limit:
+                stats["skipped_large"] += 1
+                msg = (f"memory/{rel.as_posix()}: {size} bytes > {limit},"
+                       " skipped (not imported, not archived)")
+                log.warning("migrate: %s", msg)
+                if warnings is not None:
+                    warnings.append(msg)
+                continue
+            unit = _memory_unit(src, rel, stats, node=imp.node)
+            if unit is None:
+                continue
+            slug, datoms = unit
+            u = imp.submit("memory", f"memory/{rel.as_posix()}", slug,
+                           datoms)
+            pending.append((u, src))
+    _retract_missing_memory(conn, imp, seen, stats)
     return stats, pending
 
 
@@ -719,6 +780,9 @@ def migrate_to_store(ws_dir: str | Path, *, archive: bool = False,
             _archive(ws_dir, ccfg)
             out["config"]["archived"] += 1
         out["memory"] = _settle(mstats, mpending, archive, ws_dir)
+        # store -> files leg right after import: retracted mem:* entities
+        # drop their generated projection file (klanker#155)
+        out["projection"] = render_memory_projection(conn, ws_dir)
         out["warnings"] = warnings
         return out
     finally:

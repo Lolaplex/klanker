@@ -20,6 +20,7 @@ worktree paths are confined to the root (no traversal, no symlinks).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -177,11 +178,21 @@ def _main_repo(repo: Path) -> Path:
 
 def _check_contained(path: Path, root: Path) -> None:
     """Refuse symlinks between ``root`` and ``path`` and anything whose
-    resolved location escapes ``root`` (``root`` itself may be a link)."""
+    resolved location escapes ``root`` (``root`` itself may be a link).
+
+    BOTH sides are resolved before the escape check — a lexical
+    ``relative_to`` alone breaks on Windows 8.3 short names and case
+    mismatches (klanker#155)."""
+    root = Path(root).resolve()
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise InvalidSessionId(f"worktree path escapes root: {path}")
     try:
         rel = path.relative_to(root)
     except ValueError:
-        raise InvalidSessionId(f"worktree path escapes root: {path}") from None
+        # Lexical form mismatches the resolved root (8.3/case) — walk the
+        # resolved tail instead; the escape check above already ran.
+        rel = resolved.relative_to(root)
     cur = root
     for part in rel.parts:
         if part in ("", ".", ".."):
@@ -189,8 +200,6 @@ def _check_contained(path: Path, root: Path) -> None:
         cur = cur / part
         if cur.is_symlink():
             raise InvalidSessionId(f"symlink in worktree path: {cur}")
-    if not path.resolve().is_relative_to(root):
-        raise InvalidSessionId(f"worktree path escapes root: {path}")
 
 
 def _resolved_root(root: str | Path | None = None) -> Path:
@@ -384,6 +393,60 @@ def remove_worktree(repo: str | Path, session_id: str, *,
     return out
 
 
+def _remote_session_op(device_id: str, ws_id: str, session_id: str,
+                       op: str, *, timeout_sec: float = 90.0) -> dict | None:
+    """Hub -> spoke RPC: POST /v1/klanker/sessions/<op> on the device
+    that holds the session worktree. ``None`` when the device is not a
+    connected channel peer (best effort — the lease/ wip gates are the
+    authoritative guards)."""
+    try:
+        from agents_relay.channel import hub as _hub
+
+        ch = _hub()
+        if not ch.is_connected(device_id):
+            return None
+        import base64
+
+        body = json.dumps(
+            {"session": session_id, "workspace": ws_id}).encode()
+        frames = ch.rpc_call(device_id, "http", {"req": {
+            "method": "POST",
+            "path": f"/v1/klanker/sessions/{op}",
+            "content_type": "application/json",
+            "body_b64": base64.b64encode(body).decode("ascii")}},
+            timeout_sec=timeout_sec)
+        first = next(frames, None) or {}
+        if "body_b64" in first:
+            try:
+                import base64 as _b64
+
+                return json.loads(
+                    _b64.b64decode(str(first["body_b64"])))
+            except Exception:  # noqa: BLE001
+                return first
+        if "body" in first:
+            try:
+                return json.loads(str(first["body"]))
+            except Exception:  # noqa: BLE001
+                pass
+        return first
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _notify_sync(ws_id: str = "") -> None:
+    """Kick the running SyncRuntime so the new binding/announce drains
+    now instead of at the next tick (klanker#155)."""
+    try:
+        from .wssync import _runtime
+
+        rt = _runtime()
+        if rt is not None:
+            rt.notify(ws_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def switch_host(conn, session_id: str, new_host: str, *,
                 repo: str | Path | None = None,
                 old_host: str = "", node: str | None = None,
@@ -397,6 +460,13 @@ def switch_host(conn, session_id: str, new_host: str, *,
     strand work). A session without a worktree (pure conversation)
     rebinds without a checkpoint; an orphaned session worktree is
     cleaned up after a successful rebind.
+
+    When the OLD host is a remote channel device, the checkpoint rides
+    the hub RPC plane (``POST /v1/klanker/sessions/checkpoint`` on the
+    old host's loopback) — its worktree is local to that host, a
+    hub-side repo path can never reach it (klanker#155). After the
+    rebind the NEW host gets a ``prepare`` RPC (fetch + ensure_worktree)
+    and the sync runtime is kicked so the binding propagates now.
     """
     result = {"checkpoint": None, "bound": False, "status": 0}
     if ws_id:
@@ -411,8 +481,17 @@ def switch_host(conn, session_id: str, new_host: str, *,
         result["error"] = "wip_unpushed"
         result["status"] = 409
         return result
+    old = old_host or str(view.get("host") or "")
+    if old and old not in _own_device_ids_host():
+        remote = _remote_session_op(old, ws_id, session_id, "checkpoint")
+        result["remote_checkpoint"] = remote
+        if remote and remote.get("unpushed") and not force:
+            set_wip_unpushed(conn, session_id, True, node=node)
+            result["error"] = "wip_unpushed"
+            result["status"] = 409
+            return result
     if repo is not None:
-        cp = checkpoint(repo, session_id, old_host, root=root)
+        cp = checkpoint(repo, session_id, old, root=root)
         result["checkpoint"] = cp
         if cp["error"] and not cp["committed"] \
                 and cp["error"] != "no session worktree" \
@@ -425,7 +504,16 @@ def switch_host(conn, session_id: str, new_host: str, *,
         set_wip_unpushed(conn, session_id,
                          bool(result["checkpoint"]["unpushed"]), node=node)
     result["bound"] = True
+    _notify_sync(ws_id)
+    if new_host and new_host not in _own_device_ids_host():
+        _remote_session_op(new_host, ws_id, session_id, "prepare")
     return result
+
+
+def _own_device_ids_host() -> set[str]:
+    from .remote_dispatch import _own_device_ids
+
+    return _own_device_ids()
 
 
 def _own_holder_id() -> str:
@@ -477,13 +565,58 @@ def _lease_holder_for(ws_id: str, session_id: str) -> str:
     return ""
 
 
+def _bind_declined(reason: str = "") -> dict:
+    out = {"bound": False, "workdir": "", "already_bound": False}
+    if reason:
+        out["reason"] = reason
+    _last_bind_result.update(out)
+    return dict(out)
+
+
+def _own_device_ids(host) -> set[str]:
+    """Every device id this host may already be bound under: one
+    channel device_id per linked hub + the bare host_id."""
+    ids = _own_channel_ids()
+    try:
+        ids.add(str(host.host_id()))
+    except Exception:  # noqa: BLE001
+        pass
+    return ids
+
+
+def _bound_workdir(conn, ws, session_id: str) -> str:
+    """Existing session worktree for an already-bound session — turn-2
+    tools must land in the same tree turn-1 minted (klanker#155)."""
+    try:
+        view = session_view(conn, session_id)
+        slug = str(view.get("repo") or "").split(":", 1)[0]
+        if not slug:
+            return ""
+        from .remote_dispatch import _host_path_for
+
+        checkout = _host_path_for(ws, slug)
+        if checkout is None:
+            return ""
+        wt = find_worktree(checkout, session_branch(session_id))
+        if wt is not None and wt.exists() \
+                and _inside_root(wt, _resolved_root()):
+            return str(wt)
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
 def session_bind_gate(session_id: str, tool: str = "",
-                      workspace: object = None) -> bool:
+                      workspace: object = None) -> dict:
     """Bind ``session_id`` to this host on its first host-local tool.
 
     Called either as the in-process harness gate (``register_session_gate``
     — ``klanker.turn`` registers it, ``workspace`` is ignored, the turn env
-    selects the store) or via ``AGENTS_SESSION_BIND_CMD``. Idempotent: an
+    selects the store) or via ``AGENTS_SESSION_BIND_CMD``. Returns the W09
+    dict ``{"bound": bool, "workdir": str, "already_bound": bool}`` —
+    ``bound`` is the routing decision (False declines the tool call);
+    ``already_bound`` marks an idempotent no-op so a second turn on this
+    host runs instead of erroring (klanker#155). Idempotent: an
     already-bound session is left alone (a switch made explicitly wins).
     ``session:repo`` carries the canonical ws.repos SLUG only (never an
     absolute path); each host resolves its own checkout via
@@ -494,18 +627,28 @@ def session_bind_gate(session_id: str, tool: str = "",
 
     session_id = str(session_id or "").strip()
     if not session_id:
-        return False
+        return _bind_declined()
     host = Host.from_env()
     ws_id = os.environ.get("AGENTS_WORKSPACE", "").strip()
     try:
         ws = host.workspace(ws_id) if ws_id else host.select_workspace()
     except Exception:  # noqa: BLE001
-        return False
+        return _bind_declined()
     conn = None
     try:
         conn = connect(ws.dir / "store.db", check_same_thread=False)
-        if session_view(conn, session_id).get("host"):
-            return False
+        bound_host = str(session_view(conn, session_id).get("host") or "")
+        if bound_host:
+            if bound_host not in _own_device_ids(host):
+                # Bound to a DIFFERENT host — host-local tools must not
+                # run here; the caller misrouted the turn (klanker#155).
+                return _bind_declined(
+                    f"session bound to {bound_host}")
+            out = {"bound": True,
+                   "workdir": _bound_workdir(conn, ws, session_id),
+                   "already_bound": True}
+            _last_bind_result.update(out)
+            return dict(out)
         host_id = _canonical_device_id(host)
         repo, branch, workdir_out = "", "", ""
         workdir = os.environ.get("AGENTS_WORKDIR", "").strip()
@@ -528,22 +671,34 @@ def session_bind_gate(session_id: str, tool: str = "",
                 except Exception:  # noqa: BLE001
                     pass  # bind still lands; worktree retries on switch
         bind_session(conn, session_id, host_id, branch=branch, repo=repo)
-        _last_bind_result.update(
-            {"bound": True, "workdir": workdir_out})
-        return True
+        out = {"bound": True, "workdir": workdir_out,
+               "already_bound": False}
+        _last_bind_result.update(out)
+        return dict(out)
     except Exception:  # noqa: BLE001
-        return False
+        return _bind_declined()
     finally:
         if conn is not None:
             conn.close()
 
 
-_last_bind_result: dict = {"bound": False, "workdir": ""}
+_last_bind_result: dict = {"bound": False, "workdir": "",
+                         "already_bound": False}
 
 
 def _canonical_device_id(host) -> str:
     """Hub: the hub's own host_id. Spoke: its channel device_id.
-    NEVER "local" once any identity exists (klanker#148)."""
+    NEVER "local" once any identity exists (klanker#148). Single source:
+    ``remote_dispatch._lease_holder`` — bind writes and lease holds must
+    name the SAME identity or the held-check misses (klanker#155)."""
+    try:
+        from .remote_dispatch import _lease_holder
+
+        out = _lease_holder()
+        if out and out != "__local__":
+            return out
+    except Exception:  # noqa: BLE001
+        pass
     own = sorted(_own_channel_ids())
     if own:
         return own[0]
@@ -661,7 +816,29 @@ def cmd_session(args) -> int:
                 # clean rebind: the old session worktree is orphaned
                 remove_worktree(checkout, args.id)
             return 0
-        print("Error: session subcommand required (show|switch)",
+        if args.session_cmd == "rm":
+            # Archive/delete path: drop the session worktree AND retract
+            # the binding — an orphaned worktree behind a dead session
+            # is strangled work (klanker#155).
+            view = session_view(conn, args.id)
+            checkout = _switch_checkout(ws, view)
+            removed = None
+            if checkout is not None:
+                removed = remove_worktree(
+                    checkout, args.id,
+                    force=bool(getattr(args, "force", False)))
+                if removed.get("error"):
+                    print(_json.dumps(
+                        {"ok": False, "error": removed["error"]},
+                        indent=1), file=sys.stderr)
+                    return 2
+            bind_session(conn, args.id, "")
+            _notify_sync(ws.id)
+            print(_json.dumps(
+                {"ok": True, "session": args.id,
+                 "worktree": removed}, indent=1))
+            return 0
+        print("Error: session subcommand required (show|switch|rm)",
               file=sys.stderr)
         return 2
     finally:
@@ -684,11 +861,15 @@ def _switch_checkout(ws, view: dict):
 def cmd_session_gate(args) -> int:
     """Internal: harness bind hook via ``AGENTS_SESSION_BIND_CMD``.
 
-    Emits the W09 contract ``{"bound": bool, "workdir": str}`` so the
-    gate can route the tool call into the session worktree."""
+    Emits the W09 contract ``{"bound": bool, "workdir": str,
+    "already_bound": bool}`` so the gate can route the tool call into
+    the session worktree. Exit 0 when bound (first bind OR
+    already-bound), exit 2 when the bind declined — the harness treats
+    a nonzero rc as SessionGateError and fails closed (klanker#155)."""
     import json as _json
 
-    _last_bind_result.update({"bound": False, "workdir": ""})
-    session_bind_gate(args.session, getattr(args, "tool", "") or "")
-    print(_json.dumps(dict(_last_bind_result)))
-    return 0
+    _last_bind_result.update(
+        {"bound": False, "workdir": "", "already_bound": False})
+    res = session_bind_gate(args.session, getattr(args, "tool", "") or "")
+    print(_json.dumps(dict(res)))
+    return 0 if res.get("bound") else 2

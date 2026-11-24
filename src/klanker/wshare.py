@@ -54,14 +54,23 @@ def cmd_ws_share(args) -> int:
     if not own:
         print("warning: no paired hub found — share applies on next "
               "channel connect", file=sys.stderr)
+    prev_exec = dict(getattr(ws, "execution", None) or {})
+    owner = str(prev_exec.get("owner") or "")
+    if owner and owner not in own:
+        # never clobber a recorded foreign owner (klanker#155)
+        print(f"Error: workspace {ws_id} is owned by {owner} — "
+              "share refused", file=sys.stderr)
+        return 2
     members |= own | {target}
     host.update_workspace(
         ws_id,
         sync_hosts=sorted(members),
         sync_policy="synced",
         execution={
-            **(getattr(ws, "execution", None) or {}),
-            "owner": next(iter(own), "") or "local",
+            **prev_exec,
+            # deterministic own id (set iteration order is random);
+            # an existing owner is never overwritten (klanker#155)
+            "owner": owner or (sorted(own)[0] if own else "local"),
         })
     print(f"workspace {ws_id}: shared -> {target} "
           f"(members: {', '.join(sorted(members))})")
@@ -202,8 +211,11 @@ def cmd_ws_invite(args) -> int:
         if not owner:
             # invite died — restore the pre-existing (empty) owner so a
             # failed invite never leaves a phantom owner behind.
+            # execution MERGES (agents-workspace failclosed): an explicit
+            # "owner": "" is the only owner-clear (klanker#155).
             try:
-                host.update_workspace(ws_id, execution=prev_exec)
+                host.update_workspace(
+                    ws_id, execution={**prev_exec, "owner": ""})
             except Exception:  # noqa: BLE001
                 pass
         if exc.code == 403:
@@ -240,24 +252,42 @@ _PAIR_URL_RE = None
 _BARE_CODE_RE = None
 
 
-def _parse_invite(raw: str) -> tuple[str, str]:
-    """Strict invite parse -> (hub_url, code).
+_TOKEN_RE_SRC = r"[A-Za-z0-9_-]{3,64}"  # secrets.token_urlsafe charset
 
-    Accepted forms (klanker#147):
-      https://host/#pair=XXXX-XXXX   (full pair URL, fragment-carried)
-      XXXX-XXXX                      (bare code — hub resolved from
-                                      the single paired hubs.json row)
+
+def _parse_invite(raw: str) -> tuple[str, str]:
+    """Strict invite parse -> (hub_url, credential).
+
+    Accepted forms (klanker#147, fragment shapes minted by pairing.py):
+      https://host/#pair=<token>                  (admin/legacy pair)
+      https://host/#kind=remote&pair=<token>      (remote pair)
+      https://host/#kind=ws&ws=<id>&pair=<token>  (ws invite)
+      XXXX-XXXX                                   (bare code — hub
+        resolved from the single paired hubs.json row)
+
+    The fragment credential is a urlsafe token — ``_`` and ``-`` both
+    occur; a ``[A-Za-z0-9-]``-only regex silently rejected valid
+    invites (klanker#155).
     """
     import re
+    import urllib.parse
 
     global _PAIR_URL_RE, _BARE_CODE_RE
     if _PAIR_URL_RE is None:
-        _PAIR_URL_RE = re.compile(
-            r"^(https?://[^#\s]+)#pair=([A-Za-z0-9-]{4,64})$")
+        _PAIR_URL_RE = re.compile(r"^(https?://[^#\s]+)#(.+)$")
         _BARE_CODE_RE = re.compile(r"^[A-Za-z0-9]{4}-[A-Za-z0-9]{4}$")
     m = _PAIR_URL_RE.match(raw)
     if m:
-        return m.group(1).rstrip("/"), m.group(2)
+        params = urllib.parse.parse_qs(
+            m.group(2), keep_blank_values=True)
+        # strict: only the fragment keys pairing.py mints — a smuggled
+        # param (`&evil=1`) rejects the whole invite (klanker#147)
+        if not set(params) <= {"pair", "kind", "ws"}:
+            return "", ""
+        token = str((params.get("pair") or [""])[0])
+        if re.fullmatch(_TOKEN_RE_SRC, token):
+            return m.group(1).rstrip("/"), token
+        return "", ""
     if _BARE_CODE_RE.match(raw):
         return "", raw
     return "", ""
@@ -266,9 +296,13 @@ def _parse_invite(raw: str) -> tuple[str, str]:
 def cmd_ws_join(args) -> int:
     """Redeem a ws invite: pairs the device and grants ws membership.
 
-    An already-paired device redeems under its existing identity — the
+    Goes through ``channel_client.connect_hub`` — the same redeem +
+    persist + reuse path as `/v1/hub/connect` (klanker#155): an
+    already-paired device redeems under its existing credential so the
     hub grants the ws onto the SAME device_id and every prior ws share
     survives (klanker#147)."""
+    import urllib.error
+
     raw = args.invite.strip()
     if not raw:
         print("Error: invite code or URL required", file=sys.stderr)
@@ -288,80 +322,43 @@ def cmd_ws_join(args) -> int:
                   "(a bare code cannot resolve the hub)",
                   file=sys.stderr)
             return 2
-    existing = None
-    for hid, r in rows.items():
-        if str(r.get("hub_url") or "").rstrip("/") == hub_url:
-            existing = (hid, r)
-            break
-    import urllib.error
-    import urllib.parse
-    import urllib.request
+    from agents_relay.channel_client import connect_hub
 
-    body = {"token": credential, "code": credential,
-            "label": getattr(args, "label", "") or ""}
-    headers = {"Content-Type": "application/json",
-               "User-Agent": "agents-relay/device"}
-    reused = False
-    if existing is not None:
-        hid, r = existing
-        from agents_relay.channel_client import hub_token
-
-        tok = hub_token(hid)
-        did = str(r.get("device_id") or "")
-        if tok and did:
-            # Present our existing credential: the hub grants the ws
-            # onto the same device_id — no replacement identity,
-            # all prior shares kept (agents-relay#42, klanker#147).
-            headers["Authorization"] = f"Bearer {tok}"
-            headers["X-Device-Id"] = did
-            reused = True
-    req = urllib.request.Request(
-        f"{hub_url}/v1/pair/redeem",
-        data=json.dumps(body).encode(), headers=headers, method="POST")
     try:
-        res = json.loads(urllib.request.urlopen(req, timeout=30).read())
+        res = connect_hub(
+            hub_url, credential,
+            label=getattr(args, "label", "") or "")
     except urllib.error.HTTPError as exc:
-        detail = exc.read()[:300].decode("utf-8", "replace")
+        try:
+            detail = exc.read()[:300].decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            detail = str(exc)
         print(f"Error: join refused ({exc.code}): {detail}",
               file=sys.stderr)
         return 2
     except Exception as exc:  # noqa: BLE001
         print(f"Error: join failed: {exc}", file=sys.stderr)
         return 2
-    if not res.get("ok"):
-        print(f"Error: join refused: {res.get('error') or res}",
-              file=sys.stderr)
-        return 2
     device_id = str(res.get("device_id") or "")
-    hub_id = str(res.get("host_id") or "") or \
-        urllib.parse.urlparse(hub_url).hostname or "hub"
-    if reused:
-        if device_id != existing[1].get("device_id"):
-            print(f"paired {hub_id} as {device_id} "
-                  "(WARNING: hub returned a different device id)")
-        else:
-            print(f"redeemed on {hub_id} — device {device_id} kept "
-                  "(prior workspace shares preserved)")
+    hub_id = str(res.get("hub_id") or "")
+    if res.get("reused"):
+        print(f"redeemed on {hub_id} — device {device_id} kept "
+              "(prior workspace shares preserved)")
     else:
-        token = str(res.get("token") or "")
-        if not device_id or not token:
-            print("Error: hub returned no device credentials",
-                  file=sys.stderr)
-            return 2
-        from agents_workspace import write_secret
-        from agents_relay.channel_client import _secret_key
-
-        rows[hub_id] = {
-            "hub_url": hub_url, "device_id": device_id,
-            "label": getattr(args, "label", "") or res.get("host_id") or hub_id,
-            "last_seq": 0, "connected_at": int(__import__("time").time())}
-        _store_hub_rows(rows)
-        write_secret(_secret_key(hub_id), token, scope="host")
         print(f"paired {hub_id} as {device_id}")
     if res.get("ws"):
         print(f"workspace grant: {res['ws']} — a running "
               "`klanker serve` attaches the new hub link and syncs it "
               "on the next tick")
+    # nudge a running SyncRuntime so the link attaches now, not next tick
+    try:
+        from .wssync import _runtime as _rt
+
+        rt = _rt()
+        if rt is not None:
+            rt._attach_new_hubs()
+    except Exception:  # noqa: BLE001
+        pass
     return 0
 
 
@@ -384,9 +381,10 @@ def cmd_ws_members(args) -> int:
     ws, members = _member_state(host, ws_id)
     owner = (getattr(ws, "execution", None) or {}).get("owner") or ""
     print(f"{ws.id}  {ws.label or ''}")
-    print(f"  sync_policy: {getattr(ws, 'sync_policy', '') or 'synced'}")
+    print(f"  sync_policy: {getattr(ws, 'sync_policy', '') or 'local'}")
     print(f"  owner:       {owner or '-'}")
-    print(f"  members:     {', '.join(sorted(members)) or 'open (all paired devices)'}")
+    # frozenset() = CLOSED — there is no open-herd mode (klanker#146)
+    print(f"  members:     {', '.join(sorted(members)) or 'closed (no members)'}")
     own = _own_device_ids()
     if own:
         print(f"  own devices: {', '.join(sorted(own))}")

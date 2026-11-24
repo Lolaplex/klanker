@@ -616,3 +616,102 @@ def test_projection_skips_marker_files(tmp_path):
     assert stats["memory"]["imported"] == 1
     blob = _blob(ws)
     assert "mem:gen" not in blob
+
+
+# -- klanker#155 (R11) oracles ------------------------------------------------
+
+def test_redact_text_quoted_value_with_trailing_comment():
+    """Oracle: `api_key: "sec" # comment` redacts — a quoted value with
+    a trailing comment must not slip past the whitespace check."""
+    from klanker.migrate import REDACTED, redact_text
+
+    for text in ('api_key: "sec" # comment',
+                 "api_key: 'sec' # rotated",
+                 'client_secret = "abc123XYZ"   # prod'):
+        red, n = redact_text(text)
+        assert n >= 1, text
+        assert "#" not in red  # trailing comment folds into the marker
+        assert REDACTED in red
+        # the quoted credential is gone
+        for leak in ('"sec"', "'sec'", "abc123XYZ"):
+            assert leak not in red
+
+
+def test_import_ords_are_node_qualified_hlc(tmp_path):
+    """Import datoms carry real ``<ms>.<ctr>.<node>`` ords — the old
+    synthetic ``*.import`` suffix collided across hosts (klanker#155)."""
+    from agents_store.hlc import is_hlc
+
+    ws = _ws(tmp_path)
+    (ws / "memory" / "A.md").write_text("# A")
+    migrate_to_store(ws, node="hostA")
+    conn = connect(ws / "store.db")
+    try:
+        ords = [r[0] for r in conn.execute("SELECT ord FROM datom")]
+        assert ords
+        for o in ords:
+            assert is_hlc(o), o
+            assert o.rsplit(".", 1)[-1] == "hostA"
+    finally:
+        conn.close()
+
+
+def test_deleted_memory_file_retracts_and_projection_removes(tmp_path):
+    """A deleted memory file retracts its mem:* datoms (host-scoped) and
+    the generated projection file is removed on the same run."""
+    ws = _ws(tmp_path)
+    note = ws / "memory" / "gone.md"
+    note.write_text("# gone\n\n- fact")
+    stats = migrate_to_store(ws, node="h1")
+    assert stats["memory"]["imported"] == 1
+    proj = ws / "memory" / "projection" / "gone.md"
+    assert stats["projection"]["written"] == 1
+    assert proj.is_file()
+
+    note.unlink()
+    stats = migrate_to_store(ws, node="h1")
+    assert stats["memory"]["retracted"] == 1
+    conn = connect(ws / "store.db")
+    try:
+        rows = conn.execute(
+            "SELECT e, a, v FROM v_current WHERE e = 'mem:gone'"
+        ).fetchall()
+        assert rows == []
+    finally:
+        conn.close()
+    assert stats["projection"]["removed"] == 1
+    assert not proj.exists()
+
+
+def test_memory_entity_of_other_host_never_retracted(tmp_path):
+    """A mem entity another host imported must survive this host's scan
+    even when the file never existed on this disk."""
+    ws = _ws(tmp_path)
+    note = ws / "memory" / "shared.md"
+    note.write_text("# shared")
+    migrate_to_store(ws, node="peerB")   # peerB owns the import
+    note.unlink()
+    stats = migrate_to_store(ws, node="h1")  # this host never owned it
+    assert stats["memory"]["retracted"] == 0
+    conn = connect(ws / "store.db")
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM v_current WHERE e = 'mem:shared'"
+        ).fetchone()[0]
+        assert n > 0
+    finally:
+        conn.close()
+
+
+def test_memory_import_stamps_mem_host(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "memory" / "A.md").write_text("# A")
+    migrate_to_store(ws, node="h1")
+    conn = connect(ws / "store.db")
+    try:
+        v = conn.execute(
+            "SELECT v FROM v_current WHERE e = 'mem:A' AND a = 'mem:host'"
+        ).fetchone()
+        assert v and v[0] == "h1"
+    finally:
+        conn.close()

@@ -24,7 +24,8 @@ import time
 from pathlib import Path
 
 from agents_store.db import connect
-from agents_store.ingest import ingest, ops_since, cursor as store_cursor
+from agents_store.ingest import (
+    ResyncRequired, ingest, ops_since, cursor as store_cursor)
 from agents_store.store import Store
 from agents_sync.opdist import BoundedSeen, PeerBook, deliver, receive
 
@@ -95,35 +96,67 @@ class WsSync:
         self._last_push = 0.0
 
     def close(self) -> None:
-        try:
-            self.conn.close()
-        except Exception:  # noqa: BLE001
-            pass
+        with self._db:
+            try:
+                self.conn.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # -- push side ------------------------------------------------------
 
-    def drain(self) -> int:
-        """Deliver unacked local tail to the peer. Returns batch cursor."""
-        with self._db:
-            local = list(local_origin_prefixes(self.local_node))
-            if self.peer_node and self.peer_node != self.local_node:
-                local += local_origin_prefixes(self.peer_node)
+    def _deliver_once(self) -> int:
+        local = local_origin_prefixes(self.local_node)
+        exclude = local_origin_prefixes(self.peer_node) \
+            if self.peer_node and self.peer_node != self.local_node \
+            else ()
 
-            def _ops(since):
+        def _ops(since):
+            try:
+                return ops_since(
+                    self.conn, since, origin_only=self._origin_only,
+                    local_origins=tuple(local))
+            except TypeError:
+                return ops_since(
+                    self.conn, since, origin_only=self._origin_only)
+        return deliver(
+            _ops,
+            self.book, self.peer, self.node_id,
+            lambda batch: self._send("op", dict(batch, ws=self.ws_id)),
+            exclude_origin=self.peer,
+            exclude_origin_prefixes=exclude,
+            ws=self.ws_id,
+        )
+
+    def drain(self) -> int:
+        """Deliver unacked local tail to the peer. Returns batch cursor.
+
+        The peer's own locally-minted actors (``proj@<peer>:``/
+        ``bind@<peer>:``/``import@<peer>:``) go to
+        ``exclude_origin_prefixes`` — never ``local_origins``: listing
+        them as local would echo the peer's projections straight back
+        (and on a hub drain, where ``origin_only`` is off, ``local``
+        was a no-op that let foreign origins through anyway).
+        """
+        with self._db:
+            try:
+                return self._deliver_once()
+            except ResyncRequired:
+                # acked cursor fell behind the compaction floor: reset
+                # the peer book so the tail replays from 0 and flag the
+                # channel so the peer re-baselines its own cursor.
+                log.warning("ws %s: %s cursor behind floor — resyncing",
+                            self.ws_id, self.peer)
+                self.book.resync(self.peer)
                 try:
-                    return ops_since(
-                        self.conn, since, origin_only=self._origin_only,
-                        local_origins=tuple(local))
-                except TypeError:
-                    return ops_since(
-                        self.conn, since, origin_only=self._origin_only)
-            return deliver(
-                _ops,
-                self.book, self.peer, self.node_id,
-                lambda batch: self._send("op", dict(batch, ws=self.ws_id)),
-                exclude_origin=self.peer,
-                ws=self.ws_id,
-            )
+                    self._send("resync", {"ws": self.ws_id})
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    return self._deliver_once()
+                except ResyncRequired:
+                    log.warning("ws %s: %s still behind floor after "
+                                "resync", self.ws_id, self.peer)
+                    return -1
 
     def on_ack(self, payload: dict) -> None:
         self.book.ack(self.peer, int(payload.get("cursor") or 0))
@@ -142,7 +175,11 @@ class WsSync:
                         self.ws_id, self.peer,
                         stats.get("refused") or 0, stats.get("errors") or 0)
         bc = payload.get("batch_cursor")
-        if bc is not None:
+        if bc is not None and not (
+                stats.get("refused") or stats.get("errors")):
+            # never ack what we did not fully apply — the peer keeps its
+            # cursor and re-delivers, so a fixable refusal is retried
+            # instead of silently holed (klanker#155).
             self._send("ack", {"ws": self.ws_id, "cursor": bc})
 
     def _ingest(self, actor, seq, hlc, datoms, *, op="assert", note=None):
@@ -176,7 +213,19 @@ class SyncRuntime:
         self._ev_thread: threading.Thread | None = None
         self._ev_sub = None
         self._clients: dict[str, object] = {}            # hub_id -> client
+        self._dead_hubs: set[str] = set()                # revoked links — never re-attach
+        self._last_errors: dict[str, str] = {}           # hub_id -> last wire error
         self._share_state: dict[tuple, frozenset] = {}
+        # durable share bookkeeping (klanker#155):
+        # _policy_seq    ws -> last minted announce/revoke seq (monotonic
+        #                per sender — wall clock can step backwards)
+        # _policy_seen   (sender, ws) -> last applied inbound seq; a
+        #                replayed/stale announce must never wipe members
+        # _pending_revokes (device, ws) whose ws:revoke dropped while the
+        #                device was offline — delivered on next contact
+        self._policy_seq: dict[str, int] = {}
+        self._policy_seen: dict[tuple[str, str], int] = {}
+        self._pending_revokes: set[tuple[str, str]] = set()
         self._load_share_state()
 
     def local_node(self) -> str:
@@ -203,7 +252,7 @@ class SyncRuntime:
         try:
             from agents_workspace import Host
 
-            return Path(Host.from_env().dir) / "sync_share_state.json"
+            return Path(Host.from_env().clients) / "share_state.json"
         except Exception:  # noqa: BLE001 - no host dir (bare tests)
             return None
 
@@ -228,6 +277,24 @@ class SyncRuntime:
                 self._share_state[key] = frozenset(row.get("hosts") or ())
             except (KeyError, TypeError):
                 continue
+        for row in data.get("pending_revokes") or []:
+            try:
+                dev, ws = row
+                self._pending_revokes.add((str(dev), str(ws)))
+            except (TypeError, ValueError):
+                continue
+        for k, v in (data.get("policy_seq") or {}).items():
+            try:
+                self._policy_seq[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+        for row in data.get("policy_seen") or []:
+            try:
+                sender, ws = row["key"]
+                self._policy_seen[(str(sender), str(ws))] = \
+                    int(row.get("seq") or 0)
+            except (KeyError, TypeError, ValueError):
+                continue
 
     def _save_share_state(self) -> None:
         """Persist pending announce/share state — offline devices get
@@ -243,8 +310,15 @@ class SyncRuntime:
                 "share_state": [
                     {"key": list(k), "hosts": sorted(v)}
                     for k, v in self._share_state.items()],
+                "pending_revokes": sorted(
+                    list(k) for k in self._pending_revokes),
+                "policy_seq": dict(self._policy_seq),
+                "policy_seen": [
+                    {"key": list(k), "seq": v}
+                    for k, v in self._policy_seen.items()],
             }
         try:
+            p.parent.mkdir(parents=True, exist_ok=True)
             fd, tmp = tempfile.mkstemp(dir=str(p.parent), suffix=".tmp")
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(json.dumps(data, indent=1) + "\n")
@@ -252,11 +326,41 @@ class SyncRuntime:
         except OSError as exc:
             log.warning("ws share state persist failed: %s", exc)
 
-    def notify(self) -> None:
+    def _next_policy_seq(self, ws_id: str) -> int:
+        """Monotonic ws:announce/ws:revoke seq per ws — wall clock can
+        step backwards; a stale seq must never win over a newer one."""
+        with self._lock:
+            seq = max(int(time.time() * 1000),
+                      self._policy_seq.get(ws_id, 0) + 1)
+            self._policy_seq[ws_id] = seq
+            return seq
+
+    def _policy_stale(self, sender: str, ws_id: str, payload: dict) -> bool:
+        """True when the inbound frame's seq is older than the newest we
+        already applied from this sender (replay echo / offline queue)."""
+        try:
+            seq = int((payload or {}).get("seq") or 0)
+        except (TypeError, ValueError):
+            seq = 0
+        last = self._policy_seen.get((sender, ws_id), 0)
+        return bool(seq) and seq <= last
+
+    def _policy_mark_seen(self, sender: str, ws_id: str,
+                          payload: dict) -> None:
+        try:
+            seq = int((payload or {}).get("seq") or 0)
+        except (TypeError, ValueError):
+            seq = 0
+        if seq:
+            key = (sender, ws_id)
+            self._policy_seen[key] = max(seq,
+                                         self._policy_seen.get(key, 0))
+
+    def notify(self, ws_id: str = "") -> None:
         """A local write just landed — drain now instead of next tick.
 
         Debounced by the tick loop: the event stays set until the next
-        tick consumes it, so bursts collapse into one drain."""
+        tick consumes it, so bursts collapse into one drain (<=200ms)."""
         self._dirty.set()
 
     # -- spoke role -----------------------------------------------------
@@ -281,6 +385,7 @@ class SyncRuntime:
         client.on_ack = lambda p: _fanout_safe(workers, p, "on_ack")
         client.on_hello = lambda p: [
             _try_drain(w) for w in workers]  # reconnect catch-up
+        client.on_revoked = lambda: self._client_revoked(client)
         if hasattr(client, "on_ws"):
             def _on_ws(kind, p):
                 try:
@@ -320,6 +425,33 @@ class SyncRuntime:
         with self._lock:
             return hub_id in self._clients
 
+    def client_status(self, hub_id: str) -> dict:
+        """Link health for /v1/hub/links (klanker#155)."""
+        with self._lock:
+            c = self._clients.get(hub_id)
+            dead = hub_id in self._dead_hubs
+            err = self._last_errors.get(hub_id, "")
+        return {
+            "connected": c is not None and not dead,
+            "revoked": bool(dead or getattr(c, "revoked", False)),
+            "last_error": err or str(
+                getattr(c, "last_error", "") or "") if c is not None
+            else err,
+        }
+
+    def _client_revoked(self, client) -> None:
+        """Hub answered 401 — the credential is dead forever: retire the
+        link AND pin the hub id dead so _attach_new_hubs cannot resurrect
+        it into a connect-401 loop (klanker#155)."""
+        hub_id = str(getattr(client, "hub_id", "") or "")
+        if not hub_id:
+            return
+        with self._lock:
+            self._dead_hubs.add(hub_id)
+            self._last_errors[hub_id] = "device revoked (401)"
+        self.detach_client(hub_id)
+        log.warning("hub %s: device revoked — link retired", hub_id)
+
     def _spoke_ws_frame(self, client, workers, kind, payload) -> None:
         """ws-share control frames on the spoke (klanker#145): announce
         provisions/adopts the ws and starts a worker; revoke freezes it."""
@@ -328,6 +460,13 @@ class SyncRuntime:
             return
         from agents_workspace import Host
 
+        sender = str(getattr(client, "hub_id", "") or "hub")
+        if self._policy_stale(sender, ws_id, payload):
+            # replayed/offline-queued policy frame — applying it would
+            # roll membership back to an older member set (klanker#155)
+            log.info("ws %s: stale %s from %s dropped",
+                     ws_id, kind, sender)
+            return
         host = Host.from_env()
         if kind == "ws:revoke":
             try:
@@ -338,6 +477,7 @@ class SyncRuntime:
             except Exception as exc:  # noqa: BLE001
                 log.warning("ws %s: revoke apply failed: %s", ws_id, exc)
                 return
+            self._policy_mark_seen(sender, ws_id, payload)
             evicted = []
             with self._lock:
                 evicted = [w for w in workers if w.ws_id == ws_id]
@@ -368,6 +508,7 @@ class SyncRuntime:
                     "owner": str(payload.get("owner") or "")})
         except TypeError:
             pass  # older agents-workspace: ws exists, policy fields absent
+        self._policy_mark_seen(sender, ws_id, payload)
         with self._lock:
             self._share_state[("spoke", client.hub_id, ws_id)] = (
                 frozenset(members))
@@ -500,13 +641,30 @@ class SyncRuntime:
         for w in workers:
             _try_drain(w)
 
+    def _publish_revoke(self, hub, device_id: str, ws_id: str) -> None:
+        """ws:revoke with delivery guarantee: an offline drop is
+        remembered in _pending_revokes and retried on the device's next
+        contact — a missed revoke is a silent ACL hole (klanker#155)."""
+        rc = hub.publish(device_id, "ws:revoke",
+                         {"ws": ws_id, "seq": self._next_policy_seq(ws_id)})
+        key = (device_id, ws_id)
+        if rc is not None and rc < 0:
+            self._pending_revokes.add(key)
+        else:
+            self._pending_revokes.discard(key)
+
     def _ensure_announced(self, hub, device_id: str) -> None:
-        """Publish ws:announce for every member ws the device has not
-        heard of (or whose member set changed since). Called on each
-        upstream contact — ws frames to offline devices are dropped, so
-        the next contact is the delivery opportunity."""
+        """Deliver owed ws:revokes, then publish ws:announce for every
+        member ws the device has not heard of (or whose member set
+        changed since). Called on each upstream contact — ws frames to
+        offline devices are dropped, so the next contact is the delivery
+        opportunity."""
         with self._lock:
+            owed = sorted(w for d, w in self._pending_revokes
+                          if d == device_id)
             lookup = dict(self._ws_lookup)
+        for ws_id in owed:
+            self._publish_revoke(hub, device_id, ws_id)
         for ws_id, entry in lookup.items():
             self._hub_announce_to(hub, device_id, ws_id, entry)
 
@@ -531,7 +689,7 @@ class SyncRuntime:
         rc = hub.publish(device_id, "ws:announce", {
             "ws": ws_id, "label": label, "owner": owner,
             "sync_hosts": sorted(hosts),
-            "seq": int(time.time() * 1000)})
+            "seq": self._next_policy_seq(ws_id)})
         if rc is not None and rc < 0:
             return False  # offline: stays unmarked, connect handler retries
         self._announce_sent[key] = hosts
@@ -550,6 +708,11 @@ class SyncRuntime:
         Announce carries the owner's FULL desired member set; owner and
         sender are always kept members so nobody locks themselves out.
         """
+        if self._policy_stale(device_id, ws_id, payload):
+            # a replayed announce must never resurrect removed members
+            log.info("ws %s: stale announce from %s dropped",
+                     ws_id, device_id)
+            return
         from agents_workspace import Host
 
         host = Host.from_env()
@@ -609,13 +772,13 @@ class SyncRuntime:
             self._ws_lookup[ws_id] = {
                 "dir": ws.dir, "hosts": new_hosts,
                 "label": str(getattr(ws, "label", "") or "")}
-        seq = payload.get("seq") or 0
+        self._policy_mark_seen(device_id, ws_id, payload)
         for dev in sorted(members - old_members):
             entry = {"hosts": new_hosts}
             self._hub_announce_to(hub, dev, ws_id, entry)
         for dev in sorted(old_members - members):
             self._announce_sent.pop((dev, ws_id), None)
-            hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
+            self._publish_revoke(hub, dev, ws_id)
             self._evict_hub_worker(ws_id, dev)
         self._save_share_state()
 
@@ -644,7 +807,7 @@ class SyncRuntime:
                 entry["hosts"] = frozenset(members)
         self._announce_sent.pop((device_id, ws_id), None)
         self._evict_hub_worker(ws_id, device_id)
-        hub.publish(device_id, "ws:revoke", {"ws": ws_id})
+        self._publish_revoke(hub, device_id, ws_id)
         self._save_share_state()
 
     def _evict_hub_worker(self, ws_id: str, device_id: str) -> None:
@@ -742,9 +905,9 @@ class SyncRuntime:
             if self._stop.is_set():
                 break
             if woke:
-                # debounce: burst writes collapse into one drain
+                # debounce: burst writes collapse into one drain (<=200ms)
                 self._dirty.clear()
-                time.sleep(min(2.0, TICK_SEC))
+                time.sleep(min(0.2, TICK_SEC))
                 self._dirty.clear()
             self.tick()
 
@@ -753,7 +916,12 @@ class SyncRuntime:
         try:
             self._reconcile_shares()
         except Exception as exc:  # noqa: BLE001
+            # A failed reconcile leaves stale workers live — draining
+            # them would keep pushing ops for ws that should have been
+            # retired (klanker#155). Skip drains; projections stay local
+            # and are safe to retry on the next tick.
             log.warning("ws share reconcile failed: %s", exc)
+            return
         workers = self._workers()
         projected: set[str] = set()
         for w in workers:
@@ -782,7 +950,6 @@ class SyncRuntime:
         except Exception as exc:  # noqa: BLE001
             log.warning("ws reconcile: registry scan failed: %s", exc)
             return
-        seq = int(time.time() * 1000)
         state_changed = False
         self._attach_new_hubs()
 
@@ -796,35 +963,42 @@ class SyncRuntime:
             for w in list(workers):
                 if w.ws_id in fresh:
                     continue
+                try:
+                    client.send("ws:revoke", {
+                        "ws": w.ws_id,
+                        "seq": self._next_policy_seq(w.ws_id)})
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "ws %s: revoke send failed: %s", w.ws_id, exc)
                 with self._lock:
                     if w in self._client_workers.get(hub_id, []):
                         self._client_workers[hub_id].remove(w)
                 self._share_state.pop(("spoke", hub_id, w.ws_id), None)
                 state_changed = True
-                try:
-                    client.send("ws:revoke", {"ws": w.ws_id, "seq": seq})
-                except Exception:  # noqa: BLE001
-                    pass
                 w.close()
             for ws_id, entry in fresh.items():
                 hosts = frozenset(entry.get("hosts") or ())
                 key = ("spoke", hub_id, ws_id)
                 prev = self._share_state.get(key)
                 changed = key not in self._share_state or prev != hosts
-                self._share_state[key] = hosts
                 if changed:
                     state_changed = True
                     try:
+                        # send first, mark after — marking before a failed
+                        # send silently eats the member-set update
+                        # (klanker#155)
                         client.send("ws:announce", {
                             "ws": ws_id,
                             "label": str(entry.get("label") or ""),
                             "owner": str(getattr(client, "device_id", "")
                                          or ""),
                             "sync_hosts": sorted(hosts),
-                            "seq": seq})
+                            "seq": self._next_policy_seq(ws_id)})
                     except Exception as exc:  # noqa: BLE001
                         log.warning(
                             "ws %s: announce send failed: %s", ws_id, exc)
+                        continue
+                    self._share_state[key] = hosts
                 if ws_id not in known:
                     peer = str(getattr(client, "hub_id", "") or "hub")
                     w = WsSync(
@@ -869,7 +1043,7 @@ class SyncRuntime:
                     self._ws_lookup.pop(ws_id, None)
                 for dev in sorted(old):
                     self._announce_sent.pop((dev, ws_id), None)
-                    hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
+                    self._publish_revoke(hub, dev, ws_id)
                     self._evict_hub_worker(ws_id, dev)
                 state_changed = True
                 continue
@@ -885,10 +1059,14 @@ class SyncRuntime:
                        "label": str(f.get("label") or ""),
                        "owner": str(self._ws_owner(ws_id) or ""),
                        "sync_hosts": sorted(new),
-                       "seq": seq}
+                       "seq": self._next_policy_seq(ws_id)}
             for dev in sorted(new):
                 self._announce_sent.pop((dev, ws_id), None)
-                hub.publish(dev, "ws:announce", payload)
+                rc = hub.publish(dev, "ws:announce", payload)
+                if rc is not None and rc < 0:
+                    # offline: stays unmarked — the next contact replays
+                    # the announce via _ensure_announced (klanker#155)
+                    continue
                 self._announce_sent[(dev, ws_id)] = frozenset(new)
                 if dev not in old:
                     w = self._hub_worker(dev, ws_id)
@@ -896,7 +1074,7 @@ class SyncRuntime:
                         _try_drain(w)
             for dev in sorted(old - new):
                 self._announce_sent.pop((dev, ws_id), None)
-                hub.publish(dev, "ws:revoke", {"ws": ws_id, "seq": seq})
+                self._publish_revoke(hub, dev, ws_id)
                 self._evict_hub_worker(ws_id, dev)
         for ws_id, f in fresh.items():
             if ws_id not in lookup:
@@ -936,7 +1114,9 @@ class SyncRuntime:
         except Exception:  # noqa: BLE001
             return
         with self._lock:
-            missing = [h for h in hubs if h not in self._clients]
+            missing = [h for h in hubs
+                       if h not in self._clients
+                       and h not in self._dead_hubs]
         for hub_id in missing:
             try:
                 c = _cc.ChannelClient(hub_id)
@@ -973,12 +1153,16 @@ class SyncRuntime:
         msg:* datoms (incremental byte cursor, no full rescan), and live
         memory writes into mem:* datoms (files -> store leg; the generated
         memory/projection tree never feeds back)."""
-        from .migrate import project_memory
+        from .migrate import project_memory, render_memory_projection
         from .msgsync import project_traces
 
         with w._db:
             project_traces(w.conn, w.ws_dir, node=w.local_node)
             project_memory(w.conn, w.ws_dir, node=w.local_node)
+            # store -> files leg: materialize synced mem:* datoms (incl.
+            # retractions from peers' deleted files) under
+            # memory/projection/ every tick (klanker#155)
+            render_memory_projection(w.conn, w.ws_dir)
 
 
 def sync_workspaces() -> dict:
@@ -1001,7 +1185,10 @@ def sync_workspaces() -> dict:
         if callable(syncable):
             if not syncable():
                 continue
-        elif getattr(ws, "sync_policy", "synced") == "local":
+        elif getattr(ws, "sync_policy", "local") \
+                not in ("synced", "shared"):
+            # fail closed: a ws whose policy field is missing/unknown is
+            # local — never wire-synced by default (klanker#155)
             continue
         hosts = getattr(ws, "sync_hosts", None) or ()
         out[str(ws.id)] = {
@@ -1034,7 +1221,13 @@ def ws_invite_auth(device_id: str, ws_id: str) -> bool:
         ws = Host.from_env().workspace(ws_id)
         owner = str(
             (getattr(ws, "execution", None) or {}).get("owner") or "")
-        return bool(owner) and owner == device_id
+        if not owner:
+            return False
+        if device_id == "__admin__":
+            # admin/cookie callers carry no device id — their identity
+            # is the host itself (klanker#155)
+            return owner in ("__admin__", Host.from_env().host_id())
+        return owner == device_id
     except Exception:  # noqa: BLE001
         return False
 
@@ -1050,10 +1243,14 @@ def ws_grant_apply(device_id: str, ws_id: str, granted_by: str) -> None:
         host.create(ws_id)
     ws = host.workspace(ws_id)
     members = set(getattr(ws, "sync_hosts", None) or ())
-    members.update(d for d in (device_id, granted_by) if d)
+    # "__admin__" is the cookie-auth caller id — a grantee marker, never
+    # a real member device (klanker#155)
+    members.update(d for d in (device_id, granted_by)
+                   if d and d != "__admin__")
     ex = dict(getattr(ws, "execution", None) or {})
     if granted_by and not ex.get("owner"):
-        ex["owner"] = granted_by
+        ex["owner"] = (host.host_id() if granted_by == "__admin__"
+                       else granted_by)
     host.update_workspace(
         ws_id, sync_hosts=sorted(members), sync_policy="synced",
         execution=ex)
@@ -1169,6 +1366,26 @@ def approval_mirror_decided(record: dict) -> None:
         pass
 
 
+def _ws_allows_device(ws_id: str, device_id: str) -> bool:
+    """Live ACL for inbound approval frames (klanker#155): only ws
+    members may inject approval state into this host."""
+    if not ws_id or not device_id:
+        return not device_id  # unscoped frames need no ACL; unauthed
+        # senders without a ws get nothing either way
+    try:
+        from agents_workspace import Host
+
+        ws = Host.from_env().workspace(ws_id)
+    except Exception:  # noqa: BLE001
+        return False
+    allows = getattr(ws, "allows_device", None)
+    if callable(allows):
+        return bool(allows(device_id))
+    if getattr(ws, "sync_policy", "local") == "local":
+        return False
+    return device_id in (getattr(ws, "sync_hosts", None) or ())
+
+
 def approval_apply(kind: str, payload: dict, device_id: str = "") -> None:
     """Inbound approval frame — hub ws-handler AND spoke client hook.
 
@@ -1176,10 +1393,22 @@ def approval_apply(kind: str, payload: dict, device_id: str = "") -> None:
     never echo). ``approval-res``: apply the terminal decision locally;
     on the hub the mirror is updated AND the res is forwarded to the
     origin device named in ``payload["device"]``.
+
+    ``device_id`` is the AUTHENTICATED sender (hub channel device id).
+    Frames from non-member devices are dropped — a stranger's approval
+    request/decision must never write into this host's approval book
+    (klanker#155). Every applied frame emits ``approval.changed`` so
+    member UIs watch one event stream regardless of origin.
     """
     from agents_relay.approvals import create_pending, record_decision
     from agents_relay.config import RelayConfig
 
+    ws_id = str(payload.get("ws") or "")
+    if device_id and not _ws_allows_device(ws_id, device_id):
+        log.warning(
+            "ws %s: dropping %s from non-member device %s",
+            ws_id or "-", kind, device_id)
+        return
     cfg = RelayConfig.from_env()
     if kind == "approval-req":
         req = dict(payload.get("request") or {})
@@ -1187,16 +1416,20 @@ def approval_apply(kind: str, payload: dict, device_id: str = "") -> None:
             req["__device"] = device_id
         req.setdefault("id", str(payload.get("id") or ""))
         create_pending(cfg, 0, req,
-                       workspace=str(payload.get("ws") or ""),
+                       workspace=ws_id,
                        from_mirror=True)
+        _emit_approval_changed("pending", str(payload.get("id") or ""),
+                               ws_id, device_id)
         return
     # approval-res: close the local/mirror record first
     ident = str(payload.get("id") or "")
+    status = str(payload.get("status") or "")
     record_decision(
         cfg, ident,
-        status=str(payload.get("status") or ""),
+        status=status,
         note=str(payload.get("note") or "remote decision"),
         decided_by=None, from_mirror=True)
+    _emit_approval_changed(status or "decided", ident, ws_id, device_id)
     try:
         from agents_relay.channel import hub as _hub
 
@@ -1204,6 +1437,20 @@ def approval_apply(kind: str, payload: dict, device_id: str = "") -> None:
         if target:
             _hub().publish(target, "approval-res", payload)
     except Exception:  # noqa: BLE001
+        pass
+
+
+def _emit_approval_changed(state: str, ident: str, ws_id: str,
+                           device_id: str) -> None:
+    """SSE fan-out: member UIs watch approval.changed regardless of
+    which device originated the ask/decision (klanker#155)."""
+    try:
+        from agents_relay.events import emit_event
+
+        emit_event("approval.changed",
+                   {"id": ident, "state": state, "device": device_id},
+                   workspace=ws_id)
+    except Exception:  # noqa: BLE001 - no relay events wired
         pass
 
 

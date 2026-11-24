@@ -388,7 +388,8 @@ def test_session_gate_binds_once(tmp_path, monkeypatch, repo):
     monkeypatch.setenv("AGENTS_WORKSPACE", "wgate")
     monkeypatch.setenv("AGENTS_WORKDIR", str(repo))
 
-    assert session_bind_gate("ses_gate1", "git") is True
+    res = session_bind_gate("ses_gate1", "git")
+    assert res["bound"] is True and res["already_bound"] is False
     conn = connect(h.dir / "workspaces" / "wgate" / "store.db")
     try:
         v = session_view(conn, "ses_gate1")
@@ -396,9 +397,13 @@ def test_session_gate_binds_once(tmp_path, monkeypatch, repo):
         # canonical slug only — never an absolute path (klanker#148)
         assert v["repo"] == "repo"
         assert v["branch"] == "klanker/s-ses_gate1"
-        # second fire is a no-op (existing binding wins)
+        # turn-2 fire on THIS host: bound + already_bound, no SessionGateError
+        res2 = session_bind_gate("ses_gate1", "git")
+        assert res2["bound"] is True and res2["already_bound"] is True
+        # bound to a DIFFERENT host: declines loudly, never rebinding
         bind_session(conn, "ses_gate1", "dev-other")
-        assert session_bind_gate("ses_gate1", "git") is False
+        res3 = session_bind_gate("ses_gate1", "git")
+        assert res3["bound"] is False and res3["already_bound"] is False
         assert session_view(conn, "ses_gate1")["host"] == "dev-other"
     finally:
         conn.close()
@@ -423,15 +428,21 @@ def test_session_gate_repo_slug_from_ws_repos(tmp_path, monkeypatch, repo):
     # repo dir name resolves against the url tail -> slug match
     monkeypatch.setenv("AGENTS_WORKSPACE", "wgate")
     monkeypatch.setenv("AGENTS_WORKDIR", str(repo))
-    assert session_bind_gate("ses_map", "git") is True
+    res = session_bind_gate("ses_map", "git")
+    assert res["bound"] is True and res["already_bound"] is False
     conn = connect(h.dir / "workspaces" / "wgate" / "store.db")
     try:
         assert session_view(conn, "ses_map")["repo"] == "myrepo"
     finally:
         conn.close()
-    # checkout_mode=worktree: session worktree exists on its branch
+    # checkout_mode=worktree: session worktree exists on its branch and
+    # the gate hands it back as workdir (turn-1 lands in the tree)
     wt = find_worktree(repo, "klanker/s-ses_map")
     assert wt is not None and _head(wt) == "klanker/s-ses_map"
+    assert res["workdir"] == str(wt)
+    res2 = session_bind_gate("ses_map", "git")
+    assert res2["bound"] is True and res2["already_bound"] is True
+    assert res2["workdir"] == str(wt)
 
 
 def test_session_gate_shared_mode_skips_worktree(tmp_path, monkeypatch,
@@ -451,7 +462,9 @@ def test_session_gate_shared_mode_skips_worktree(tmp_path, monkeypatch,
         repos=[{"slug": "repo", "checkout_mode": "shared"}])
     monkeypatch.setenv("AGENTS_WORKSPACE", "wgate")
     monkeypatch.setenv("AGENTS_WORKDIR", str(repo))
-    assert session_bind_gate("ses_sh", "git") is True
+    res = session_bind_gate("ses_sh", "git")
+    assert res["bound"] is True and res["already_bound"] is False
+    assert res["workdir"] == ""
     assert find_worktree(repo, "klanker/s-ses_sh") is None
 
 
@@ -464,7 +477,8 @@ def test_session_gate_without_repo_binds_local(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTS_WORKDIR", str(tmp_path / "notarepo"))
     (tmp_path / "notarepo").mkdir()
 
-    assert session_bind_gate("ses_chat", "mcp.terminal") is True
+    res = session_bind_gate("ses_chat", "mcp.terminal")
+    assert res["bound"] is True and res["already_bound"] is False
     conn = connect(h.dir / "workspaces" / "wgate" / "store.db")
     try:
         v = session_view(conn, "ses_chat")

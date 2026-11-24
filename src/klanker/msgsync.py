@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -167,16 +168,24 @@ def _node_part(node: str) -> str:
 
 
 def _fresh_ord(conn, node: str) -> str:
-    """Ord strictly above every datom already in the store.
+    """Ord strictly above every HLC datom already in the store.
 
     Deletion marks and session:* maintenance are rewrites relative to the
     projected event stream, so they need a live clock (not a ts-derived
     ord) to win v_current's max-ord rule on every host, replay included.
+    Seeded over ``HLC_GLOB`` only — a non-HLC ord shape must never
+    inflate the seed (klanker#155).
     """
     import time
 
+    try:
+        from agents_store.hlc import HLC_GLOB
+    except ImportError:
+        HLC_GLOB = "[0-9]*.[0-9]*.*"
     ms = int(time.time() * 1000)
-    row = conn.execute("SELECT MAX(ord) FROM datom").fetchone()
+    row = conn.execute(
+        "SELECT MAX(ord) FROM datom WHERE ord GLOB ?",
+        (HLC_GLOB,)).fetchone()
     head = str(row[0]).split(".", 1)[0] if row and row[0] else ""
     if head.isdigit():
         ms = max(ms, int(head) + 1)
@@ -185,17 +194,20 @@ def _fresh_ord(conn, node: str) -> str:
 
 def _redact_local_paths(text: str, ws_dir) -> str:
     """Host-local absolute paths mean nothing on a peer -- strip them from
-    the synced body before it lands in store.db."""
+    the synced body before it lands in store.db. Windows compares paths
+    case-insensitively, so the redaction must too (klanker#155)."""
     roots = {str(Path.home())}
     for raw in (os.environ.get("AGENTS_HOST_DIR") or "",
                 str(ws_dir) if ws_dir else ""):
         if raw:
             roots.add(raw)
+    flags = re.IGNORECASE if os.name == "nt" else 0
     for root in sorted((r for r in roots if len(r) > 3), key=len,
                        reverse=True):
-        text = text.replace(root, "~")
+        text = re.sub(re.escape(root), "~", text, flags=flags)
         if os.sep != "/":
-            text = text.replace(root.replace(os.sep, "/"), "~")
+            text = re.sub(re.escape(root.replace(os.sep, "/")), "~",
+                          text, flags=flags)
     return text
 
 
@@ -250,6 +262,25 @@ def _retired_frames(conn, session_id: str) -> set[str]:
         "SELECT r.e FROM v_current r JOIN v_current s ON s.e = r.e"
         " WHERE r.a = 'frame:retired' AND r.v = 'true'"
         " AND s.a = 'frame:session' AND s.v = ?", (session_id,))}
+
+
+def _covering_frame(conn, session_id: str, ts: str) -> str:
+    """Unretired ``frame:*`` entity whose ``first_ts..last_ts`` span
+    covers ``ts`` — a msg projected after its covering frame must arrive
+    already deleted, or replay order resurrects covered turns
+    (klanker#155)."""
+    retired = _retired_frames(conn, session_id)
+    for fe in _session_entities(conn, session_id, "frame:session"):
+        if fe in retired:
+            continue
+        bounds = {a: v for a, v in conn.execute(
+            "SELECT a, v FROM v_current WHERE e = ?"
+            " AND a IN ('frame:first_ts','frame:last_ts')", (fe,))}
+        first, last = (str(bounds.get("frame:first_ts") or ""),
+                       str(bounds.get("frame:last_ts") or ""))
+        if first and last and first <= ts <= last:
+            return fe
+    return ""
 
 
 def _entity_ord(conn, entities: list[str]) -> dict[str, str]:
@@ -422,6 +453,11 @@ def project_event(conn, node: str, ev, *, traces_dir=None) -> str:
     user = str(meta.get("alias") or meta.get("user") or "")
     if user:
         datoms.append((e, "msg:user", user, True))
+    cover = _covering_frame(conn, session_id, ts)
+    if cover:
+        # dead on arrival: the frame covering this span already landed
+        datoms.append((e, "msg:deleted", "true", True))
+        datoms.append((e, "msg:frame_id", cover, True))
     res = ingest(conn, origin, next_seq(conn, origin), _proj_hlc(ts), datoms)
     return "projected" if res.applied else "skipped"
 

@@ -460,6 +460,12 @@ def build_parser() -> argparse.ArgumentParser:
     ses_sw.add_argument(
         "--force", action="store_true",
         help="Switch even with wip_unpushed on the old host")
+    ses_rm = ses_sub.add_parser(
+        "rm", help="Unbind a session and drop its session worktree")
+    ses_rm.add_argument("id", help="Session id")
+    ses_rm.add_argument(
+        "--force", action="store_true",
+        help="Remove the worktree even when dirty")
 
     pair_p = sub.add_parser("pair", help="Create a single-use 60s pairing code/QR for Web or remote CLI")
     pair_p.add_argument("--remote", action="store_true", help="Mint a remote CLI pairing code")
@@ -491,6 +497,7 @@ KNOWN_SUBCOMMANDS = {
     "evidence",
     "persona",
     "workspace",
+    "session",
     "_session-gate",
     "import",
     "migrate",
@@ -892,7 +899,13 @@ def main(argv: list[str] | None = None) -> int:
             if hasattr(_ch.hub(), "set_approval_handler"):
                 from agents_relay import approvals as _appr
 
-                _ch.hub().set_approval_handler(approval_apply)
+                # Hub invokes fn(device_id, kind, payload); the apply
+                # contract is (kind, payload, device_id=…) — adapt at
+                # the wire so the authenticated sender id feeds the
+                # member ACL (klanker#155).
+                _ch.hub().set_approval_handler(
+                    lambda dev, kind, p: approval_apply(
+                        kind, p, device_id=dev))
                 _appr.on_pending_fn = approval_mirror_pending
                 _appr.on_decided_fn = approval_mirror_decided
             # live management surface (agents-relay#43): hub links,

@@ -239,8 +239,9 @@ def test_join_malformed_refused(host, capsys):
 
 
 def test_join_reuses_existing_device(host, monkeypatch):
-    """An already-paired device redeems under its own identity: Bearer
-    token + X-Device-Id on the redeem call, no second hubs.json row."""
+    """An already-paired device redeems under its own identity via
+    channel_client.connect_hub: the stored Bearer token re-auths the
+    grant (agents-relay#44 reuse — token=="" keeps device_id)."""
     import urllib.request
     from klanker import wshare
     from agents_relay import channel_client as _cc
@@ -252,8 +253,12 @@ def test_join_reuses_existing_device(host, monkeypatch):
 
     class Resp:
         def read(self, n=-1):
-            return b'{"ok": true, "device_id": "dev-same", ' \
+            return b'{"ok": true, "mode": "ws", ' \
+                   b'"device_id": "dev-same", ' \
                    b'"host_id": "hub1", "ws": "w9"}'
+
+        def close(self):
+            pass
 
     def fake_urlopen(req, timeout=0, **kw):
         seen["req"] = req
@@ -266,10 +271,14 @@ def test_join_reuses_existing_device(host, monkeypatch):
     req = seen["req"]
     assert req.full_url == "http://hub/v1/pair/redeem"
     assert req.headers["Authorization"] == "Bearer dev-tok"
-    assert req.headers["X-device-id"] == "dev-same"
     import json as _j
     body = _j.loads(req.data.decode())
     assert body["token"] == body["code"] == "ABCD-EFGH"
+    # reuse keeps one hubs.json row — no second device minted
+    rows = json.loads(
+        (host.dir / "clients" / "hubs.json").read_text())["hubs"]
+    assert list(rows) == ["hub1"]
+    assert rows["hub1"]["device_id"] == "dev-same"
 
 
 def test_join_new_pair_writes_row_and_vault(host, monkeypatch):
@@ -283,9 +292,13 @@ def test_join_new_pair_writes_row_and_vault(host, monkeypatch):
 
     class Resp:
         def read(self, n=-1):
-            return b'{"ok": true, "device_id": "dev-new", ' \
+            return b'{"ok": true, "mode": "ws", ' \
+                   b'"device_id": "dev-new", ' \
                    b'"token": "tok-secret", "host_id": "hub2", ' \
                    b'"ws": "w9"}'
+
+        def close(self):
+            pass
 
     def fake_urlopen(req, timeout=0, **kw):
         seen["req"] = req
@@ -332,7 +345,10 @@ def test_invite_owner_refusal_and_rollback(host, monkeypatch, capsys):
     assert rc == 2
     assert (host.workspace("w1").execution or {})["owner"] == "dev-other"
 
-    host.update_workspace("w1", execution={"failover": "none"})
+    # execution merges (agents-workspace failclosed): explicit "" is
+    # the only owner-clear, not an omitted key
+    host.update_workspace(
+        "w1", execution={"owner": "", "failover": "none"})
     host.update_workspace(
         "w1", sync_policy="synced", sync_hosts=["dev-self"])
 

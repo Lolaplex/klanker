@@ -255,6 +255,12 @@ def _proxy_channel(handler, ch, device_id: str, path: str,
         return
     status = int(first.get("status") or 502)
     ctype = str(first.get("content_type") or "application/json")
+    try:
+        from agents_relay.remotes import _proxy_content_type
+
+        ctype = _proxy_content_type(ctype)
+    except Exception:  # noqa: BLE001
+        pass
     handler.send_response(status)
     handler.send_header("Content-Type", ctype)
     handler.send_header("Cache-Control", "no-cache")
@@ -287,14 +293,28 @@ def _proxy_channel(handler, ch, device_id: str, path: str,
 def _proxy_spoke(handler, row: dict, hub_id: str, device: str,
                  path: str, body: dict | None, hop: int,
                  method: str = "POST") -> bool:
-    """Spoke -> hub HTTP proxy: the hub re-dispatches dev-<id> frames."""
+    """Spoke -> hub HTTP proxy: the hub re-dispatches dev-<id> frames.
+
+    Path and upstream content-type go through ``agents_relay.remotes``
+    sanitization — a hostile upstream must not smuggle scriptable
+    content or path escapes onto the management origin (klanker#155)."""
+    import re as _re
+
+    if not _re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", device):
+        return False  # device ids are channel-minted slugs, never raw text
     from agents_relay.channel_client import hub_token
+    from agents_relay import remotes as _remotes
 
     token = hub_token(hub_id)
     if not token:
         return False
+    path_only, sep, qs = path.partition("?")
+    try:
+        upstream = _remotes._normalize_proxy_rest(path_only)
+    except ValueError:
+        return False
     url = (row["hub_url"].rstrip("/")
-           + f"/v1/remote/dev-{device}{path}")
+           + f"/v1/remote/dev-{device}{upstream}{sep + qs if sep else ''}")
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode() if body is not None else None,
@@ -318,11 +338,12 @@ def _proxy_spoke(handler, row: dict, hub_id: str, device: str,
     except Exception as exc:  # noqa: BLE001
         log.info("remote dispatch via %s failed: %s", hub_id, exc)
         return False
-    handler.send_response(status)
-    handler.send_header("Content-Type", ctype)
-    handler.send_header("Cache-Control", "no-cache")
-    handler.send_header("X-Accel-Buffering", "no")
-    handler.end_headers()
+    try:
+        ctype = _remotes._proxy_content_type(ctype)
+    except ValueError:
+        resp.close()
+        return False  # CR/LF in an upstream header — never echo it
+    _remotes._send_proxy_headers(handler, status, ctype)
     try:
         read_chunk = getattr(resp, "read1", None) or resp.read
         while True:
@@ -432,9 +453,15 @@ def _hub_lease_call(action: str, ws: str, session: str, **extra) -> dict:
                 urllib.request.urlopen(req, timeout=15).read())
         except urllib.error.HTTPError as exc:
             try:
-                return json.loads(exc.read() or b"{}")
+                out = json.loads(exc.read() or b"{}")
             except Exception:  # noqa: BLE001
-                return {"granted": False, "error": f"http {exc.code}"}
+                out = {}
+            out.setdefault("granted", False)
+            out.setdefault("error", f"http {exc.code}")
+            # preserve 401/403 — a refused credential must surface as
+            # auth, never collapse into a 409 lease conflict (klanker#155)
+            out.setdefault("status", exc.code)
+            return out
         except Exception:  # noqa: BLE001
             continue
     return {}
@@ -482,12 +509,24 @@ def turn_lease_guard(handler, body: dict, ctx: dict) -> dict | None:
     if ws is None:
         return None
     ws_id = ws.id
-    run_id = str(body.get("run") or "").strip()
+    import uuid
+
+    run_id = str(body.get("run") or "").strip() \
+        or f"run-{uuid.uuid4().hex[:12]}"
     holder = _lease_holder()
     ttl = _lease_ttl(ws_id)
     with _HELD_LOCK:
-        if (ws_id, session) in _HELD:
-            return None  # already ours (re-posted run / re-attach)
+        held_rec = _HELD.get((ws_id, session))
+    if held_rec is not None:
+        if str(held_rec.get("run_id") or "") == run_id:
+            return None  # re-posted run / re-attach of OUR lease
+        # A different run while we hold the lease: fail closed — the
+        # local lockfile path would wave us through as the same holder
+        # and double-run the session (klanker#155).
+        return {"ok": False, "error": "lease_held",
+                "holder": held_rec.get("holder"),
+                "run_id": held_rec.get("run_id"),
+                "status": 409}
     if _is_hub():
         from agents_relay.leases import hub_leases
 
@@ -500,7 +539,8 @@ def turn_lease_guard(handler, body: dict, ctx: dict) -> dict | None:
                     "expires_in": out.get("expires_in"),
                     "status": 409}
         rec = {"fence": out.get("fence"), "holder": holder,
-               "hub_book": book, "ttl": ttl, "touched": time.time()}
+               "hub_book": book, "ttl": ttl, "touched": time.time(),
+               "run_id": run_id}
     else:
         out = _hub_lease_call("acquire", ws_id, session, run_id=run_id)
         if not out:
@@ -510,16 +550,21 @@ def turn_lease_guard(handler, body: dict, ctx: dict) -> dict | None:
                 return conflict
             rec = {"lock": str(_lockfile(Path(ws.dir), session)),
                    "holder": holder, "ttl": ttl,
-                   "touched": time.time()}
+                   "touched": time.time(), "run_id": run_id}
         elif not out.get("granted"):
-            return {"ok": False, "error": "lease_held",
+            # upstream 401/403 keeps its status — a revoked credential is
+            # not a lease conflict (klanker#155)
+            status = int(out.get("status") or 409)
+            return {"ok": False,
+                    "error": str(out.get("error") or "lease_held"),
                     "holder": out.get("holder"),
                     "run_id": out.get("run_id"),
                     "expires_in": out.get("expires_in"),
-                    "status": 409}
+                    "status": status}
         else:
             rec = {"fence": out.get("fence"), "holder": holder,
-                   "ttl": ttl, "touched": time.time()}
+                   "ttl": ttl, "touched": time.time(),
+                   "run_id": run_id}
     with _HELD_LOCK:
         _HELD[(ws_id, session)] = rec
     global _renew_thread
@@ -549,10 +594,14 @@ def run_done_release(run_id: str, entry: dict) -> None:
 
 
 def _release(ws_id: str, session: str) -> None:
-    if not session or not ws_id:
+    """Drop a held lease. ``ws_id`` normalizes the same way the guard
+    stores it — an empty/default workspace resolves to the selected ws,
+    and only a truly unresolvable id falls back to ``"default"``
+    (klanker#155: releasing ``""`` used to leak the lease forever)."""
+    if not session:
         return
     ws = _ws_obj(ws_id)
-    ws_id = ws.id if ws is not None else ws_id
+    ws_id = ws.id if ws is not None else (ws_id or "default")
     with _HELD_LOCK:
         rec = _HELD.pop((ws_id, session), None)
     if rec is None:

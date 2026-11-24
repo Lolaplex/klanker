@@ -23,6 +23,9 @@ MIGRATE_ATTRS = {
     "mem:file": ("text", "one"),
     "mem:title": ("text", "one"),
     "mem:text": ("text", "one"),
+    # host that imported this entity from its on-disk memory/ tree; the
+    # deleted-file retraction only touches entities it owns (klanker#155)
+    "mem:host": ("text", "one"),
 }
 
 ALL_ATTRS = {**MSG_ATTRS, **MIGRATE_ATTRS}

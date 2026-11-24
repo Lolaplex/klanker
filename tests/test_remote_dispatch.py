@@ -287,6 +287,9 @@ def test_switch_host_rebinds_clean_session(tmp_path, monkeypatch):
 
 def test_approval_req_creates_mirror_record(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    # member ACL is covered separately (test_ws_share_acl); these tests
+    # exercise the mirror mechanics with a member-shaped frame
+    monkeypatch.setattr(wssync, "_ws_allows_device", lambda w, d: True)
     wssync.approval_apply(
         "approval-req",
         {"id": "ap1", "ws": "w1",
@@ -304,6 +307,7 @@ def test_approval_req_creates_mirror_record(tmp_path, monkeypatch):
 def test_approval_res_records_decision_and_forwards(
         tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    monkeypatch.setattr(wssync, "_ws_allows_device", lambda w, d: True)
     wssync.approval_apply(
         "approval-req",
         {"id": "ap2", "ws": "w1", "request": {"tool": "git"}},
@@ -335,6 +339,7 @@ def test_approval_res_records_decision_and_forwards(
 def test_approval_mirror_apply_never_echoes(tmp_path, monkeypatch):
     """A mirror-applied pending must not re-fire on_pending_fn."""
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    monkeypatch.setattr(wssync, "_ws_allows_device", lambda w, d: True)
     fired = []
     import agents_relay.approvals as appr
 
