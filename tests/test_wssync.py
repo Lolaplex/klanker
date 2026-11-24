@@ -582,3 +582,36 @@ def test_on_op_never_raises_on_channel_thread(tmp_path):
                             "datoms": "garbage"}]})
     w.on_op({"envelopes": "notalist"})
     w.close()
+
+
+def test_migrated_datoms_sync_across_hosts(link, tmp_path):
+    """W13: persona:*, cfg:* and mem:* registered on BOTH ends of the wire —
+    import txs on A must converge on B with 0 refusals."""
+    from klanker.migrate import _Importer
+
+    imp = _Importer(link.a.conn, link.a.local_node)
+    imp.submit("config", "config.json", "model",
+               [("cfg:model", "cfg:key", "model", True),
+                ("cfg:model", "cfg:value", "k2", True)])
+    imp.submit("personas", "personas/coder/persona.json", "coder",
+               [("persona:coder", "persona:id", "coder", True),
+                ("persona:coder", "persona:name", "Coder", True)])
+    imp.submit("memory", "memory/N.md", "N",
+               [("mem:N", "mem:file", "N.md", True),
+                ("mem:N", "mem:title", "Notes", True),
+                ("mem:N", "mem:text", "# Notes\n\n- remember me", True)])
+    imp.flush()
+    link.a.drain()
+    link.pump()
+    assert _view(link.b.store, "cfg:model")["cfg:value"] == "k2"
+    assert _view(link.b.store, "persona:coder")["persona:name"] == "Coder"
+    assert "remember me" in _view(link.b.store, "mem:N")["mem:text"]
+    refused = link.b.conn.execute(
+        "SELECT COUNT(*) FROM refusal").fetchone()[0]
+    assert refused == 0
+
+
+def test_migrate_attrs_seed_on_wssync(link):
+    names = {r[0] for r in link.a.conn.execute("SELECT name FROM attr")}
+    for a in ("persona:id", "cfg:key", "cfg:value", "mem:text"):
+        assert a in names

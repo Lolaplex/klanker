@@ -6,9 +6,11 @@ One-way, idempotent import (klanker#143 / frontier #19):
   secret *values* never become datoms)
 - memory/**/*.md, *.yaml, *.yml -> mem:<slug> entities (text redacted)
 
-Identity: origin_actor="import@<host>:<domain>:<id>", origin_seq=mtime_ms
-— re-running with an unchanged file dedupes on ux_tx_origin; a changed
-file re-imports and card-one LWW picks the newer mtime.
+Identity: origin_actor="import@<host>:store", origin_seq=1..N per run,
+monotonic across runs and assigned in deterministic (domain, relpath,
+line) order — never mtime_ms, which collides under fast edits. A file
+whose datoms are already current dedupes on content; a changed file
+re-imports under the next seq and card-one LWW picks the newer tx.
 
 Secrets never become datoms: config and persona documents are scrubbed
 recursively (secret-named keys at any depth, matched on word tokens;
@@ -41,21 +43,10 @@ from pathlib import Path
 from agents_store.db import connect
 from agents_store.ingest import ingest
 
-from .msgsync import actor, ensure_domain, local_node_id
+from .msgsync import actor, local_node_id, next_seq
+from .store_domains import MIGRATE_ATTRS, ensure_domains
 
 log = logging.getLogger(__name__)
-
-MIGRATE_ATTRS = {
-    "persona:id": ("text", "one"),
-    "persona:name": ("text", "one"),
-    "persona:json": ("text", "one"),
-    "cfg:key": ("text", "one"),
-    "cfg:value": ("text", "one"),
-    "cfg:key_env": ("text", "one"),
-    "mem:file": ("text", "one"),
-    "mem:title": ("text", "one"),
-    "mem:text": ("text", "one"),
-}
 
 # Key names whose values must never enter the log -- only an env
 # indirection may be recorded. Keys are split into word tokens
@@ -65,6 +56,7 @@ SECRET_TOKENS = frozenset({
     "token", "secret", "password", "passwd", "passphrase", "pwd",
     "credential", "credentials", "apikey", "privatekey", "bearer",
     "cookie", "cookies", "authorization", "sessionid", "dsn",
+    "secrets", "passwords", "vault",
 })
 # A trailing ``key``/``pass`` is secret (``openai_key``, ``db_pass``)
 # unless the key names a non-secret kind of key.
@@ -99,7 +91,19 @@ _INLINE_SECRETS = [
     re.compile(r"(?<![\w-])AIza[0-9A-Za-z_-]{35}"),
     re.compile(r"(?<![\w-])eyJ[\w-]{8,}\.eyJ[\w-]{8,}\.[\w-]+"),
     re.compile(r"(?i)(?<=\bbearer\s)[A-Za-z0-9._~+/=-]{12,}"),
+    # Telegram bot token: <digits>:AA<35 chars>
+    re.compile(r"(?<!\w)\d{6,}:AA[A-Za-z0-9_-]{20,}\b"),
+    # Slack + Discord incoming-webhook URLs (the tail is the credential)
+    re.compile(r"https://hooks\.slack\.com/services"
+               r"(?:/[A-Za-z0-9_-]+){1,4}"),
+    re.compile(r"https://discord(?:app)?\.com/api/webhooks"
+               r"(?:/[A-Za-z0-9_-]+){1,3}"),
 ]
+# 32-char lowercase hex under a secret-named assignment
+# (``secret_key = 'd3ad…'``, ``client_secret: 0123…``).
+_HEX32_SECRET = re.compile(
+    r"(?i)(?<![\w.])([A-Za-z0-9_.-]{0,40}secret[A-Za-z0-9_.-]{0,40}"
+    r"[ \t]*[:=][ \t]*[\"']?)[0-9a-f]{32}(?![0-9a-fA-F])")
 # scheme://user:password@host -> keep user, redact the password
 # bounded quantifiers + left boundary keep this linear on huge tokens
 _URL_PASSWORD = re.compile(
@@ -198,6 +202,11 @@ def redact_text(text: str) -> tuple[str, int]:
         if m and _is_secret_key(m.group("key")):
             val = m.group("val")
             raw = val.strip()
+            # strip an inline ` # comment` tail before the whitespace check
+            # so `api_key: abc123 # prod` still redacts; quoted values keep
+            # their inner # verbatim
+            if raw[:1] not in "\"'":
+                raw = re.sub(r"[ \t]+#.*$", "", raw).rstrip()
             if raw in ("|", ">", "|-", ">-", "|+", ">+"):
                 block_indent = len(line) - len(line.lstrip(" \t"))
             elif not _placeholder(raw):
@@ -213,6 +222,8 @@ def redact_text(text: str) -> tuple[str, int]:
     for rx in _INLINE_SECRETS:
         text, n = rx.subn(REDACTED, text)
         count += n
+    text, n = _HEX32_SECRET.subn(lambda m: m.group(1) + REDACTED, text)
+    count += n
 
     def _url(m):
         nonlocal count
@@ -250,7 +261,16 @@ def scrub_secrets(obj, path: str = ""):
         clean = {}
         for k, v in obj.items():
             sub = f"{path}.{k}" if path else str(k)
-            if _is_secret_key(k) and not isinstance(v, (dict, list)):
+            if _is_secret_key(k):
+                if isinstance(v, (dict, list)):
+                    # a secret-named container gives up every string leaf —
+                    # `{"secrets": {"db": "plain"}}` must not leak "plain"
+                    # through a harmless-looking nested key
+                    c, d = _redact_leaves(v)
+                    dropped += d
+                    if c is not _DROP:
+                        clean[k] = c
+                    continue
                 if isinstance(v, str) and len(v) <= 64 and _ENV_NAME.match(v):
                     refs.append((sub, v))
                 elif v not in (None, "", False):
@@ -282,44 +302,135 @@ def scrub_secrets(obj, path: str = ""):
     return obj, refs, 0
 
 
+def _redact_leaves(v):
+    """(clean, dropped): every string leaf of a container -> REDACTED.
+
+    Structure is kept so the store copy still documents shape; non-string
+    leaves (numbers, bools, null) are kept — they carry no credential.
+    """
+    if isinstance(v, dict):
+        out, n = {}, 0
+        for k, x in v.items():
+            c, d = _redact_leaves(x)
+            n += d
+            if c is not _DROP:
+                out[k] = c
+        return out, n
+    if isinstance(v, list):
+        out, n = [], 0
+        for x in v:
+            c, d = _redact_leaves(x)
+            n += d
+            if c is not _DROP:
+                out.append(c)
+        return out, n
+    if isinstance(v, str):
+        return REDACTED, 1
+    return v, 0
+
+
 _DROP = object()
 
 
 def ensure_migrate_domain(conn) -> None:
-    ensure_domain(conn)
-    for name, (vt, card) in MIGRATE_ATTRS.items():
-        conn.execute(
-            "INSERT OR IGNORE INTO attr (name, value_type, cardinality, doc)"
-            " VALUES (?, ?, ?, ?)",
-            (name, vt, card, "migrate --to-store import domain"))
+    ensure_domains(conn)
 
 
-def _import(conn, domain: str, ident: str, mtime_ms: int, datoms,
-            node: str = "") -> bool:
-    """One idempotent tx. Returns True if newly applied."""
-    origin = actor("import", node or local_node_id(), f"{domain}:{ident}")
-    res = ingest(
-        conn, origin, int(mtime_ms), f"{int(mtime_ms):013d}.00000.import",
-        datoms)
-    return bool(res.applied)
+class _ImportTx:
+    """One file/config-key's datoms — one deterministic tx unit."""
+    __slots__ = ("domain", "relpath", "line", "datoms", "applied")
+
+    def __init__(self, domain: str, relpath: str, line: str, datoms):
+        self.domain = domain
+        self.relpath = relpath
+        self.line = line
+        self.datoms = datoms
+        self.applied = False
+
+
+def _all_current(conn, datoms) -> bool:
+    """Every asserted (e, a, v) already current -> a re-run is a no-op."""
+    for e, a, v, added in datoms:
+        if not added:
+            return False
+        row = conn.execute(
+            "SELECT 1 FROM v_current WHERE e = ? AND a = ? AND v = ? LIMIT 1",
+            (e, a, v)).fetchone()
+        if row is None:
+            return False
+    return True
+
+
+class _Importer:
+    """Deterministic import sequencer.
+
+    One actor ``import@<node>:store``; ``origin_seq`` continues past the
+    store's high-water mark and is assigned in sorted (domain, relpath,
+    line) order on ``flush`` — never mtime_ms, so two files edited in the
+    same millisecond can never collide on ``ux_tx_origin``. Dedupe is
+    content equality on ``v_current``: unchanged files produce no tx,
+    changed files re-import under the next seq (LWW keeps the newer tx).
+    """
+
+    def __init__(self, conn, node: str = ""):
+        self.conn = conn
+        self.origin = actor("import", node or local_node_id(), "store")
+        self.seq = next_seq(conn, self.origin)
+        self.units: list[_ImportTx] = []
+
+    def submit(self, domain: str, relpath: str, line, datoms) -> _ImportTx:
+        u = _ImportTx(domain, relpath, str(line), datoms)
+        self.units.append(u)
+        return u
+
+    def flush(self) -> None:
+        for u in sorted(
+                self.units, key=lambda u: (u.domain, u.relpath, u.line)):
+            if _all_current(self.conn, u.datoms):
+                u.applied = False
+                continue
+            res = ingest(
+                self.conn, self.origin, self.seq,
+                f"{self.seq:013d}.00000.import", u.datoms)
+            self.seq += 1
+            u.applied = bool(res.applied)
 
 
 def _archive(ws_dir: Path, src: Path) -> Path:
+    """Move ``src`` under ``archive/pre-store/`` — never overwrites:
+    collisions get ``.bak.<n>`` suffixes."""
     rel = src.relative_to(ws_dir)
     dst = ws_dir / "archive" / "pre-store" / rel
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
-        dst = dst.with_name(dst.name + ".dup")
+        n = 1
+        while dst.with_name(dst.name + f".bak.{n}").exists():
+            n += 1
+        dst = dst.with_name(dst.name + f".bak.{n}")
     shutil.move(str(src), str(dst))
     return dst
 
 
-def migrate_personas(conn, ws_dir: Path, archive: bool,
-                     node: str = "") -> dict:
+def _settle(stats: dict, pending: list, archive: bool, ws_dir: Path) -> dict:
+    """After ``_Importer.flush``: count applied/dupes and archive sources."""
+    for u, src in pending:
+        if u.applied:
+            stats["imported"] += 1
+        else:
+            stats["dupes"] += 1
+        if archive and src.is_file():
+            _archive(ws_dir, src)
+            stats["archived"] += 1
+    return stats
+
+
+def _migrate_personas(conn, ws_dir: Path, imp: _Importer):
+    """Collect persona units. Returns (stats, pending)."""
     root = ws_dir / "personas"
     stats = {"imported": 0, "dupes": 0, "skipped_secret": 0, "archived": 0}
+    pending = []
     if not root.is_dir():
-        return stats
+        return stats, pending
     for manifest in sorted(root.glob("*/persona.json")):
         pid = manifest.parent.name
         try:
@@ -328,7 +439,6 @@ def migrate_personas(conn, ws_dir: Path, archive: bool,
             continue
         if not isinstance(doc, dict):
             continue
-        mtime_ms = int(manifest.stat().st_mtime * 1000)
         doc, refs, dropped = scrub_secrets(doc)
         stats["skipped_secret"] += dropped + len(refs)
         e = f"persona:{pid}"
@@ -338,52 +448,64 @@ def migrate_personas(conn, ws_dir: Path, archive: bool,
         name = doc.get("name") or doc.get("label")
         if name:
             datoms.append((e, "persona:name", str(name), True))
-        if _import(conn, "persona", pid, mtime_ms, datoms, node):
-            stats["imported"] += 1
-        else:
-            stats["dupes"] += 1
-        if archive:
-            _archive(ws_dir, manifest)
-            stats["archived"] += 1
-    return stats
+        u = imp.submit("personas",
+                       manifest.relative_to(ws_dir).as_posix(), pid, datoms)
+        pending.append((u, manifest))
+    return stats, pending
 
 
-def migrate_config(conn, ws_dir: Path, archive: bool,
-                   node: str = "") -> dict:
+def migrate_personas(conn, ws_dir: Path, archive: bool,
+                     node: str = "") -> dict:
+    imp = _Importer(conn, node)
+    stats, pending = _migrate_personas(conn, ws_dir, imp)
+    imp.flush()
+    return _settle(stats, pending, archive, ws_dir)
+
+
+def _migrate_config(conn, ws_dir: Path, imp: _Importer):
+    """Collect config units. Returns (stats, pending, cfg_path)."""
     cfg = ws_dir / "config.json"
     stats = {"imported": 0, "dupes": 0, "skipped_secret": 0, "archived": 0}
+    pending = []
     if not cfg.is_file():
-        return stats
+        return stats, pending, cfg
     try:
         doc = json.loads(cfg.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return stats
+        return stats, pending, cfg
     if not isinstance(doc, dict):
-        return stats
-    mtime_ms = int(cfg.stat().st_mtime * 1000)
-
-    def put(key, datoms):
-        if _import(conn, "config", key, mtime_ms, datoms, node):
-            stats["imported"] += 1
-        else:
-            stats["dupes"] += 1
-
+        return stats, pending, cfg
     clean, refs, dropped = scrub_secrets(doc)
     stats["skipped_secret"] += dropped + len(refs)
     # Only an env indirection may be recorded for a secret -- never a value.
     for path, env in refs:
         e = f"cfg:{path}"
-        put(path, [(e, "cfg:key", path, True), (e, "cfg:key_env", env, True)])
+        u = imp.submit("config", "config.json", f"env:{path}",
+                       [(e, "cfg:key", path, True),
+                        (e, "cfg:key_env", env, True)])
+        pending.append((u, cfg))
     for key in sorted(clean):
         v = clean[key]
         if isinstance(v, (dict, list)):
             v = json.dumps(v, sort_keys=True)
         e = f"cfg:{key}"
-        put(key, [(e, "cfg:key", key, True), (e, "cfg:value", str(v), True)])
-    if archive:
+        u = imp.submit("config", "config.json", key,
+                       [(e, "cfg:key", key, True),
+                        (e, "cfg:value", str(v), True)])
+        pending.append((u, cfg))
+    return stats, pending, cfg
+
+
+def migrate_config(conn, ws_dir: Path, archive: bool,
+                   node: str = "") -> dict:
+    imp = _Importer(conn, node)
+    stats, pending, cfg = _migrate_config(conn, ws_dir, imp)
+    imp.flush()
+    settled = _settle(stats, pending, False, ws_dir)
+    if archive and pending and cfg.is_file():
         _archive(ws_dir, cfg)
-        stats["archived"] += 1
-    return stats
+        settled["archived"] += 1
+    return settled
 
 
 MEMORY_SUFFIXES = (".md", ".yaml", ".yml")
@@ -413,10 +535,22 @@ def _memory_max_bytes(override: int | None = None) -> int:
     return val
 
 
+# Generated projection lives under memory/projection/ — one-way store.db
+# -> files. It must never feed back through the importer (or through the
+# bidirectional agents_store folder.sync adapter, which is deprecated for
+# agents-memory trees exactly for this reason).
+GENERATED_MARKER = "<!-- generated from store.db -->"
+PROJECTION_DIR = "projection"
+
+
 def _memory_files(root: Path):
-    """memory/**/*.{md,yaml,yml}; symlinks and dot-dirs are skipped."""
+    """memory/**/*.{md,yaml,yml}; symlinks, dot-dirs and the generated
+    ``memory/projection/`` tree are skipped — projection files are outputs
+    of the store, never import sources."""
     for p in sorted(root.rglob("*")):
         rel = p.relative_to(root)
+        if rel.parts and rel.parts[0] == PROJECTION_DIR:
+            continue
         if any(part.startswith(".") for part in rel.parts):
             continue
         if p.is_symlink() or not p.is_file():
@@ -425,14 +559,47 @@ def _memory_files(root: Path):
             yield p, rel
 
 
-def migrate_memory(conn, ws_dir: Path, archive: bool,
-                   node: str = "", max_bytes: int | None = None,
-                   warnings: list | None = None) -> dict:
+def _memory_unit(src: Path, rel: Path, stats: dict):
+    """(slug, datoms, redactions) for one memory file, or None."""
+    try:
+        text = src.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if GENERATED_MARKER in text[:400]:
+        return None  # generated projection, not a source
+    # top-level notes keep their historic slug (stem); nested files
+    # and YAML use the relative path so names never collide
+    if len(rel.parts) == 1 and src.suffix.lower() == ".md":
+        slug = src.stem
+    elif src.suffix.lower() == ".md":
+        slug = rel.with_suffix("").as_posix()
+    else:
+        slug = rel.as_posix()
+    text, n = redact_text(text)
+    stats["redacted"] += n
+    title = ""
+    if src.suffix.lower() == ".md":
+        for line in text.splitlines():
+            if line.strip().startswith("#"):
+                title = line.strip().lstrip("#").strip()
+                break
+    e = f"mem:{slug}"
+    datoms = [(e, "mem:file", rel.as_posix(), True),
+              (e, "mem:text", text, True)]
+    if title:
+        datoms.append((e, "mem:title", title, True))
+    return slug, datoms
+
+
+def _migrate_memory(conn, ws_dir: Path, imp: _Importer,
+                    max_bytes: int | None, warnings: list | None):
+    """Collect memory units. Returns (stats, pending)."""
     root = ws_dir / "memory"
     stats = {"imported": 0, "dupes": 0, "archived": 0, "redacted": 0,
              "skipped_large": 0}
+    pending = []
     if not root.is_dir():
-        return stats
+        return stats, pending
     limit = _memory_max_bytes(max_bytes)
     for src, rel in list(_memory_files(root)):
         try:
@@ -447,39 +614,83 @@ def migrate_memory(conn, ws_dir: Path, archive: bool,
             if warnings is not None:
                 warnings.append(msg)
             continue
-        # top-level notes keep their historic slug (stem); nested files
-        # and YAML use the relative path so names never collide
-        if len(rel.parts) == 1 and src.suffix.lower() == ".md":
-            slug = src.stem
-        elif src.suffix.lower() == ".md":
-            slug = rel.with_suffix("").as_posix()
-        else:
-            slug = rel.as_posix()
-        try:
-            text = src.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        unit = _memory_unit(src, rel, stats)
+        if unit is None:
             continue
-        mtime_ms = int(src.stat().st_mtime * 1000)
-        text, n = redact_text(text)
-        stats["redacted"] += n
-        title = ""
-        if src.suffix.lower() == ".md":
-            for line in text.splitlines():
-                if line.strip().startswith("#"):
-                    title = line.strip().lstrip("#").strip()
-                    break
-        e = f"mem:{slug}"
-        datoms = [(e, "mem:file", rel.as_posix(), True),
-                  (e, "mem:text", text, True)]
-        if title:
-            datoms.append((e, "mem:title", title, True))
-        if _import(conn, "memory", slug, mtime_ms, datoms, node):
-            stats["imported"] += 1
-        else:
-            stats["dupes"] += 1
-        if archive:
-            _archive(ws_dir, src)
-            stats["archived"] += 1
+        slug, datoms = unit
+        u = imp.submit("memory", f"memory/{rel.as_posix()}", slug, datoms)
+        pending.append((u, src))
+    return stats, pending
+
+
+def migrate_memory(conn, ws_dir: Path, archive: bool,
+                   node: str = "", max_bytes: int | None = None,
+                   warnings: list | None = None) -> dict:
+    imp = _Importer(conn, node)
+    stats, pending = _migrate_memory(conn, ws_dir, imp, max_bytes, warnings)
+    imp.flush()
+    return _settle(stats, pending, archive, ws_dir)
+
+
+def project_memory(conn, ws_dir: Path, node: str = "") -> dict:
+    """Fold live ``<ws>/memory`` writes into ``mem:*`` datoms.
+
+    Incremental bridge leg (files -> store): unchanged files dedupe on
+    content, new/edited files transact under the next import seq.
+    The generated ``memory/projection/`` tree and marker files are never
+    projected back — the store->files leg is one-way.
+    """
+    ensure_domains(conn)
+    imp = _Importer(conn, node)
+    stats, _pending = _migrate_memory(conn, Path(ws_dir), imp, None, None)
+    imp.flush()
+    out = {"projected": 0, "dupes": 0}
+    for u in imp.units:
+        out["projected" if u.applied else "dupes"] += 1
+    stats.update(out)
+    return stats
+
+
+def render_memory_projection(conn, ws_dir: Path) -> dict:
+    """store.db -> generated legacy markdown under ``memory/projection/``.
+
+    Read-only w.r.t. store truth: writes only files, never datoms. Each
+    file carries ``GENERATED_MARKER`` so importers and folder.sync never
+    feed it back. Stale projections whose entity vanished are removed.
+    """
+    ws_dir = Path(ws_dir)
+    out_dir = ws_dir / "memory" / PROJECTION_DIR
+    rows: dict[str, dict] = {}
+    for e, a, v in conn.execute(
+            "SELECT e, a, v FROM v_current WHERE e LIKE 'mem:%'"):
+        rows.setdefault(e, {})[a] = v
+    stats = {"written": 0, "unchanged": 0, "removed": 0}
+    keep: set[Path] = set()
+    for e in sorted(rows):
+        d = rows[e]
+        rel = str(d.get("mem:file") or "").strip()
+        if not rel:
+            rel = e[len("mem:"):] + ".md"
+        dst = (out_dir / rel).resolve()
+        if not dst.is_relative_to(out_dir.resolve()):
+            continue  # mem:file must never escape the projection dir
+        body = (f"{GENERATED_MARKER}\n\n"
+                f"{d.get('mem:text') or ''}\n")
+        keep.add(dst)
+        try:
+            if dst.read_text(encoding="utf-8") == body:
+                stats["unchanged"] += 1
+                continue
+        except OSError:
+            pass
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(body, encoding="utf-8")
+        stats["written"] += 1
+    if out_dir.is_dir():
+        for p in sorted(out_dir.rglob("*")):
+            if p.is_file() and p.resolve() not in keep:
+                p.unlink()
+                stats["removed"] += 1
     return stats
 
 
@@ -494,12 +705,20 @@ def migrate_to_store(ws_dir: str | Path, *, archive: bool = False,
     conn = connect(ws_dir / "store.db")
     try:
         ensure_migrate_domain(conn)
-        out: dict = {}
+        imp = _Importer(conn, node)
         warnings: list[str] = []
-        out["personas"] = migrate_personas(conn, ws_dir, archive, node)
-        out["config"] = migrate_config(conn, ws_dir, archive, node)
-        out["memory"] = migrate_memory(conn, ws_dir, archive, node,
-                                       memory_max_bytes, warnings)
+        pstats, ppending = _migrate_personas(conn, ws_dir, imp)
+        cstats, cpending, ccfg = _migrate_config(conn, ws_dir, imp)
+        mstats, mpending = _migrate_memory(
+            conn, ws_dir, imp, memory_max_bytes, warnings)
+        imp.flush()
+        out: dict = {}
+        out["personas"] = _settle(pstats, ppending, archive, ws_dir)
+        out["config"] = _settle(cstats, cpending, False, ws_dir)
+        if archive and cpending and ccfg.is_file():
+            _archive(ws_dir, ccfg)
+            out["config"]["archived"] += 1
+        out["memory"] = _settle(mstats, mpending, archive, ws_dir)
         out["warnings"] = warnings
         return out
     finally:

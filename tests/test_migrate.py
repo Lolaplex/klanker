@@ -121,7 +121,38 @@ def test_import_actor_is_host_scoped(tmp_path):
     conn = connect(ws / "store.db")
     actors = {r[0] for r in conn.execute(
         "SELECT origin_actor FROM tx WHERE origin_actor IS NOT NULL")}
-    assert actors == {"import@hostA:config:model"}
+    assert actors == {"import@hostA:store"}
+    conn.close()
+
+
+def test_import_seq_is_monotonic_and_deterministic(tmp_path):
+    """origin_seq runs 1..N in (domain, relpath, line) order — never mtime."""
+    ws = _ws(tmp_path)
+    (ws / "config.json").write_text(json.dumps({"b": "2", "a": "1"}))
+    (ws / "personas" / "coder" / "persona.json").write_text(
+        json.dumps({"id": "coder"}))
+    (ws / "memory" / "N.md").write_text("# n")
+    migrate_to_store(ws, node="h")
+    conn = connect(ws / "store.db")
+    seqs = [r[0] for r in conn.execute(
+        "SELECT origin_seq FROM tx WHERE origin_actor = 'import@h:store'"
+        " ORDER BY origin_seq")]
+    assert seqs == list(range(1, len(seqs) + 1))
+    # a second run with an unchanged tree adds no new tx
+    n_tx = conn.execute("SELECT COUNT(*) FROM tx").fetchone()[0]
+    conn.close()
+    stats = migrate_to_store(ws, node="h")
+    assert stats["config"]["dupes"] == 2
+    conn = connect(ws / "store.db")
+    assert conn.execute("SELECT COUNT(*) FROM tx").fetchone()[0] == n_tx
+    # a changed file re-imports under the NEXT seq — not a reused mtime
+    (ws / "config.json").write_text(json.dumps({"b": "2", "a": "9"}))
+    stats = migrate_to_store(ws, node="h")
+    assert stats["config"]["imported"] == 1
+    seqs = [r[0] for r in conn.execute(
+        "SELECT origin_seq FROM tx WHERE origin_actor = 'import@h:store'"
+        " ORDER BY origin_seq")]
+    assert seqs == list(range(1, len(seqs) + 1))
     conn.close()
 
 
@@ -383,7 +414,7 @@ def test_cli_warns_sources_keep_raw_tokens(tmp_path, monkeypatch, capsys):
 @pytest.mark.parametrize("text", [
     "z" * (1 << 20), "a:" * (1 << 19), "x" * 500_000 + "://",
     "sk-" * 300_000, "k=" + "v" * (1 << 20),
-])
+], ids=["z1m", "a_colon", "x500k_url", "sk_rep", "kv1m"])
 def test_redact_text_linear_on_large_input(text):
     t0 = time.time()
     redact_text(text)
@@ -444,3 +475,144 @@ def test_cli_rejects_negative_memory_limit_env(tmp_path, monkeypatch, capsys):
     assert cli.main(["migrate", "--to-store"]) == 2
     assert "KLANKER_MIGRATE_MEMORY_MAX_BYTES" in capsys.readouterr().err
     assert not (ws / "store.db").exists()
+
+
+# -- W13 hardening -----------------------------------------------------------
+
+
+def test_secret_named_container_redacts_all_leaves(tmp_path):
+    ws = _ws(tmp_path)
+    (ws / "config.json").write_text(json.dumps({
+        "model": "k2",
+        "secrets": {"db": "plain", "other": {"deep": "hidden"}},
+        "vault": ["a1", {"x": "b2"}, 3],
+    }))
+    stats = migrate_to_store(ws)
+    conn = connect(ws / "store.db")
+    try:
+        blob = " ".join(str(r[0]) for r in conn.execute(
+            "SELECT v FROM datom"))
+    finally:
+        conn.close()
+    for leaked in ("plain", "hidden", "a1", "b2"):
+        assert leaked not in blob
+    assert stats["config"]["skipped_secret"] >= 2
+    store = Store(conn2 := connect(ws / "store.db"), "t")
+    prov = json.loads(_view(store, "cfg:secrets")["cfg:value"])
+    assert prov == {"db": "[REDACTED]", "other": {"deep": "[REDACTED]"}}
+    conn2.close()
+
+
+def test_redact_text_inline_comment_before_whitespace():
+    red, n = redact_text("api_key: secret123 # prod")
+    assert n == 1
+    assert "secret123" not in red and "prod" not in red
+    assert "api_key:" in red
+    # quoted values keep an inner #
+    red, n = redact_text('token: "abc # not a comment"')
+    assert "# not a comment" not in red or n == 1
+
+
+def test_redact_text_telegram_and_webhooks():
+    tg = "123456789:AAFakesfakefakesfakefakesfakefake12"
+    red, n = redact_text(f"bot {tg} here")
+    assert n >= 1 and tg not in red
+    for url in (
+            "https://hooks.slack.com/services/T000AAA/B000BBB/xxsecret",
+            "https://discord.com/api/webhooks/1234567890/AbCdEfGh-secret",
+            "https://discordapp.com/api/webhooks/1234567890/AbCdEf-secret"):
+        red, n = redact_text(f"post {url} now")
+        assert n >= 1 and url.split("/")[-1] not in red, url
+
+
+def test_redact_text_hex32_under_secret_key():
+    h = "0123456789abcdef0123456789abcdef"
+    for text in (f"secret_key = '{h}'", f"client_secret: {h}",
+                 f"api_secret={h}"):
+        red, n = redact_text(text)
+        assert n >= 1 and h not in red, text
+    # a bare hex digest (git sha) stays
+    red, n = redact_text(f"commit {h} is fine")
+    assert (red, n) == (f"commit {h} is fine", 0)
+
+
+def test_archive_collision_free_bak(tmp_path):
+    ws = _ws(tmp_path)
+    src = ws / "personas" / "coder" / "persona.json"
+    for i in range(3):
+        src.write_text(json.dumps({"id": "coder", "v": i}))
+        migrate_to_store(ws, archive=True)
+        # put the source back as if the file were re-created between runs
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_text(json.dumps({"id": "coder", "v": i}))
+    base = ws / "archive" / "pre-store" / "personas" / "coder"
+    names = sorted(p.name for p in base.iterdir())
+    assert "persona.json" in names
+    assert "persona.json.bak.1" in names
+    assert "persona.json.bak.2" in names
+    # no overwrite: three distinct files survived
+    assert len(list(base.iterdir())) == 3
+
+
+def test_cli_workspace_accepts_directory(tmp_path, monkeypatch, capsys):
+    """`migrate --to-store --workspace <dir>` treats the dir as the ws."""
+    import sys
+
+    from klanker import __main__ as cli
+
+    ws = _ws(tmp_path)
+    (ws / "memory" / "N.md").write_text("# n")
+    _cli_env(tmp_path, monkeypatch, ws)
+    monkeypatch.setattr(
+        sys, "argv",
+        ["klanker", "migrate", "--to-store", "--workspace", str(ws)])
+    rc = cli.main()
+    assert rc in (0, None)
+    assert (ws / "store.db").is_file()
+
+
+def test_cli_workspace_unknown_id_errors(tmp_path, monkeypatch, capsys):
+    from klanker import __main__ as cli
+
+    ws = _ws(tmp_path)
+    _cli_env(tmp_path, monkeypatch, ws)
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    assert cli.main(
+        ["migrate", "--to-store", "--workspace", "no-such-ws"]) == 2
+    assert "unknown workspace" in capsys.readouterr().err
+
+
+def test_render_memory_projection(tmp_path):
+    from klanker.migrate import (GENERATED_MARKER, project_memory,
+                                 render_memory_projection)
+
+    ws = _ws(tmp_path)
+    (ws / "memory" / "A.md").write_text("# Alpha\n\n- fact one")
+    conn = connect(ws / "store.db")
+    try:
+        project_memory(conn, ws, node="h")
+        stats = render_memory_projection(conn, ws)
+        assert stats["written"] == 1
+        out = ws / "memory" / "projection" / "A.md"
+        text = out.read_text()
+        assert GENERATED_MARKER in text
+        assert "fact one" in text
+        # idempotent second render
+        assert render_memory_projection(conn, ws)["unchanged"] == 1
+        # projection never feeds back through project_memory
+        stats = project_memory(conn, ws, node="h")
+        assert stats["projected"] == 0
+    finally:
+        conn.close()
+
+
+def test_projection_skips_marker_files(tmp_path):
+    from klanker.migrate import GENERATED_MARKER, migrate_to_store
+
+    ws = _ws(tmp_path)
+    (ws / "memory" / "gen.md").write_text(f"{GENERATED_MARKER}\n\n# g")
+    (ws / "memory" / "real.md").write_text("# real")
+    stats = migrate_to_store(ws)
+    assert stats["memory"]["imported"] == 1
+    blob = _blob(ws)
+    assert "mem:gen" not in blob

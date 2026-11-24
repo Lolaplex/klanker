@@ -78,14 +78,12 @@ class WsSync:
         self._db = threading.Lock()
         # Every domain a remote op may carry must exist before ingest —
         # ingest refuses unknown attrs and refused envelopes never return.
-        from .migrate import ensure_migrate_domain
-        from .msgsync import ensure_domain
+        # ensure_domains covers msg/session/persona/cfg/mem; loud failure,
+        # no silent skip — an unregistered migrate domain would strand
+        # persona:*, cfg:* and mem:* ops as refusals on this host.
+        from .store_domains import ensure_domains
 
-        ensure_domain(self.conn)
-        try:
-            ensure_migrate_domain(self.conn)
-        except Exception:  # noqa: BLE001 - older klanker/store combos
-            pass
+        ensure_domains(self.conn)
         self.store = Store(self.conn, node_id)
         # One PeerBook per workspace, shared across every worker/link —
         # peer cursors must be single-writer or sibling saves clobber
@@ -972,11 +970,15 @@ class SyncRuntime:
 
     def _project_msgs(self, w: WsSync) -> None:
         """Fold trace message lines appended since the last tick into
-        msg:* datoms (incremental byte cursor, no full rescan)."""
+        msg:* datoms (incremental byte cursor, no full rescan), and live
+        memory writes into mem:* datoms (files -> store leg; the generated
+        memory/projection tree never feeds back)."""
+        from .migrate import project_memory
         from .msgsync import project_traces
 
         with w._db:
             project_traces(w.conn, w.ws_dir, node=w.local_node)
+            project_memory(w.conn, w.ws_dir, node=w.local_node)
 
 
 def sync_workspaces() -> dict:

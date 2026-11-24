@@ -637,15 +637,26 @@ def main(argv: list[str] | None = None) -> int:
         from .migrate import migrate_to_store
 
         ws_id = getattr(args, "workspace", "") or ""
+        ws_dir = None
         if ws_id:
-            from agents_workspace import Host
+            cand = Path(ws_id).expanduser()
+            if cand.is_dir():
+                # explicit dir: treat it as the workspace dir itself
+                ws_dir = cand.resolve()
+            else:
+                from agents_workspace import Host
 
-            ws = Host.from_env().workspace(ws_id)
+                try:
+                    ws_dir = Host.from_env().workspace(ws_id).dir
+                except (ValueError, OSError) as exc:
+                    print(f"Error: unknown workspace: {ws_id} ({exc})",
+                          file=sys.stderr)
+                    return 2
         else:
-            ws = Workspace.from_env()
+            ws_dir = Workspace.from_env().dir
         try:
             stats = migrate_to_store(
-                ws.dir, archive=bool(args.archive),
+                ws_dir, archive=bool(args.archive),
                 memory_max_bytes=getattr(args, "memory_max_bytes", None))
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)

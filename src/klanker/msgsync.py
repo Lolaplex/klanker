@@ -85,11 +85,15 @@ def next_seq(conn, origin_actor: str) -> int:
 
 
 def ensure_domain(conn) -> None:
-    for name, (vt, card) in MSG_ATTRS.items():
-        conn.execute(
-            "INSERT OR IGNORE INTO attr (name, value_type, cardinality, doc)"
-            " VALUES (?, ?, ?, ?)",
-            (name, vt, card, "session message domain (klanker msgsync)"))
+    """Register the full syncable schema (msg + session + migrate domains).
+
+    Delegates to ``store_domains.ensure_domains`` so every host that can
+    ingest also knows ``persona:*``/``cfg:*``/``mem:*`` — remote migrate
+    datoms would otherwise die as ``unknown_attr`` refusals.
+    """
+    from .store_domains import ensure_domains
+
+    ensure_domains(conn)
 
 
 def _cursor_path(ws_dir: str | Path) -> Path:
