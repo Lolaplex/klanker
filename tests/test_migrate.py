@@ -33,7 +33,7 @@ def _can_symlink(tmp_path):
 def test_persona_import(tmp_path):
     ws = _ws(tmp_path)
     (ws / "personas" / "coder" / "persona.json").write_text(json.dumps(
-        {"id": "coder", "name": "Coder", "system": "be terse"}))
+        {"id": "coder", "name": "Coder", "system": "be terse"}), encoding="utf-8")
     stats = migrate_to_store(ws, archive=False)
     assert stats["personas"]["imported"] == 1
     conn = connect(ws / "store.db")
@@ -49,7 +49,7 @@ def test_config_secrets_never_import_values(tmp_path):
         "model": "k2",
         "openai_api_key": "sk-live-secret",
         "relay_token": "RELAY_TOKEN",   # env indirection, allowed
-    }))
+    }), encoding="utf-8")
     stats = migrate_to_store(ws, archive=False)
     assert stats["config"]["skipped_secret"] == 2
     conn = connect(ws / "store.db")
@@ -65,7 +65,7 @@ def test_config_secrets_never_import_values(tmp_path):
 
 def test_memory_md_import(tmp_path):
     ws = _ws(tmp_path)
-    (ws / "memory" / "PROJECTS.md").write_text("# Projects\n\n- klanker")
+    (ws / "memory" / "PROJECTS.md").write_text("# Projects\n\n- klanker", encoding="utf-8")
     stats = migrate_to_store(ws, archive=False)
     assert stats["memory"]["imported"] == 1
     conn = connect(ws / "store.db")
@@ -80,11 +80,11 @@ def test_default_keeps_sources(tmp_path):
     default run must not move them away."""
     ws = _ws(tmp_path)
     src = ws / "personas" / "coder" / "persona.json"
-    src.write_text(json.dumps({"id": "coder"}))
+    src.write_text(json.dumps({"id": "coder"}), encoding="utf-8")
     cfg = ws / "config.json"
-    cfg.write_text(json.dumps({"model": "k2"}))
+    cfg.write_text(json.dumps({"model": "k2"}), encoding="utf-8")
     mem = ws / "memory" / "A.md"
-    mem.write_text("# A")
+    mem.write_text("# A", encoding="utf-8")
     stats = migrate_to_store(ws)
     assert stats["personas"]["imported"] == 1
     assert stats["personas"]["archived"] == 0
@@ -103,10 +103,10 @@ def test_nested_secrets_never_import(tmp_path):
             "list": [{"token": "NESTED3"}, "ghp_NESTED4abcdefgh", "ok"],
         },
         "hotkey": "ctrl+space",
-    }))
+    }), encoding="utf-8")
     (ws / "personas" / "coder" / "persona.json").write_text(json.dumps(
         {"id": "coder", "env": {"GITHUB_TOKEN": "gho_NESTED5"},
-         "mcp": [{"password": "NESTED6"}]}))
+         "mcp": [{"password": "NESTED6"}]}), encoding="utf-8")
     stats = migrate_to_store(ws)
     assert stats["config"]["skipped_secret"] == 5  # 4 values + 1 env ref
     assert stats["personas"]["skipped_secret"] == 2
@@ -126,7 +126,7 @@ def test_nested_secrets_never_import(tmp_path):
 
 def test_import_actor_is_host_scoped(tmp_path):
     ws = _ws(tmp_path)
-    (ws / "config.json").write_text(json.dumps({"model": "k2"}))
+    (ws / "config.json").write_text(json.dumps({"model": "k2"}), encoding="utf-8")
     migrate_to_store(ws, node="hostA")
     conn = connect(ws / "store.db")
     actors = {r[0] for r in conn.execute(
@@ -138,10 +138,10 @@ def test_import_actor_is_host_scoped(tmp_path):
 def test_import_seq_is_monotonic_and_deterministic(tmp_path):
     """origin_seq runs 1..N in (domain, relpath, line) order — never mtime."""
     ws = _ws(tmp_path)
-    (ws / "config.json").write_text(json.dumps({"b": "2", "a": "1"}))
+    (ws / "config.json").write_text(json.dumps({"b": "2", "a": "1"}), encoding="utf-8")
     (ws / "personas" / "coder" / "persona.json").write_text(
-        json.dumps({"id": "coder"}))
-    (ws / "memory" / "N.md").write_text("# n")
+        json.dumps({"id": "coder"}), encoding="utf-8")
+    (ws / "memory" / "N.md").write_text("# n", encoding="utf-8")
     migrate_to_store(ws, node="h")
     conn = connect(ws / "store.db")
     seqs = [r[0] for r in conn.execute(
@@ -156,7 +156,7 @@ def test_import_seq_is_monotonic_and_deterministic(tmp_path):
     conn = connect(ws / "store.db")
     assert conn.execute("SELECT COUNT(*) FROM tx").fetchone()[0] == n_tx
     # a changed file re-imports under the NEXT seq — not a reused mtime
-    (ws / "config.json").write_text(json.dumps({"b": "2", "a": "9"}))
+    (ws / "config.json").write_text(json.dumps({"b": "2", "a": "9"}), encoding="utf-8")
     stats = migrate_to_store(ws, node="h")
     assert stats["config"]["imported"] == 1
     seqs = [r[0] for r in conn.execute(
@@ -169,7 +169,7 @@ def test_import_seq_is_monotonic_and_deterministic(tmp_path):
 def test_idempotent_and_archive(tmp_path):
     ws = _ws(tmp_path)
     src = ws / "personas" / "coder" / "persona.json"
-    src.write_text(json.dumps({"id": "coder"}))
+    src.write_text(json.dumps({"id": "coder"}), encoding="utf-8")
     first = migrate_to_store(ws, archive=True)
     assert first["personas"]["imported"] == 1
     assert first["personas"]["archived"] == 1
@@ -184,11 +184,11 @@ def test_idempotent_and_archive(tmp_path):
 def test_changed_file_reimports(tmp_path):
     ws = _ws(tmp_path)
     cfg = ws / "config.json"
-    cfg.write_text(json.dumps({"model": "k1"}))
+    cfg.write_text(json.dumps({"model": "k1"}), encoding="utf-8")
     migrate_to_store(ws, archive=False)
     time.sleep(0.01)
     os.utime(cfg, (time.time() + 5, time.time() + 5))
-    cfg.write_text(json.dumps({"model": "k2"}))
+    cfg.write_text(json.dumps({"model": "k2"}), encoding="utf-8")
     os.utime(cfg, (time.time() + 5, time.time() + 5))
     stats = migrate_to_store(ws, archive=False)
     assert stats["config"]["imported"] == 1
@@ -231,7 +231,7 @@ def test_memory_md_tokens_redacted(tmp_path, archive):
     ws = _ws(tmp_path)
     (ws / "memory" / "NOTES.md").write_text(
         f"# Notes\n\nopenai key is {FAKE_SK} for now\n"
-        f"- token: {FAKE_GHP}\n")
+        f"- token: {FAKE_GHP}\n", encoding="utf-8")
     stats = migrate_to_store(ws, archive=archive)
     assert stats["memory"]["imported"] == 1
     assert stats["memory"]["redacted"] >= 2
@@ -247,7 +247,7 @@ def test_memory_nested_md_and_yaml_read_and_scrubbed(tmp_path):
     ws = _ws(tmp_path)
     (ws / "memory" / "proj" / "deep").mkdir(parents=True)
     (ws / "memory" / "proj" / "deep" / "INFRA.md").write_text(
-        f"# Infra\naws {FAKE_AKIA}\nslack {FAKE_XOX}\n")
+        f"# Infra\naws {FAKE_AKIA}\nslack {FAKE_XOX}\n", encoding="utf-8")
     (ws / "memory" / "proj" / "creds.yaml").write_text(
         "service:\n"
         "  url: postgres://app:hunter2pass@db:5432/x\n"
@@ -257,8 +257,8 @@ def test_memory_nested_md_and_yaml_read_and_scrubbed(tmp_path):
         "  private_key: |\n"
         "    MIIEvQIBADANBgkq\n"
         "    AbCdEf\n"
-        "  model: k2\n")
-    (ws / "memory" / "settings.yml").write_text(f"client_secret: '{FAKE_ENTROPY}'\n")
+        "  model: k2\n", encoding="utf-8")
+    (ws / "memory" / "settings.yml").write_text(f"client_secret: '{FAKE_ENTROPY}'\n", encoding="utf-8")
     stats = migrate_to_store(ws)
     assert stats["memory"]["imported"] == 3
     conn = connect(ws / "store.db")
@@ -283,10 +283,10 @@ def test_memory_symlinks_and_dotdirs_skipped(tmp_path):
         pytest.skip("symlink privilege required")
     ws = _ws(tmp_path)
     outside = tmp_path / "outside.md"
-    outside.write_text("# outside")
+    outside.write_text("# outside", encoding="utf-8")
     (ws / "memory" / "link.md").symlink_to(outside)
     (ws / "memory" / ".git").mkdir()
-    (ws / "memory" / ".git" / "x.md").write_text("# hidden")
+    (ws / "memory" / ".git" / "x.md").write_text("# hidden", encoding="utf-8")
     stats = migrate_to_store(ws)
     assert stats["memory"]["imported"] == 0
 
@@ -363,9 +363,9 @@ def test_no_false_positive_on_real_paths(tmp_path):
 
 def test_memory_size_limit_skips_and_warns(tmp_path, monkeypatch, caplog):
     ws = _ws(tmp_path)
-    (ws / "memory" / "SMALL.md").write_text("# small")
+    (ws / "memory" / "SMALL.md").write_text("# small", encoding="utf-8")
     big = ws / "memory" / "BIG.md"
-    big.write_text("x" * 2048)
+    big.write_text("x" * 2048, encoding="utf-8")
     stats = migrate_to_store(ws, archive=True, memory_max_bytes=1024)
     assert stats["memory"]["imported"] == 1
     assert stats["memory"]["skipped_large"] == 1
@@ -375,7 +375,7 @@ def test_memory_size_limit_skips_and_warns(tmp_path, monkeypatch, caplog):
     # env knob
     ws2 = tmp_path / "ws2"
     (ws2 / "memory").mkdir(parents=True)
-    (ws2 / "memory" / "BIG.md").write_text("y" * 600)
+    (ws2 / "memory" / "BIG.md").write_text("y" * 600, encoding="utf-8")
     monkeypatch.setenv("KLANKER_MIGRATE_MEMORY_MAX_BYTES", "500")
     assert migrate_to_store(ws2)["memory"]["skipped_large"] == 1
     monkeypatch.setenv("KLANKER_MIGRATE_MEMORY_MAX_BYTES", "0")  # 0 = no limit
@@ -385,8 +385,8 @@ def test_memory_size_limit_skips_and_warns(tmp_path, monkeypatch, caplog):
 def test_default_memory_limit_is_one_mib(tmp_path, monkeypatch):
     monkeypatch.delenv("KLANKER_MIGRATE_MEMORY_MAX_BYTES", raising=False)
     ws = _ws(tmp_path)
-    (ws / "memory" / "HUGE.md").write_text("z" * (1024 * 1024 + 1))
-    (ws / "memory" / "OK.md").write_text("z" * (1024 * 1024))
+    (ws / "memory" / "HUGE.md").write_text("z" * (1024 * 1024 + 1), encoding="utf-8")
+    (ws / "memory" / "OK.md").write_text("z" * (1024 * 1024), encoding="utf-8")
     stats = migrate_to_store(ws)
     assert stats["memory"]["skipped_large"] == 1
     assert stats["memory"]["imported"] == 1
@@ -398,8 +398,8 @@ def test_cli_warns_sources_keep_raw_tokens(tmp_path, monkeypatch, capsys):
     from klanker import __main__ as cli
 
     ws = _ws(tmp_path)
-    (ws / "memory" / "N.md").write_text("# n")
-    (ws / "memory" / "BIG.md").write_text("q" * 64)
+    (ws / "memory" / "N.md").write_text("# n", encoding="utf-8")
+    (ws / "memory" / "BIG.md").write_text("q" * 64, encoding="utf-8")
 
     class _WS:
         dir = ws
@@ -437,7 +437,7 @@ def test_redact_text_linear_on_large_input(text):
 @pytest.mark.parametrize("bad", [-1, -1024, True, 1.5, "10"])
 def test_negative_or_invalid_memory_limit_rejected(tmp_path, bad):
     ws = _ws(tmp_path)
-    (ws / "memory" / "N.md").write_text("# n")
+    (ws / "memory" / "N.md").write_text("# n", encoding="utf-8")
     with pytest.raises(ValueError):
         migrate_to_store(ws, memory_max_bytes=bad)
     assert not (ws / "store.db").exists()  # failed before touching the store
@@ -500,7 +500,7 @@ def test_secret_named_container_redacts_all_leaves(tmp_path):
         "model": "k2",
         "secrets": {"db": "plain", "other": {"deep": "hidden"}},
         "vault": ["a1", {"x": "b2"}, 3],
-    }))
+    }), encoding="utf-8")
     stats = migrate_to_store(ws)
     conn = connect(ws / "store.db")
     try:
@@ -554,11 +554,11 @@ def test_archive_collision_free_bak(tmp_path):
     ws = _ws(tmp_path)
     src = ws / "personas" / "coder" / "persona.json"
     for i in range(3):
-        src.write_text(json.dumps({"id": "coder", "v": i}))
+        src.write_text(json.dumps({"id": "coder", "v": i}), encoding="utf-8")
         migrate_to_store(ws, archive=True)
         # put the source back as if the file were re-created between runs
         src.parent.mkdir(parents=True, exist_ok=True)
-        src.write_text(json.dumps({"id": "coder", "v": i}))
+        src.write_text(json.dumps({"id": "coder", "v": i}), encoding="utf-8")
     base = ws / "archive" / "pre-store" / "personas" / "coder"
     names = sorted(p.name for p in base.iterdir())
     assert "persona.json" in names
@@ -575,7 +575,7 @@ def test_cli_workspace_accepts_directory(tmp_path, monkeypatch, capsys):
     from klanker import __main__ as cli
 
     ws = _ws(tmp_path)
-    (ws / "memory" / "N.md").write_text("# n")
+    (ws / "memory" / "N.md").write_text("# n", encoding="utf-8")
     _cli_env(tmp_path, monkeypatch, ws)
     monkeypatch.setattr(
         sys, "argv",
@@ -601,14 +601,14 @@ def test_render_memory_projection(tmp_path):
                                  render_memory_projection)
 
     ws = _ws(tmp_path)
-    (ws / "memory" / "A.md").write_text("# Alpha\n\n- fact one")
+    (ws / "memory" / "A.md").write_text("# Alpha\n\n- fact one", encoding="utf-8")
     conn = connect(ws / "store.db")
     try:
         project_memory(conn, ws, node="h")
         stats = render_memory_projection(conn, ws)
         assert stats["written"] == 1
         out = ws / "memory" / "projection" / "A.md"
-        text = out.read_text()
+        text = out.read_text(encoding="utf-8")
         assert GENERATED_MARKER in text
         assert "fact one" in text
         # idempotent second render
@@ -624,8 +624,8 @@ def test_projection_skips_marker_files(tmp_path):
     from klanker.migrate import GENERATED_MARKER, migrate_to_store
 
     ws = _ws(tmp_path)
-    (ws / "memory" / "gen.md").write_text(f"{GENERATED_MARKER}\n\n# g")
-    (ws / "memory" / "real.md").write_text("# real")
+    (ws / "memory" / "gen.md").write_text(f"{GENERATED_MARKER}\n\n# g", encoding="utf-8")
+    (ws / "memory" / "real.md").write_text("# real", encoding="utf-8")
     stats = migrate_to_store(ws)
     assert stats["memory"]["imported"] == 1
     blob = _blob(ws)
@@ -657,7 +657,7 @@ def test_import_ords_are_node_qualified_hlc(tmp_path):
     from agents_store.hlc import is_hlc
 
     ws = _ws(tmp_path)
-    (ws / "memory" / "A.md").write_text("# A")
+    (ws / "memory" / "A.md").write_text("# A", encoding="utf-8")
     migrate_to_store(ws, node="hostA")
     conn = connect(ws / "store.db")
     try:
@@ -675,7 +675,7 @@ def test_deleted_memory_file_retracts_and_projection_removes(tmp_path):
     the generated projection file is removed on the same run."""
     ws = _ws(tmp_path)
     note = ws / "memory" / "gone.md"
-    note.write_text("# gone\n\n- fact")
+    note.write_text("# gone\n\n- fact", encoding="utf-8")
     stats = migrate_to_store(ws, node="h1")
     assert stats["memory"]["imported"] == 1
     proj = ws / "memory" / "projection" / "gone.md"
@@ -702,7 +702,7 @@ def test_memory_entity_of_other_host_never_retracted(tmp_path):
     even when the file never existed on this disk."""
     ws = _ws(tmp_path)
     note = ws / "memory" / "shared.md"
-    note.write_text("# shared")
+    note.write_text("# shared", encoding="utf-8")
     migrate_to_store(ws, node="peerB")   # peerB owns the import
     note.unlink()
     stats = migrate_to_store(ws, node="h1")  # this host never owned it
@@ -719,7 +719,7 @@ def test_memory_entity_of_other_host_never_retracted(tmp_path):
 
 def test_memory_import_stamps_mem_host(tmp_path):
     ws = _ws(tmp_path)
-    (ws / "memory" / "A.md").write_text("# A")
+    (ws / "memory" / "A.md").write_text("# A", encoding="utf-8")
     migrate_to_store(ws, node="h1")
     conn = connect(ws / "store.db")
     try:
