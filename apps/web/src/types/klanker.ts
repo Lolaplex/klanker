@@ -129,6 +129,13 @@ export interface PendingApproval {
   id: string;
   tool: string;
   summary: string;
+  /** Owning workspace when the relay serves it (remote asks mirror into
+   *  the same /v1/approvals feed — klanker#148/#152). */
+  workspace?: string;
+  /** Session the ask belongs to + the device expected to decide (wire
+   *  fields; absent on older relays). */
+  session?: string;
+  device?: string;
 }
 
 export interface WorkspaceRow {

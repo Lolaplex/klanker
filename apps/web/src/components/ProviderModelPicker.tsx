@@ -13,6 +13,7 @@ export function ProviderModelPicker({
   favorites,
   pick,
   stale = false,
+  disabled = false,
   onPick,
   onStar,
 }: {
@@ -21,6 +22,9 @@ export function ProviderModelPicker({
   pick?: ModelPick;
   /** rows came from the offline cache — show the stale hint. */
   stale?: boolean;
+  /** Bound host unreachable — picker stays read-only on cached rows
+   *  (klanker#152: never pick a model the offline host can't serve). */
+  disabled?: boolean;
   onPick: (p: ModelPick) => void;
   onStar: (p: ModelPick, star: boolean) => void;
 }) {
@@ -105,10 +109,15 @@ export function ProviderModelPicker({
     <div ref={rootRef} className="relative">
       <button
         type="button"
+        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
-        title="Model for this chat"
-        className={`bg-[#0a0a0a] border hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] outline-none cursor-pointer max-w-[190px] truncate ${
-          active ? "border-[#525252] text-white" : "border-[#262626] text-[#a3a3a3] hover:text-white"
+        title={disabled ? "host offline — cached provider list" : "Model for this chat"}
+        className={`bg-[#0a0a0a] border hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[190px] truncate ${
+          disabled
+            ? "border-[#262626] text-[#525252] cursor-not-allowed"
+            : active
+              ? "border-[#525252] text-white cursor-pointer"
+              : "border-[#262626] text-[#a3a3a3] hover:text-white cursor-pointer"
         }`}
       >
         {stale && <span className="text-[#737373]">⟳ </span>}

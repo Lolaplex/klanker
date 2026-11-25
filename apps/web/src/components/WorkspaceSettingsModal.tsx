@@ -209,7 +209,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
           </label>
           <label className="flex flex-col gap-1">
             <span className={labelClass}>approval mode</span>
-            <select className={inputClass} value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)}>
+            <select className={inputClass} style={{ colorScheme: "dark" }} value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)}>
               <option value="">inherit (host default)</option>
               <option value="off">off</option>
               <option value="ask">ask</option>
@@ -224,6 +224,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>sync policy</span>
                 <select
+                  style={{ colorScheme: "dark" }}
                   className={inputClass}
                   value={syncPolicy}
                   onChange={(e) => {
@@ -290,6 +291,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>default host — where sessions execute</span>
                 <select
+                  style={{ colorScheme: "dark" }}
                   className={inputClass}
                   value={defaultHost}
                   onChange={(e) => setDefaultHost(e.target.value)}
@@ -309,6 +311,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>execution failover</span>
                 <select
+                  style={{ colorScheme: "dark" }}
                   className={inputClass}
                   value={failover}
                   onChange={(e) => setFailover(e.target.value)}
@@ -332,6 +335,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                         aria-label={`repo ${i + 1} slug`}
                       />
                       <select
+                        style={{ colorScheme: "dark" }}
                         className={`${inputClass} w-28 shrink-0`}
                         value={r.checkout_mode}
                         onChange={(e) => setRepo(i, { checkout_mode: e.target.value === "shared" ? "shared" : "worktree" })}

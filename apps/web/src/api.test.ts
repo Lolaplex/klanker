@@ -303,3 +303,49 @@ test("saveSettings/loadSettings round-trips hub_mode with default false", async 
   const old = await api.loadSettings();
   assert.equal(old.hub_mode, false);
 });
+
+const remoteInst = (base_url: string): KlankerInstance => ({
+  id: "r",
+  name: "r",
+  slug: "r",
+  role: "remote",
+  provider: "",
+  model: "",
+  workspace: "",
+  lock_workspace: false,
+  port: 0,
+  system_prompt: "",
+  kind: "remote",
+  endpoint: { base_url },
+  created_at: "",
+  updated_at: "",
+});
+
+test("pendingApproval matches the open chat's session/device, never a foreign ask", async () => {
+  const inst = remoteInst("http://r");
+  const { restore } = stubFetch(async (url) => {
+    if (url === "http://r/v1/approvals?workspace=w1") {
+      return jsonRes({
+        ok: true,
+        approvals: [
+          { id: "a-foreign", tool: "run", summary: "other session's ask", session: "ses_other", device: "dev-b" },
+          { id: "a-mine", tool: "run", summary: "mine", session: "ses_1", device: "dev-b" },
+        ],
+      });
+    }
+    return jsonRes({ error: "not found" }, 404);
+  });
+  try {
+    // Session+device filter picks the matching row, not the first.
+    const mine = await api.pendingApproval(inst, "w1", { session: "ses_1", device: "dev-b" });
+    assert.equal(mine?.id, "a-mine");
+    // A different session on a different device → null (never decide it here).
+    assert.equal(await api.pendingApproval(inst, "w1", { session: "ses_9", device: "dev-c" }), null);
+    // Session-only filter still matches.
+    assert.equal((await api.pendingApproval(inst, "w1", { session: "ses_1" }))?.id, "a-mine");
+    // No filters → first row (unfiltered legacy behavior).
+    assert.equal((await api.pendingApproval(inst, "w1"))?.id, "a-foreign");
+  } finally {
+    restore();
+  }
+});

@@ -65,9 +65,12 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance, workspace = 
           </div>
         ) : (
           traces.map((traceStr, idx) => {
-            let parsed: any = null;
+            let parsed: Record<string, unknown> | null = null;
             try {
-              parsed = JSON.parse(traceStr);
+              const value: unknown = JSON.parse(traceStr);
+              parsed = value !== null && typeof value === "object" && !Array.isArray(value)
+                ? value as Record<string, unknown>
+                : null;
             } catch {
               parsed = null;
             }
@@ -80,8 +83,8 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance, workspace = 
                 {parsed ? (
                   <div>
                     <div className="flex items-center justify-between text-[10px] text-[#737373] mb-1">
-                      <span className="font-semibold text-white uppercase">{parsed.type || parsed.event || "TRACE"}</span>
-                      <span>{parsed.timestamp || parsed.ts || "now"}</span>
+                      <span className="font-semibold text-white uppercase">{String(parsed.type || parsed.event || "TRACE")}</span>
+                      <span>{String(parsed.timestamp || parsed.ts || "now")}</span>
                     </div>
                     <pre className="text-[11px] text-[#a3a3a3] whitespace-pre-wrap overflow-x-auto">
                       {JSON.stringify(parsed, null, 2)}

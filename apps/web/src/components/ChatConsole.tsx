@@ -6,6 +6,8 @@ import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow }
 import { CopyButton } from "./CopyButton";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { HostPicker } from "./HostPicker";
+import type { HostBinding, HostRow } from "../hostPicker";
 
 export interface OutAttachment {
   data: string;
@@ -20,6 +22,9 @@ export type ChatProviderRow = ProviderRow;
 
 interface ChatConsoleProps {
   instance: KlankerInstance;
+  /** Console headline — `Workspace · Persona` for the open chat
+   *  (instance.name used to render here; the console is workspace-first). */
+  title?: string;
   speakerName?: string;
   messages: ChatMessage[];
   input: string;
@@ -41,6 +46,19 @@ interface ChatConsoleProps {
   onStar?: (p: ModelPick, star: boolean) => void;
   /** Provider rows came from the offline cache. */
   providersStale?: boolean;
+  /** Bound host offline — picker stays read-only on cached rows. */
+  providersDisabled?: boolean;
+  /** Per-chat host picker state (klanker#152); null hides the chip. */
+  host?: {
+    rows: HostRow[];
+    binding: HostBinding;
+    switching: boolean;
+    note: string | null;
+    onSwitch: (deviceId: string) => void;
+  } | null;
+  /** Label of the remote host whose turn paused for this approval —
+   *  renders the remote banner variant inside the approval card. */
+  remoteApprovalLabel?: string | null;
   pending: PendingApproval | null;
   deciding: boolean;
   decideError: string | null;
@@ -49,6 +67,7 @@ interface ChatConsoleProps {
 
 export const ChatConsole: React.FC<ChatConsoleProps> = ({
   instance,
+  title,
   speakerName,
   messages,
   input,
@@ -67,6 +86,9 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   favorites = [],
   onStar,
   providersStale = false,
+  providersDisabled = false,
+  host = null,
+  remoteApprovalLabel = null,
   pending,
   deciding,
   decideError,
@@ -179,6 +201,9 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const last = messages[messages.length - 1];
   const streamingBubble = isLoading && last?.role === "klanker";
   const displaySpeaker = speakerName || instance.name;
+  const headlineTitle = title || instance.name;
+  const sessionText = sessionLabel || "new";
+  const exportSessionLabel = `${headlineTitle} · ${sessionText}`;
 
   return (
     <div className="flex-1 flex flex-col bg-[#000000] overflow-hidden font-mono text-xs">
@@ -187,8 +212,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         <div className="flex min-w-0 items-center space-x-2">
           <Terminal className="w-3.5 h-3.5 shrink-0 text-white" />
           <span className="font-semibold text-white tracking-wider uppercase truncate">
-            {instance.name}
-            <span className="text-[#525252] font-normal normal-case"> · {sessionLabel || "new"}</span>
+            {headlineTitle}
+            <span className="text-[#525252] font-normal normal-case"> · {sessionText}</span>
           </span>
         </div>
 
@@ -203,10 +228,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
                 const doc = {
                   agent: instance.name,
                   speaker: displaySpeaker,
-                  session: sessionLabel || "new",
+                  session: exportSessionLabel,
                   messages,
                 };
-                const stem = exportStem(sessionLabel || "chat");
+                const stem = exportStem(exportSessionLabel || "chat");
                 if (fmt === "md") downloadText(`${stem}.md`, chatToMarkdown(doc), "text/markdown");
                 else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
               }}
@@ -219,11 +244,21 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               <option value="json">.json</option>
             </select>
           )}
+          {host && (
+            <HostPicker
+              rows={host.rows}
+              binding={host.binding}
+              switching={host.switching}
+              note={host.note}
+              onSwitch={host.onSwitch}
+            />
+          )}
           {onPick && (
             <ProviderModelPicker
               providers={providers}
               favorites={favorites}
               stale={providersStale}
+              disabled={providersDisabled}
               pick={pick ?? { provider: "", model: "" }}
               onPick={onPick}
               onStar={(p, star) => onStar?.(p, star)}
@@ -252,7 +287,12 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
       {pending && (
         <div className="mx-3 mt-3 border border-[#262626] bg-[#0a0a0a] rounded p-3">
-          <div className="text-[10px] uppercase tracking-wider text-[#737373]">Approval</div>
+          <div className="text-[10px] uppercase tracking-wider text-[#737373]">
+            Approval
+            {remoteApprovalLabel && (
+              <span className="normal-case"> · remote turn on {remoteApprovalLabel} paused — decide here to resume</span>
+            )}
+          </div>
           <div className="mt-1 text-white whitespace-pre-wrap break-words select-text">
             {pending.summary || pending.tool}
           </div>
