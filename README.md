@@ -47,15 +47,20 @@ klanker --workspace work       # REPL inside data workspace "work"
 klanker chat "note this" --workspace work
 ```
 
-Klanker is **self-equipping**: request a capability in chat (browser
-automation, agent key minting) and it installs the matching feeler via
-its own terminal on demand. To pre-install:
+Klanker ships the feelers as dependencies: browser automation
+(`agents-browser`), Ed25519 agent keys and DID resolution
+(`agents-keys`), calendar (`agents-calendar`), and the workspace sync
+line (`agents-workspace`, `agents-store`, `agents-sync`,
+`agents-relay`) install with the package. Only the interactive shell
+is optional:
 
 ```bash
-pip install "klanker[browser]"   # CDP browser automation
-pip install "klanker[keys]"      # Ed25519 agent keys, DID resolution
+pip install "klanker[repl]"      # interactive shell/TUI
 pip install "klanker[all]"       # every optional extension
 ```
+
+Suite layering (workspace/store/sync/relay/harness/klanker):
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 > [!TIP]
 > **🤖 Agent-driven setup:** point your coding agent at this repo and
@@ -85,36 +90,44 @@ Tauri desktop app (`apps/desktop/`) is a thin shell over the same `apps/web/` UI
                     │ REPL  │ serve    │ chat     │ cron
                     ▼       ▼          ▼          ▼
         ┌─────────────┐  ┌──────────────────────────────┐
-        │ apps/       │  │ agents-relay — I/O           │
-        │ desktop app │  │ /v1/* HTTP, Telegram, PWA    │
-        └─────────────┘  └───────┬──────────────────┬───┘
-                                ▼                  ▼
+        │ apps/       │  │ agents-relay — I/O + hub     │
+        │ desktop app │  │ /v1/* HTTP, Telegram, PWA,   │
+        └─────────────┘  │ channel, pairing, leases     │
+                         └───────┬──────────────────┬───┘
+                                 ▼                  ▼
                       ┌──────────────────┐  ┌─────────────────┐
                       │ agents-harness   │  │ feelers         │
                       │ loop, tools,     │  │ terminal,       │
-                      │ approvals        │  │ memory, traces, │
+                      │ approvals, gate  │  │ memory, traces, │
                       └───────┬──────────┘  │ keys, browser,  │
                               │             │ calendar        │
                               ▼             └─────────────────┘
-                      ┌───────────────────────────────┐
-                      │ agents-workspace — host,      │
-                      │ workspaces, personas, paths   │
-                      └───────────────────────────────┘
+            ┌──────────────────────┐  ┌────────────────────────┐
+            │ agents-sync — opdist │  │ agents-store —         │
+            │ op-log envelopes     │  │ store.db datoms, HLC   │
+            └──────────┬───────────┘  └───────────┬────────────┘
+                       ▼                          ▼
+            ┌─────────────────────────────────────────────┐
+            │ agents-workspace — host, workspaces, vault  │
+            └─────────────────────────────────────────────┘
 ```
 
 **Layering rule:** `klanker` imports no harness internals. It talks to
 the suite through CLIs (`runner.loop`, `agents_relay`,
 `agents_terminal`, `agents_memory`, `agents_traces`). The harness owns
 the loop, tools and approvals; klanker owns the prompt, the CLI surface
-and the overlay.
+and the overlay. The full workspace/store/sync/relay contract:
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 | Layer | Responsibility | Package |
 | :--- | :--- | :--- |
-| Workspace | One root for memory, traces, schedules, personas, relay state | `agents-workspace` |
-| Brain | Deterministic loop, LLM streaming, schedules | `agents-harness` |
+| Workspace | Host/ws split, `workspace.json` policy, secret vault | `agents-workspace` |
+| Store | Append-only `store.db` datoms, HLC ordering, `v_current` | `agents-store` |
+| Sync | Op-log envelopes, peer cursors, dedupe | `agents-sync` |
+| Brain | Deterministic loop, LLM streaming, schedules, session gate | `agents-harness` |
 | Memory | Persistent local markdown memory and typed facts | `agents-memory` |
 | Observability | Append-only JSONL event log, turn reconstruction | `agents-traces` |
-| I/O gateway | `/v1/turn`, `/v1/inject`, `/v1/chat/stream`, Telegram long-poll | `agents-relay` |
+| I/O gateway + hub | `/v1/turn`, `/v1/inject`, hub channel, pairing, leases, `/v1/remote` | `agents-relay` |
 | Tools & feelers | Jailed execution, CalDAV, CDP browser, DID keys | `agents-terminal`, `agents-calendar`, `agents-browser`, `agents-keys` |
 | Surfaces | PWA chat console; Tauri thin-shell desktop app | `apps/web/`, `apps/desktop/` |
 
@@ -135,6 +148,11 @@ and the overlay.
 | Self-equipping feelers | on demand via `mcp.terminal` | landed |
 | Windows desktop app + tray | `apps/desktop/` thin shell over `apps/web/` | in progress |
 | Cross-device live turn streaming | `GET /v1/runs/stream` fan-out | landed |
+| Workspace op-log sync | `SyncRuntime` (`wssync`) over relay channel | landed |
+| Pair-once / share-per-ws | `workspace invite\|join\|share`, hub `/v1/pair/*` | landed |
+| Session host binding + worktrees | `session:host` datom, `klanker/s-<id>` branches | landed |
+| Remote turn dispatch + run leases | `remote_dispatch`, `/v1/hub/lease` | landed |
+| File domains → store.db | `klanker migrate --to-store` | landed |
 | Web push (VAPID) | `/v1/push/vapid-key`, `/v1/push/subscribe` | endpoints + client landed; send path pending |
 
 ## Commands
@@ -152,6 +170,9 @@ and the overlay.
 | `klanker routine add\|say\|list\|pause\|resume\|remove\|run` | LLM routines (`prompt` + `at`/`cron`) |
 | `klanker evidence --from <day> --to <day>` | Per-day routine runs and workspace files |
 | `klanker workspace create\|list` | Manage workspaces on this host |
+| `klanker workspace share\|unshare\|members` | Grant/revoke paired-device access; show policy + member set |
+| `klanker workspace invite\|join` | Mint a ws-scoped pair code/QR on the hub / redeem one |
+| `klanker migrate --to-store [--archive]` | Fold personas/config/memory into `<ws>/store.db` |
 | `klanker persona list\|add\|inbox\|task\|handoff` | Persona registry + inbox handoffs |
 | `klanker import` | Import `~/.claude`, `~/.codex`, `~/.cursor` rules/skills/mcp into a workspace |
 | `klanker bg` + `ps`/`logs`/`kill` | Detached background turns |
