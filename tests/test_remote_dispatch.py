@@ -1,6 +1,7 @@
 """remote turn dispatch, run leases, and approval mirroring (klanker#148)."""
 import io
 import json
+import subprocess
 
 import pytest
 
@@ -304,6 +305,57 @@ def test_approval_req_creates_mirror_record(tmp_path, monkeypatch):
     assert rec["request"]["__device"] == "dev-remote"
 
 
+def test_approval_req_overwrites_spoofed_origin_device(
+        tmp_path, monkeypatch):
+    """The authenticated sender owns the return route; a member cannot
+    mirror an ask while naming another device as the decision target."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    monkeypatch.setattr(wssync, "_ws_allows_device", lambda w, d: True)
+    wssync.approval_apply(
+        "approval-req",
+        {"id": "ap-spoof", "ws": "w1",
+         "request": {"tool": "git", "__device": "dev-victim"}},
+        device_id="dev-remote")
+    from agents_relay.approvals import read_approval
+    from agents_relay.config import RelayConfig
+
+    rec = read_approval(RelayConfig.from_env(), "ap-spoof")
+    assert rec is not None
+    assert rec["request"]["__device"] == "dev-remote"
+
+
+def test_approval_res_wrong_workspace_never_decides_or_forwards(
+        tmp_path, monkeypatch):
+    """A decision frame is valid only for the workspace on the durable
+    approval record — claiming another member ws must fail closed."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    monkeypatch.setattr(wssync, "_ws_allows_device", lambda w, d: True)
+    wssync.approval_apply(
+        "approval-req",
+        {"id": "ap-ws", "ws": "w1", "request": {"tool": "git"}},
+        device_id="dev-remote")
+    sent = []
+
+    class _Hub:
+        def publish(self, dev, kind, payload):
+            sent.append((dev, kind, payload))
+
+    import agents_relay.channel as ch_mod
+    monkeypatch.setattr(ch_mod, "hub", lambda: _Hub())
+    wssync.approval_apply(
+        "approval-res",
+        {"id": "ap-ws", "status": "approved", "note": "cross-ws",
+         "device": "dev-remote", "ws": "w2"},
+        device_id="dev-member")
+    from agents_relay.approvals import read_approval
+    from agents_relay.config import RelayConfig
+
+    rec = read_approval(RelayConfig.from_env(), "ap-ws")
+    assert rec is not None
+    assert rec["status"] == "pending"
+    assert sent == []
+
+
 def test_approval_res_records_decision_and_forwards(
         tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
@@ -353,3 +405,124 @@ def test_approval_mirror_apply_never_echoes(tmp_path, monkeypatch):
     finally:
         appr.on_pending_fn = old
     assert fired == []
+
+
+# -- session workdir materialization -----------------------------------------
+
+def _git(repo, *args):
+    return subprocess.run(["git", "-C", str(repo), *args],
+                          capture_output=True, text=True, check=True)
+
+
+def _init_repo(path):
+    path.mkdir()
+    _git(path, "init", "-b", "main")
+    _git(path, "config", "user.email", "t@t")
+    _git(path, "config", "user.name", "t")
+    (path / "f.txt").write_text("v1", encoding="utf-8")
+    _git(path, "add", "-A")
+    _git(path, "commit", "-m", "init")
+
+
+def test_inject_workdir_fetches_then_materializes_session_worktree(
+        tmp_path, monkeypatch):
+    """A synced binding may reach the executor before the switch prepare
+    RPC. Injection must fetch and ensure the worktree itself — never run
+    a coding turn in the workspace root because the tree was absent."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    monkeypatch.setenv("KLANKER_WORKTREE_DIR", str(tmp_path / "wts"))
+    from agents_store.db import connect
+    from agents_workspace import Host
+
+    from klanker import session as session_mod
+    from klanker.session import bind_session, session_branch
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    ws = host.create("w1")
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "remote", "add", "origin", str(tmp_path / "remote.git"))
+    rd.write_host_path("w1", "repo", str(repo))
+    conn = connect(ws.dir / "store.db")
+    bind_session(conn, "sess1", "dev-me", branch=session_branch("sess1"),
+                 repo="repo")
+    conn.close()
+
+    events = []
+    real_git_ok = session_mod._git_ok
+    real_ensure = session_mod.ensure_worktree
+
+    def spy_git_ok(repo_path, *args, **kw):
+        if args and args[0] == "fetch":
+            events.append("fetch")
+            return True
+        return real_git_ok(repo_path, *args, **kw)
+
+    def spy_ensure(repo_path, session_id, **kw):
+        events.append("ensure")
+        return real_ensure(repo_path, session_id, **kw)
+
+    monkeypatch.setattr(session_mod, "_git_ok", spy_git_ok)
+    monkeypatch.setattr(session_mod, "ensure_worktree", spy_ensure)
+    body = {"session": "sess1", "workspace": "w1"}
+    assert rd._inject_workdir(body, ws, "sess1") is None
+    assert events == ["fetch", "ensure"]
+    assert body["workdir"]
+    assert session_mod.find_worktree(repo, session_branch("sess1")) is not None
+
+
+def test_lease_guard_releases_when_workdir_injection_fails(
+        clean_held, monkeypatch, tmp_path):
+    """The lease is acquired before materialization; a materialization
+    refusal must not strand the (ws, session) lease behind its 503."""
+    monkeypatch.setattr(rd, "_hub_rows", lambda: {})
+    monkeypatch.setattr(rd, "_own_device_ids", lambda: {"dev-me"})
+    monkeypatch.setattr(rd, "_ws_obj", lambda w: _FakeWs(tmp_path))
+    conflict = {"ok": False, "error": "worktree_unavailable",
+                "status": 503}
+    monkeypatch.setattr(rd, "_inject_workdir", lambda b, w, s: conflict)
+    from agents_relay.leases import hub_leases
+
+    book = hub_leases()
+    for row in list(book.snapshot()):
+        book.release(row["ws"], row["session"], row["holder"],
+                     int(row.get("fence") or 0))
+    out = rd.turn_lease_guard(
+        _Handler(), {"session": "s-worktree", "workspace": "w1"}, {})
+    assert out == conflict
+    assert ("w1", "s-worktree") not in rd._HELD
+    monkeypatch.setattr(rd, "_inject_workdir", lambda b, w, s: None)
+    assert rd.turn_lease_guard(
+        _Handler(), {"session": "s-worktree", "workspace": "w1"}, {}) is None
+    rd.turn_lease_release({"session": "s-worktree", "workspace": "w1"}, {})
+
+
+def test_inject_worktree_failure_is_loud(tmp_path, monkeypatch):
+    """Failure to materialize returns a 503 conflict payload instead of
+    silently falling through to the wrong cwd."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_store.db import connect
+    from agents_workspace import Host
+
+    from klanker import session as session_mod
+    from klanker.session import bind_session, session_branch
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    ws = host.create("w1")
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    rd.write_host_path("w1", "repo", str(repo))
+    conn = connect(ws.dir / "store.db")
+    bind_session(conn, "sess2", "dev-me", branch=session_branch("sess2"),
+                 repo="repo")
+    conn.close()
+    monkeypatch.setattr(
+        session_mod, "ensure_worktree",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("git refused")))
+    out = rd._inject_workdir({}, ws, "sess2")
+    assert out is not None
+    assert out["error"] == "worktree_unavailable"
+    assert out["status"] == 503
+    assert "git refused" in out["detail"]

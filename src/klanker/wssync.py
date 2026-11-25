@@ -1400,7 +1400,8 @@ def approval_apply(kind: str, payload: dict, device_id: str = "") -> None:
     (klanker#155). Every applied frame emits ``approval.changed`` so
     member UIs watch one event stream regardless of origin.
     """
-    from agents_relay.approvals import create_pending, record_decision
+    from agents_relay.approvals import (
+        create_pending, read_approval, record_decision)
     from agents_relay.config import RelayConfig
 
     ws_id = str(payload.get("ws") or "")
@@ -1412,7 +1413,10 @@ def approval_apply(kind: str, payload: dict, device_id: str = "") -> None:
     cfg = RelayConfig.from_env()
     if kind == "approval-req":
         req = dict(payload.get("request") or {})
-        if device_id and "__device" not in req:
+        if device_id:
+            # The authenticated sender owns the return route. A member
+            # must never mirror an ask while naming another device as
+            # the decision target (klanker#155).
             req["__device"] = device_id
         req.setdefault("id", str(payload.get("id") or ""))
         create_pending(cfg, 0, req,
@@ -1421,9 +1425,19 @@ def approval_apply(kind: str, payload: dict, device_id: str = "") -> None:
         _emit_approval_changed("pending", str(payload.get("id") or ""),
                                ws_id, device_id)
         return
-    # approval-res: close the local/mirror record first
+    # approval-res: close the local/mirror record first — but only a
+    # decision addressed to the workspace the record belongs to may
+    # mutate it. The sender ACL above judges the frame's claimed ws;
+    # this check binds the claim to the durable record (klanker#155).
     ident = str(payload.get("id") or "")
     status = str(payload.get("status") or "")
+    rec = read_approval(cfg, ident)
+    if rec is not None \
+            and str(rec.get("workspace") or "") != ws_id:
+        log.warning(
+            "approval %s: dropping res for ws %s — record belongs to ws %s",
+            ident, ws_id or "-", str(rec.get("workspace") or "") or "-")
+        return
     record_decision(
         cfg, ident,
         status=status,

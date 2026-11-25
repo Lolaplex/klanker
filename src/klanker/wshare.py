@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 
 
 def _own_device_ids(hub_id: str = "") -> set[str]:
@@ -119,6 +120,54 @@ def _hub_rows() -> dict:
         return {}
 
 
+def _post_ws_announce(row: dict, device_id: str, token: str,
+                      payload: dict) -> None:
+    """Synchronously upstream one ws:announce through /v1/hub/send.
+
+    ``ChannelClient.send`` is intentionally asynchronous inside a running
+    serve. The invite CLI is a short-lived process, and /v1/ws/invite can
+    only authorize after the hub has applied the ownership announce — so
+    the credential-minting path posts this one frame itself instead of
+    waiting for a sync tick (klanker#155).
+    """
+    import urllib.request
+
+    envelope = {"v": 1, "ch": device_id, "kind": "ws:announce",
+                "id": "", "ts": time.time(), "payload": payload}
+    req = urllib.request.Request(
+        str(row["hub_url"]).rstrip("/") + "/v1/hub/send",
+        data=json.dumps({"ch": device_id, "msgs": [envelope]}).encode(),
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {token}",
+                 "X-Device-Id": device_id},
+        method="POST")
+    resp = None
+    try:
+        resp = urllib.request.urlopen(req, timeout=15)
+        out = json.loads(resp.read().decode("utf-8") or "{}")
+    finally:
+        if resp is not None:
+            close = getattr(resp, "close", None)
+            if callable(close):
+                close()
+    if not out.get("ok", False):
+        raise RuntimeError(out.get("error") or out or "hub send refused")
+    if int(out.get("malformed") or 0):
+        raise RuntimeError("hub dropped the ownership announce as malformed")
+
+
+def _restore_preinvite_owner(host, ws_id: str, prev_exec: dict,
+                             owner: str) -> None:
+    """Undo the owner written solely for a failed invite mint."""
+    if owner:
+        return
+    try:
+        host.update_workspace(
+            ws_id, execution={**prev_exec, "owner": ""})
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def cmd_ws_invite(args) -> int:
     """Mint a ws-scoped pair code on the hub — redeem pairs the device
     AND grants ws membership in one step (klanker#145 R4 / klanker#147)."""
@@ -172,9 +221,7 @@ def cmd_ws_invite(args) -> int:
               "invite refused", file=sys.stderr)
         return 2
     try:
-        # 1) make the ws syncable + put our device on the member set —
-        #    the reconcile tick (or an already-live channel) carries the
-        #    announce to the hub BEFORE we mint credentials there.
+        # 1) make the ws syncable + put our device on the member set.
         members = set(getattr(ws, "sync_hosts", None) or ()) | {own}
         host.update_workspace(
             ws_id, sync_policy="synced", sync_hosts=sorted(members))
@@ -194,6 +241,22 @@ def cmd_ws_invite(args) -> int:
         print(f"Error: no device token for hub {hub_id}",
               file=sys.stderr)
         return 2
+    try:
+        # The hub authorizes /v1/ws/invite against ITS workspace copy.
+        # A short-lived CLI cannot wait for the serve reconcile tick, so
+        # upstream the ownership announce synchronously first.
+        _post_ws_announce(row, own, token, {
+            "ws": ws_id,
+            "label": str(getattr(ws, "label", "") or ""),
+            "owner": own,
+            "sync_hosts": sorted(members),
+            "seq": int(time.time() * 1000),
+        })
+    except Exception as exc:  # noqa: BLE001
+        _restore_preinvite_owner(host, ws_id, prev_exec, owner)
+        print(f"Error: ownership announce failed: {exc}",
+              file=sys.stderr)
+        return 2
     url = row["hub_url"].rstrip("/") + "/v1/ws/invite"
     req = urllib.request.Request(
         url, data=json.dumps({"ws": ws_id}).encode(),
@@ -208,20 +271,14 @@ def cmd_ws_invite(args) -> int:
             detail = exc.read()[:300].decode("utf-8", "replace")
         except Exception:  # noqa: BLE001
             detail = str(exc)
-        if not owner:
-            # invite died — restore the pre-existing (empty) owner so a
-            # failed invite never leaves a phantom owner behind.
-            # execution MERGES (agents-workspace failclosed): an explicit
-            # "owner": "" is the only owner-clear (klanker#155).
-            try:
-                host.update_workspace(
-                    ws_id, execution={**prev_exec, "owner": ""})
-            except Exception:  # noqa: BLE001
-                pass
+        # invite died — restore the pre-existing (empty) owner so a
+        # failed invite never leaves a phantom owner behind. execution
+        # MERGES (agents-workspace failclosed): an explicit "owner":""
+        # is the only owner-clear (klanker#155).
+        _restore_preinvite_owner(host, ws_id, prev_exec, owner)
         if exc.code == 403:
             print(f"Error: invite refused (403): {detail} — "
-                  "the hub has not seen our ownership announce yet; "
-                  "run `klanker serve` and retry after a sync tick",
+                  "the hub rejected the synchronized ownership announce",
                   file=sys.stderr)
         else:
             print(f"Error: invite refused ({exc.code}): {detail}",
@@ -293,14 +350,71 @@ def _parse_invite(raw: str) -> tuple[str, str]:
     return "", ""
 
 
+def _join_via_live_serve(hub_url: str, credential: str,
+                         label: str) -> tuple[dict | None, str, bool]:
+    """Redeem through the running local serve's /v1/hub/connect.
+
+    Returns ``(result, error, endpoint_used)``. ``endpoint_used=False``
+    means there is no usable local management surface and the caller may
+    fall back to ``connect_hub`` directly; a hard error is never retried
+    because the single-use invite may already have been consumed.
+    """
+    import urllib.error
+    import urllib.request
+
+    try:
+        from agents_workspace import resolve_relay_token
+
+        from .daemon import discover_live_serve
+
+        live = discover_live_serve()
+        token = resolve_relay_token() if live else ""
+    except Exception:  # noqa: BLE001
+        return None, "", False
+    if not live or not token:
+        return None, "", False
+    req = urllib.request.Request(
+        live.rstrip("/") + "/v1/hub/connect",
+        data=json.dumps({"url": hub_url, "code": credential,
+                         "label": label}).encode(),
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {token}"},
+        method="POST")
+    resp = None
+    try:
+        resp = urllib.request.urlopen(req, timeout=35)
+        out = json.loads(resp.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = exc.read()[:300].decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            detail = str(exc)
+        if exc.code in (404, 405, 501):
+            return None, "", False  # old serve without the mgmt route
+        return None, f"local serve refused join ({exc.code}): {detail}", True
+    except Exception:  # noqa: BLE001 — the live serve raced shutdown
+        return None, "", False
+    finally:
+        if resp is not None:
+            close = getattr(resp, "close", None)
+            if callable(close):
+                close()
+    if not isinstance(out, dict) or not out.get("ok"):
+        return None, ("local serve refused join: "
+                      f"{(out or {}).get('error') or out}"), True
+    return out, "", True
+
+
 def cmd_ws_join(args) -> int:
     """Redeem a ws invite: pairs the device and grants ws membership.
 
-    Goes through ``channel_client.connect_hub`` — the same redeem +
-    persist + reuse path as `/v1/hub/connect` (klanker#155): an
-    already-paired device redeems under its existing credential so the
-    hub grants the ws onto the SAME device_id and every prior ws share
-    survives (klanker#147)."""
+    A running local serve owns the live SyncRuntime, so prefer its
+    ``/v1/hub/connect`` route — redeem + persist + attach happen in the
+    process that must open the channel. Without a live management
+    surface, fall back to ``channel_client.connect_hub`` (the same
+    redeem + reuse wire): an already-paired device redeems under its
+    existing credential so the hub grants the ws onto the SAME device_id
+    and every prior ws share survives (klanker#147)."""
     import urllib.error
 
     raw = args.invite.strip()
@@ -322,23 +436,28 @@ def cmd_ws_join(args) -> int:
                   "(a bare code cannot resolve the hub)",
                   file=sys.stderr)
             return 2
-    from agents_relay.channel_client import connect_hub
+    label = getattr(args, "label", "") or ""
+    res, local_err, local_used = _join_via_live_serve(
+        hub_url, credential, label)
+    if local_err:
+        print(f"Error: {local_err}", file=sys.stderr)
+        return 2
+    if res is None:
+        from agents_relay.channel_client import connect_hub
 
-    try:
-        res = connect_hub(
-            hub_url, credential,
-            label=getattr(args, "label", "") or "")
-    except urllib.error.HTTPError as exc:
         try:
-            detail = exc.read()[:300].decode("utf-8", "replace")
-        except Exception:  # noqa: BLE001
-            detail = str(exc)
-        print(f"Error: join refused ({exc.code}): {detail}",
-              file=sys.stderr)
-        return 2
-    except Exception as exc:  # noqa: BLE001
-        print(f"Error: join failed: {exc}", file=sys.stderr)
-        return 2
+            res = connect_hub(hub_url, credential, label=label)
+        except urllib.error.HTTPError as exc:
+            try:
+                detail = exc.read()[:300].decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001
+                detail = str(exc)
+            print(f"Error: join refused ({exc.code}): {detail}",
+                  file=sys.stderr)
+            return 2
+        except Exception as exc:  # noqa: BLE001
+            print(f"Error: join failed: {exc}", file=sys.stderr)
+            return 2
     device_id = str(res.get("device_id") or "")
     hub_id = str(res.get("hub_id") or "")
     if res.get("reused"):
@@ -347,18 +466,25 @@ def cmd_ws_join(args) -> int:
     else:
         print(f"paired {hub_id} as {device_id}")
     if res.get("ws"):
-        print(f"workspace grant: {res['ws']} — a running "
-              "`klanker serve` attaches the new hub link and syncs it "
-              "on the next tick")
-    # nudge a running SyncRuntime so the link attaches now, not next tick
-    try:
-        from .wssync import _runtime as _rt
+        if local_used:
+            print(f"workspace grant: {res['ws']} — local serve "
+                  "attach requested via /v1/hub/connect")
+        else:
+            print(f"workspace grant: {res['ws']} — a running "
+                  "`klanker serve` attaches the new hub link and syncs it "
+                  "on the next tick")
+    # Direct fallback only: nudge an in-process runtime when the CLI is
+    # embedded in one. The normal live-serve path already went through
+    # /v1/hub/connect, whose handler attaches the new link itself.
+    if not local_used:
+        try:
+            from .wssync import _runtime as _rt
 
-        rt = _rt()
-        if rt is not None:
-            rt._attach_new_hubs()
-    except Exception:  # noqa: BLE001
-        pass
+            rt = _rt()
+            if rt is not None:
+                rt._attach_new_hubs()
+        except Exception:  # noqa: BLE001
+            pass
     return 0
 
 

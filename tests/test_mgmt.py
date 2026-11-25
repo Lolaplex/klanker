@@ -69,13 +69,16 @@ def test_hub_connect_redeems_persists_and_attaches(host, monkeypatch):
         assert url == "https://hub:8787"
         assert cred == "ABCD"
         return {"hub_id": "hub1", "device_id": "dev-me",
-                "ws": "", "hub_url": url, "label": label}
+                "ws": "w9", "reused": True,
+                "hub_url": url, "label": label}
 
     monkeypatch.setattr(cc, "connect_hub", fake_connect)
     out = mgmt.hub_connect(
         {"url": "https://hub:8787/#pair=ABCD", "label": "vps"})
     assert out["ok"] is True
     assert out["hub_id"] == "hub1"
+    assert out["ws"] == "w9"
+    assert out["reused"] is True
     assert out["connected"] is True
     assert attached == [1]
 

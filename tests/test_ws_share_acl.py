@@ -156,6 +156,45 @@ def test_repo_paths_put_persists_host_paths_json(host, _authed):
     assert h2.json_body[1]["paths"] == {"myrepo": "/srv/checkouts/myrepo"}
 
 
+def test_handler_graft_consumes_put_and_falls_through(monkeypatch):
+    """Regression: repo-paths PUT is unreachable unless the grafted
+    handler itself implements do_PUT and delegates into _dispatch."""
+
+    class Base:
+        def __init__(self):
+            self.fell_through = False
+            self.error = None
+
+        def do_PUT(self):
+            self.fell_through = True
+
+        def send_error(self, code, msg=""):
+            self.error = (code, msg)
+
+    cls = mgmt.handler_class(Base)
+    h = cls()
+    monkeypatch.setattr(mgmt, "_dispatch", lambda self, method: True)
+    h.do_PUT()
+    assert h.fell_through is False
+
+    monkeypatch.setattr(mgmt, "_dispatch", lambda self, method: False)
+    h2 = cls()
+    h2.do_PUT()
+    assert h2.fell_through is True
+
+    class NoPut:
+        def __init__(self):
+            self.error = None
+
+        def send_error(self, code, msg=""):
+            self.error = (code, msg)
+
+    h3 = mgmt.handler_class(NoPut)()
+    monkeypatch.setattr(mgmt, "_dispatch", lambda self, method: False)
+    h3.do_PUT()
+    assert h3.error[0] == 501
+
+
 def test_repo_paths_device_non_owner_403(host, _authed):
     ws = host.create("w1")
     host.update_workspace("w1", execution={"owner": "dev-owner"})

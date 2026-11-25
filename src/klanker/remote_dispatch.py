@@ -573,7 +573,10 @@ def turn_lease_guard(handler, body: dict, ctx: dict) -> dict | None:
             target=_renew_held, daemon=True, name="klanker-lease-renew")
         _renew_thread.start()
     # bound local sessions run inside their session worktree
-    _inject_workdir(body, ws, session)
+    workdir_conflict = _inject_workdir(body, ws, session)
+    if workdir_conflict is not None:
+        _release(ws_id, session)
+        return workdir_conflict
     return None
 
 
@@ -619,37 +622,60 @@ def _release(ws_id: str, session: str) -> None:
                         fence=int(rec.get("fence") or 0))
 
 
-def _inject_workdir(body: dict, ws, session: str) -> None:
-    """Bound local session with repo+branch -> run inside the session
-    worktree; host-local checkout resolves via host_paths.json."""
+def _inject_workdir(body: dict, ws, session: str) -> dict | None:
+    """Bind a local coding turn to its materialized session worktree.
+
+    The binding can arrive by sync while this host has no checkout of the
+    session branch yet (notably when the prepare RPC after a host switch
+    was missed). Re-fetching and materializing here is the last-fail
+    boundary: a coding session must never silently execute in the
+    workspace root because its worktree was absent (klanker#155).
+    """
     if body.get("workdir"):
-        return
+        return None
     from agents_store.db import connect
 
-    from .session import find_worktree, session_view
+    from .session import (
+        _git, _git_ok, ensure_worktree, session_view)
 
     conn = None
     try:
         conn = connect(ws.dir / "store.db", check_same_thread=False)
         view = session_view(conn, session)
     except Exception:  # noqa: BLE001
-        return
+        return None
     finally:
         if conn is not None:
             conn.close()
     repo_ref, branch = view.get("repo") or "", view.get("branch") or ""
     if not repo_ref or not branch:
-        return
+        return None
     slug = repo_ref.split(":", 1)[0]
     checkout = _host_path_for(ws, slug)
     if checkout is None:
-        return
+        return None
     try:
-        wt = find_worktree(checkout, branch)
-    except Exception:  # noqa: BLE001
-        wt = None
-    if wt is not None and wt.is_dir():
-        body["workdir"] = str(wt)
+        remotes = _git(checkout, "remote").stdout.split()
+        if remotes:
+            remote = "origin" if "origin" in remotes else remotes[0]
+            if not _git_ok(checkout, "fetch", remote, branch,
+                           timeout=30.0):
+                log.warning(
+                    "session %s: fetch of %s from %s failed; using local refs",
+                    session, branch, remote)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("session %s: branch fetch failed: %s", session, exc)
+    try:
+        wt = ensure_worktree(checkout, session)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "worktree_unavailable",
+                "detail": str(exc), "status": 503}
+    if not wt.is_dir():
+        return {"ok": False, "error": "worktree_unavailable",
+                "detail": f"worktree missing after ensure: {wt}",
+                "status": 503}
+    body["workdir"] = str(wt)
+    return None
 
 
 def _host_paths_path() -> Path:

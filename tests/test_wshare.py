@@ -317,6 +317,154 @@ def test_join_new_pair_writes_row_and_vault(host, monkeypatch):
     assert "Authorization" not in seen["req"].headers
 
 
+def test_join_live_serve_redeems_through_hub_connect(
+        host, monkeypatch, capsys):
+    """When `klanker serve` is live, join must redeem in THAT process —
+    /v1/hub/connect persists and attaches the new channel where the
+    SyncRuntime actually runs."""
+    import urllib.request
+
+    import agents_workspace as aw
+    from agents_relay import channel_client as _cc
+    from klanker import daemon, wshare
+
+    monkeypatch.setattr(daemon, "discover_live_serve",
+                        lambda: "http://local-serve")
+    monkeypatch.setattr(aw, "resolve_relay_token", lambda: "relay-tok")
+    forbidden = []
+    monkeypatch.setattr(
+        _cc, "connect_hub",
+        lambda *a, **k: forbidden.append((a, k)) or {})
+    calls = []
+
+    class Resp:
+        def read(self, n=-1):
+            return (b'{"ok": true, "hub_id": "hub9", '
+                    b'"device_id": "dev-b", "ws": "w9", '
+                    b'"reused": false, "connected": true}')
+
+        def close(self):
+            pass
+
+    def fake_urlopen(req, timeout=0, **kw):
+        calls.append(req)
+        return Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    rc = wshare.cmd_ws_join(Namespace(
+        invite="http://hub/#pair=ABCD-EFGH", label="gate-B"))
+    assert rc == 0
+    assert forbidden == []
+    assert len(calls) == 1
+    req = calls[0]
+    assert req.full_url == "http://local-serve/v1/hub/connect"
+    assert req.headers["Authorization"] == "Bearer relay-tok"
+    body = json.loads(req.data.decode())
+    assert body == {"url": "http://hub", "code": "ABCD-EFGH",
+                    "label": "gate-B"}
+    assert "local serve attach requested" in capsys.readouterr().out
+
+
+def test_join_live_serve_refusal_never_double_redeems(
+        host, monkeypatch, capsys):
+    """A hard local-serve refusal is terminal: the single-use invite may
+    already be consumed, so the direct redeem path must not retry it."""
+    import urllib.error
+    import urllib.request
+
+    import agents_workspace as aw
+    from agents_relay import channel_client as _cc
+    from klanker import daemon, wshare
+
+    monkeypatch.setattr(daemon, "discover_live_serve",
+                        lambda: "http://local-serve")
+    monkeypatch.setattr(aw, "resolve_relay_token", lambda: "relay-tok")
+    calls = []
+    monkeypatch.setattr(_cc, "connect_hub",
+                        lambda *a, **k: calls.append((a, k)) or {})
+    boom = urllib.error.HTTPError("u", 502, "redeem failed", None, None)
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        lambda *a, **k: (_ for _ in ()).throw(boom))
+    rc = wshare.cmd_ws_join(Namespace(
+        invite="http://hub/#pair=ABCD-EFGH", label=""))
+    assert rc == 2
+    assert calls == []
+    assert "local serve refused join" in capsys.readouterr().err
+
+
+def test_invite_cli_over_real_loopback_hub_wire(host, monkeypatch, capsys):
+    """Actual CLI path against a live HTTP hub double: /v1/hub/send must
+    land (and be applied) before /v1/ws/invite, or the invite is 403."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from agents_relay import channel_client as _cc
+    from klanker import wshare
+
+    host.create("w1", label="shared")
+    calls = []
+    state = {"owner": ""}
+
+    class Hub(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            pass
+
+        def _json(self, payload, status=200):
+            data = json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(length) or b"{}")
+            device = self.headers.get("X-Device-Id") or ""
+            if self.path == "/v1/hub/send":
+                calls.append("send")
+                msg = body["msgs"][0]
+                payload = msg["payload"]
+                if payload.get("owner") == device:
+                    state["owner"] = device
+                self._json({"ok": True, "acked": 0, "malformed": 0})
+                return
+            if self.path == "/v1/ws/invite":
+                calls.append("invite")
+                if state["owner"] != device:
+                    self._json({"error": "not the workspace owner"}, 403)
+                    return
+                self._json({
+                    "code": "ABCD-EFGH", "expires_in": 60,
+                    "pair_url": "http://hub/#kind=ws&ws=w1&pair=ABCD-EFGH"})
+                return
+            self._json({"error": "not found"}, 404)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Hub)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        _pair(host.dir, hub_id="hub1")
+        p = host.dir / "clients" / "hubs.json"
+        rows = json.loads(p.read_text())
+        rows["hubs"]["hub1"]["hub_url"] = f"http://127.0.0.1:{port}"
+        p.write_text(json.dumps(rows))
+        monkeypatch.setattr(_cc, "hub_token", lambda hid: "tok")
+        rc = wshare.cmd_ws_invite(
+            Namespace(id="w1", hub="", json=True))
+        assert rc == 0, capsys.readouterr().err
+        out = json.loads(capsys.readouterr().out)
+        assert out["code"] == "ABCD-EFGH"
+        assert calls == ["send", "invite"]
+        assert state["owner"] == "dev-self"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def test_invite_refused_on_non_tty(host, monkeypatch, capsys):
     """No --json + piped stdout = no credentials in a logfile."""
     from klanker import wshare
@@ -352,21 +500,33 @@ def test_invite_owner_refusal_and_rollback(host, monkeypatch, capsys):
     host.update_workspace(
         "w1", sync_policy="synced", sync_hosts=["dev-self"])
 
-    class Boom(Exception):
-        code = 403
-        def read(self):
-            return b'{"error": "not owner"}'
     boom = urllib.error.HTTPError("u", 403, "m", None, None)
-    monkeypatch.setattr(
-        urllib.request, "urlopen",
-        lambda *a, **k: (_ for _ in ()).throw(boom))
+    calls = []
+
+    class SendResp:
+        def read(self, n=-1):
+            return b'{"ok": true, "acked": 0, "malformed": 0}'
+
+        def close(self):
+            pass
+
+    def fake_urlopen(req, timeout=0, **kw):
+        calls.append(req.full_url)
+        if req.full_url.endswith("/v1/hub/send"):
+            return SendResp()
+        raise boom
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     from agents_relay import channel_client as _cc
     monkeypatch.setattr(_cc, "hub_token", lambda hid: "tok")
     rc = wshare.cmd_ws_invite(Namespace(id="w1", hub="", json=False))
     assert rc == 2
     assert (host.workspace("w1").execution or {}).get("owner") in \
         (None, "")
-    assert "retry after a sync tick" in capsys.readouterr().err
+    assert calls == ["http://hub/v1/hub/send",
+                     "http://hub/v1/ws/invite"]
+    assert "rejected the synchronized ownership announce" in \
+        capsys.readouterr().err
 
 
 def test_invite_json_on_non_tty(host, monkeypatch, capsys):
@@ -382,17 +542,42 @@ def test_invite_json_on_non_tty(host, monkeypatch, capsys):
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     monkeypatch.setattr(_cc, "hub_token", lambda hid: "tok")
 
-    class Resp:
-        def read(self, n=-1):
-            return b'{"code": "ABCD-EFGH", "expires_in": 60, ' \
-                   b'"pair_url": "http://hub/#pair=ABCD-EFGH"}'
+    calls = []
 
-    monkeypatch.setattr(
-        urllib.request, "urlopen", lambda *a, **k: Resp())
+    class Resp:
+        def __init__(self, data):
+            self._data = data
+
+        def read(self, n=-1):
+            return self._data
+
+        def close(self):
+            pass
+
+    def fake_urlopen(req, timeout=0, **kw):
+        calls.append(req)
+        if req.full_url.endswith("/v1/hub/send"):
+            return Resp(b'{"ok": true, "acked": 0, "malformed": 0}')
+        return Resp(b'{"code": "ABCD-EFGH", "expires_in": 60, '
+                    b'"pair_url": "http://hub/#pair=ABCD-EFGH"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     rc = wshare.cmd_ws_invite(Namespace(id="w1", hub="", json=True))
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["code"] == "ABCD-EFGH" and out["ws"] == "w1"
+    # Regression oracle: the ownership announce is upstreamed BEFORE the
+    # single invite-mint POST; the hub cannot authorize the invite before
+    # its workspace copy names our device as owner.
+    assert [r.full_url for r in calls] == [
+        "http://hub/v1/hub/send", "http://hub/v1/ws/invite"]
+    sent = json.loads(calls[0].data.decode())
+    frame = sent["msgs"][0]
+    assert frame["kind"] == "ws:announce"
+    assert frame["payload"]["ws"] == "w1"
+    assert frame["payload"]["owner"] == "dev-self"
+    assert frame["payload"]["sync_hosts"] == ["dev-self"]
+    assert sent["ch"] == frame["ch"] == "dev-self"
 
 
 def test_attach_new_hub_row_live(host, monkeypatch):

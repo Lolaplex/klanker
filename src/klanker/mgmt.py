@@ -110,6 +110,8 @@ def hub_connect(body: dict) -> dict:
         rt._attach_new_hubs()  # immediate attach, not next-tick
     return {"ok": True, "hub_id": row.get("hub_id"),
             "device_id": row.get("device_id"),
+            "ws": row.get("ws") or "",
+            "reused": bool(row.get("reused")),
             "connected": bool(
                 rt is not None and rt.client_connected(
                     str(row.get("hub_id") or "")))}
@@ -604,6 +606,14 @@ def handler_class(base: type) -> type:
         def do_POST(self) -> None:
             if not _dispatch(self, "POST"):
                 super().do_POST()
+
+        def do_PUT(self) -> None:
+            if not _dispatch(self, "PUT"):
+                fn = getattr(super(), "do_PUT", None)
+                if fn is not None:
+                    fn()
+                else:
+                    self.send_error(501)
 
         def do_DELETE(self) -> None:
             if not _dispatch(self, "DELETE"):
