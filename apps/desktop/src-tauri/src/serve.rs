@@ -43,6 +43,9 @@ pub struct ServeStatus {
     pub pid: Option<u32>,
     pub owned: bool,
     pub port: u16,
+    /// Bind host the app spawned (or would spawn) with: 127.0.0.1 or
+    /// 0.0.0.0 in hub/LAN mode.
+    pub host: String,
     pub klanker_version: Option<String>,
     pub detail: Option<String>,
 }
@@ -54,6 +57,7 @@ impl ServeStatus {
             pid: state.pid,
             owned: state.owned,
             port: state.port,
+            host: state.host.clone(),
             klanker_version: state.klanker_version.clone(),
             detail: state.detail.clone(),
         }
@@ -65,6 +69,7 @@ pub struct Serve {
     pid: Option<u32>,
     owned: bool,
     port: u16,
+    host: String,
     klanker_version: Option<String>,
     detail: Option<String>,
     failed_spawns: u8,
@@ -78,6 +83,7 @@ impl Default for Serve {
             pid: None,
             owned: false,
             port: DEFAULT_PORT,
+            host: "127.0.0.1".into(),
             klanker_version: None,
             detail: None,
             failed_spawns: 0,
@@ -112,6 +118,7 @@ pub fn log_path(_app: &AppHandle) -> Result<PathBuf, String> {
 pub(crate) struct HealthProbe {
     pub port: Option<u16>,
     pub host_id: Option<String>,
+    pub version: Option<String>,
 }
 
 fn probe(port: u16, request: &str) -> Option<String> {
@@ -160,6 +167,12 @@ pub(crate) fn parse_health_response(raw: &str) -> Option<HealthProbe> {
                 .get("port")
                 .and_then(|v| v.as_u64())
                 .and_then(|n| u16::try_from(n).ok());
+            parsed.version = obj
+                .get("version")
+                .or_else(|| obj.get("klanker_version"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty());
         }
     }
     Some(parsed)
@@ -229,17 +242,22 @@ pub(crate) fn parse_netstat_listen_pid(text: &str, port: u16) -> Option<u32> {
     None
 }
 
+#[cfg(target_os = "windows")]
+fn netstat_listen() -> Option<String> {
+    let out = Command::new("netstat")
+        .args(["-ano", "-p", "tcp"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 fn pid_on_port(port: u16) -> Option<u32> {
     #[cfg(target_os = "windows")]
     {
-        let out = Command::new("netstat")
-            .args(["-ano", "-p", "tcp"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .ok()?;
-        parse_netstat_listen_pid(&String::from_utf8_lossy(&out.stdout), port)
+        netstat_listen().and_then(|text| parse_netstat_listen_pid(&text, port))
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -256,6 +274,90 @@ fn pid_on_port(port: u16) -> Option<u32> {
     }
 }
 
+/// Exact-match PID column in `tasklist /FO CSV` output. Every field is
+/// `"..."`-quoted; image names can never contain `"` on Windows, so
+/// splitting on `","` is safe — column 2 is the bare PID. A substring
+/// match would alias 123 onto 1234/9123.
+pub(crate) fn tasklist_csv_has_pid(text: &str, pid: u32) -> bool {
+    let quoted = format!("\"{pid}\"");
+    text.lines().any(|line| {
+        let mut fields = line.split("\",\"");
+        fields.next(); // image name
+        fields
+            .next()
+            .map(|pid_field| format!("\"{pid_field}\"") == quoted)
+            .unwrap_or(false)
+    })
+}
+
+/// Local-address column of the netstat LISTENING row for `port` — the
+/// bind host of an already-running (adopted) serve: "127.0.0.1",
+/// "0.0.0.0", "::", or a specific LAN IP. Same locale-independent
+/// LISTENING detection as `parse_netstat_listen_pid` (foreign 0.0.0.0:0).
+#[cfg_attr(not(any(target_os = "windows", test)), allow(dead_code))]
+pub(crate) fn parse_netstat_listen_addr(text: &str, port: u16) -> Option<String> {
+    let suffix = format!(":{port}");
+    for line in text.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() >= 5
+            && cols[0].eq_ignore_ascii_case("TCP")
+            && cols[1].ends_with(&suffix)
+            && (cols[2] == "0.0.0.0:0" || cols[2] == "[::]:0")
+        {
+            let host = cols[1][..cols[1].len() - suffix.len()]
+                .trim_matches(|c| c == '[' || c == ']');
+            if !host.is_empty() {
+                return Some(host.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// `lsof -Fn` name-field parse for the LISTEN row of `port` — the
+/// non-Windows `port_bind_addr` leg: `n127.0.0.1:8787`, `n*:8787`
+/// (wildcard → "0.0.0.0"), `n[::1]:8787`. Same answer shape as
+/// `parse_netstat_listen_addr` so `ServeStatus.host` is real on every OS.
+#[cfg_attr(not(any(unix, test)), allow(dead_code))]
+pub(crate) fn parse_lsof_listen_addr(text: &str, port: u16) -> Option<String> {
+    let want = port.to_string();
+    for line in text.lines() {
+        let Some(name) = line.strip_prefix('n') else {
+            continue;
+        };
+        let Some((host, p)) = name.rsplit_once(':') else {
+            continue;
+        };
+        if p != want {
+            continue;
+        }
+        let host = host.trim_matches(|c| c == '[' || c == ']');
+        let host = if host == "*" { "0.0.0.0" } else { host };
+        if !host.is_empty() {
+            return Some(host.to_string());
+        }
+    }
+    None
+}
+
+fn port_bind_addr(port: u16) -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        netstat_listen().and_then(|text| parse_netstat_listen_addr(&text, port))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new("lsof")
+            .args(["-nP", "-sTCP:LISTEN", "-Fn"])
+            .arg(format!("-iTCP:{port}"))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .and_then(|out| parse_lsof_listen_addr(&String::from_utf8_lossy(&out.stdout), port))
+    }
+}
+
 fn pid_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
@@ -268,7 +370,7 @@ fn pid_alive(pid: u32) -> bool {
             .stderr(Stdio::null())
             .creation_flags(CREATE_NO_WINDOW)
             .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
+            .map(|o| tasklist_csv_has_pid(&String::from_utf8_lossy(&o.stdout), pid))
             .unwrap_or(false)
     }
     #[cfg(not(target_os = "windows"))]
@@ -531,7 +633,7 @@ fn spawn_klanker(
     token: &str,
     log: &Path,
     host_dir: &Path,
-    workdir: &str,
+    relay_host: &str,
 ) -> Result<u32, String> {
     let file = OpenOptions::new()
         .create(true)
@@ -550,7 +652,7 @@ fn spawn_klanker(
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .arg("serve")
-        .env("RELAY_HOST", "127.0.0.1")
+        .env("RELAY_HOST", relay_host)
         .env("RELAY_PORT", port.to_string())
         // Bearer/API gate (checked by every /v1/* route) plus the cookie
         // login token for the web surface — same minted secret.
@@ -570,9 +672,6 @@ fn spawn_klanker(
         .stdin(Stdio::null())
         .stdout(Stdio::from(file))
         .stderr(Stdio::from(err));
-    if !workdir.is_empty() {
-        cmd.env("AGENTS_WORKDIR", workdir);
-    }
     // `klanker serve` needs an entry workspace and refuses to guess once the
     // host holds several. Always pin it: an ambient AGENTS_WORKSPACE leaked
     // from a terminal session would silently pick a different entry ws than
@@ -658,51 +757,64 @@ fn resolved_token() -> (String, Option<String>, Option<String>) {
     (token, vault_tok, keyring_tok)
 }
 
-fn persist_token(token: &str, vault_tok: Option<&str>, keyring_tok: Option<&str>) {
+/// Write the resolved token back to keyring + host vault. Write failures
+/// propagate — a silently skipped persist leaves keyring and vault
+/// diverged and the next spawn 401s forever.
+fn persist_token(token: &str, vault_tok: Option<&str>, keyring_tok: Option<&str>) -> Result<(), String> {
     if keyring_tok != Some(token) {
-        let _ = crate::secrets::set(&crate::secrets::relay_account("local"), token);
+        crate::secrets::set(&crate::secrets::relay_account("local"), token)?;
     }
     if vault_tok != Some(token)
         || crate::secrets::read_host_vault_secret("RELAY_SECRET").as_deref() != Some(token)
     {
-        let _ = crate::secrets::write_host_vault_secrets(&[
+        crate::secrets::write_host_vault_secrets(&[
             ("RELAY_WEB_TOKEN", token),
             ("RELAY_SECRET", token),
-        ]);
+        ])?;
     }
+    Ok(())
 }
 
-fn adopt_or_mark(s: &mut Serve, app: &AppHandle, live_port: u16) {
-    // A serve for this host is already answering on `live_port`. If our
-    // recorded PID matches an active klanker process -> owned; else external.
+/// Blocking half of adopt — pid-file read, `pid_is_ours` (tasklist/proc
+/// spawn) and the keyring sync all take real time, so they run BEFORE the
+/// ServeState mutex is taken. Returns the recorded PID when our spawned
+/// child is still alive, else None (external serve we must not kill).
+fn adopt_probe(app: &AppHandle) -> Option<u32> {
+    let mut ours = None;
     if let Some((pid, _)) = read_pid_file(app) {
         if pid_is_ours(pid) {
-            sync_vault_to_keyring();
-            s.state = "running".into();
-            s.pid = Some(pid);
-            s.port = live_port;
-            s.owned = true;
-            s.failed_spawns = 0;
-            s.detail = None;
-            return;
+            ours = Some(pid);
+        } else {
+            remove_pid_file(app, Some(pid));
         }
-        remove_pid_file(app, Some(pid));
     }
     sync_vault_to_keyring();
-    s.state = "running".into();
-    s.pid = None;
-    s.port = live_port;
-    s.owned = false;
-    s.failed_spawns = 0;
-    s.detail = Some("external serve (not app-managed)".into());
+    ours
 }
 
-fn pick_port_excluding(avoid: &[u16]) -> u16 {
-    if !avoid.contains(&DEFAULT_PORT) && TcpListener::bind(("127.0.0.1", DEFAULT_PORT)).is_ok() {
+/// Locked half of adopt — a short commit under the ServeState mutex.
+fn adopt_commit(s: &mut Serve, live_port: u16, owned_pid: Option<u32>) {
+    s.state = "running".into();
+    s.pid = owned_pid;
+    s.port = live_port;
+    s.owned = owned_pid.is_some();
+    s.failed_spawns = 0;
+    s.detail = if owned_pid.is_some() {
+        None
+    } else {
+        Some("external serve (not app-managed)".into())
+    };
+}
+
+/// Port the child can actually bind. `bind` is the RELAY_HOST the child
+/// will get: a wildcard (0.0.0.0) test fails against services bound to a
+/// specific LAN IP that a loopback test would miss.
+fn pick_port_excluding(avoid: &[u16], bind: &str) -> u16 {
+    if !avoid.contains(&DEFAULT_PORT) && TcpListener::bind((bind, DEFAULT_PORT)).is_ok() {
         return DEFAULT_PORT;
     }
     for _ in 0..8 {
-        if let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) {
+        if let Ok(listener) = TcpListener::bind((bind, 0)) {
             if let Ok(addr) = listener.local_addr() {
                 let p = addr.port();
                 if !avoid.contains(&p) {
@@ -790,14 +902,20 @@ pub(crate) fn resolve_serve_token(
         .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string())
 }
 
-fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeStatus, String> {
+fn do_ensure(app: &AppHandle, hub_mode: bool, force_own: bool) -> Result<ServeStatus, String> {
     let host_dir = crate::desktop_host_dir()?;
     fs::create_dir_all(&host_dir).map_err(|e| format!("create host dir: {e}"))?;
     let expected_host_id = crate::desktop_host_id_at(&host_dir).ok();
+    let relay_host = if hub_mode { "0.0.0.0" } else { "127.0.0.1" };
+    let serve_state = app.state::<ServeState>();
 
-    let state = app.state::<ServeState>();
-    let mut s = state.0.lock().map_err(|e| e.to_string())?;
-    let candidates = candidate_ports(&s, app);
+    // Every ServeState critical section below is a snapshot or a short
+    // commit — TCP probes, process spawns, kill waits and sleep polling
+    // all run unlocked inside the spawn_blocking worker.
+    let candidates = {
+        let s = serve_lock(&serve_state)?;
+        candidate_ports(&s, app)
+    };
     let mut foreign_ports: Vec<u16> = Vec::new();
 
     for port in candidates {
@@ -812,9 +930,15 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
         }
         let (token, vault_tok, keyring_tok) = resolved_token();
         if !force_own && auth_ok(port, &token) {
-            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
-            adopt_or_mark(&mut s, app, port);
-            let st = ServeStatus::of(&s);
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref())?;
+            let bind = port_bind_addr(port);
+            let owned_pid = adopt_probe(app);
+            let st = {
+                let mut s = serve_lock(&serve_state)?;
+                adopt_commit(&mut s, port, owned_pid);
+                s.host = bind.unwrap_or_else(|| "127.0.0.1".into());
+                ServeStatus::of(&s)
+            };
             emit_serve_state(app, &st);
             return Ok(st);
         }
@@ -839,6 +963,7 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
                     std::thread::sleep(Duration::from_millis(250));
                 }
                 remove_pid_file(app, Some(pid));
+                let mut s = serve_lock(&serve_state)?;
                 s.pid = None;
                 s.owned = false;
             } else {
@@ -846,11 +971,14 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
             }
         } else {
             // Live same-host serve without discoverable PID — refuse duplicate spawn.
-            s.state = "lost".into();
-            s.owned = false;
-            s.port = port;
-            s.detail = Some("cannot reclaim same-host serve without PID".into());
-            let st = ServeStatus::of(&s);
+            let st = {
+                let mut s = serve_lock(&serve_state)?;
+                s.state = "lost".into();
+                s.owned = false;
+                s.port = port;
+                s.detail = Some("cannot reclaim same-host serve without PID".into());
+                ServeStatus::of(&s)
+            };
             emit_serve_state(app, &st);
             return Ok(st);
         }
@@ -858,98 +986,168 @@ fn do_ensure(app: &AppHandle, workdir: &str, force_own: bool) -> Result<ServeSta
 
     // A booting child needs grace — python imports take seconds. Only
     // reap it once the boot window passed without health, or it died.
-    if s.state == "starting" {
-        let booted_long = s
-            .last_spawn
-            .map(|t| t.elapsed() > Duration::from_secs(60))
-            .unwrap_or(false);
-        if let Some(pid) = s.pid {
-            if pid_alive(pid) && !booted_long {
-                let st = ServeStatus::of(&s);
-                crate::tray::update_tray_tooltip(app, &st);
-                return Ok(st);
+    {
+        let (state_name, pid, last_spawn) = {
+            let s = serve_lock(&serve_state)?;
+            (s.state.clone(), s.pid, s.last_spawn)
+        };
+        if state_name == "starting" {
+            let booted_long = last_spawn
+                .map(|t| t.elapsed() > Duration::from_secs(60))
+                .unwrap_or(false);
+            if let Some(pid) = pid {
+                if pid_alive(pid) && !booted_long {
+                    let st = {
+                        let s = serve_lock(&serve_state)?;
+                        ServeStatus::of(&s)
+                    };
+                    crate::tray::update_tray_tooltip(app, &st);
+                    return Ok(st);
+                }
             }
         }
     }
 
     // Dead. An owned zombie gets reaped before respawn.
-    if let Some(pid) = s.pid {
-        if s.owned && pid_alive(pid) {
+    let reap_pid = {
+        let s = serve_lock(&serve_state)?;
+        if s.owned {
+            s.pid
+        } else {
+            None
+        }
+    };
+    if let Some(pid) = reap_pid {
+        if pid_alive(pid) {
             kill_tree(pid);
         }
     }
 
-    if s.failed_spawns >= MAX_RESPAWNS {
-        if let Some(t) = s.last_spawn {
-            if t.elapsed() > Duration::from_secs(RESPAWN_WINDOW_SECS) {
-                s.failed_spawns = 0; // window elapsed — budget refills
-            }
-        }
+    {
+        let mut s = serve_lock(&serve_state)?;
         if s.failed_spawns >= MAX_RESPAWNS {
-            s.state = "lost".into();
-            s.detail = Some("serve died repeatedly — restart manually".into());
-            let st = ServeStatus::of(&s);
-            emit_serve_state(app, &st);
-            return Ok(st);
+            if let Some(t) = s.last_spawn {
+                if t.elapsed() > Duration::from_secs(RESPAWN_WINDOW_SECS) {
+                    s.failed_spawns = 0; // window elapsed — budget refills
+                }
+            }
+            if s.failed_spawns >= MAX_RESPAWNS {
+                s.state = "lost".into();
+                s.detail = Some("serve died repeatedly — restart manually".into());
+                let st = ServeStatus::of(&s);
+                drop(s);
+                emit_serve_state(app, &st);
+                return Ok(st);
+            }
         }
     }
 
-    let Some((argv, version)) = find_klanker(app) else {
-        s.state = "not_found".into();
-        s.detail = Some(
-            "klanker not found — install via `uv tool install klanker` or `pip install klanker`"
-                .into(),
-        );
-        let st = ServeStatus::of(&s);
+    let found = find_klanker(app);
+    let Some((argv, version)) = found else {
+        let st = {
+            let mut s = serve_lock(&serve_state)?;
+            s.state = "not_found".into();
+            s.detail = Some(
+                "klanker not found — install via `uv tool install klanker` or `pip install klanker`"
+                    .into(),
+            );
+            ServeStatus::of(&s)
+        };
         emit_serve_state(app, &st);
         return Ok(st);
     };
-    s.klanker_version = version;
 
-    let port = pick_port_excluding(&foreign_ports);
+    let port = pick_port_excluding(&foreign_ports, relay_host);
     let (token, vault_tok, keyring_tok) = resolved_token();
     let log = log_path(app)?;
-    if !workdir.is_empty() {
-        let _ = fs::create_dir_all(workdir);
-    }
-    match spawn_klanker(&argv, port, &token, &log, &host_dir, workdir) {
+    match spawn_klanker(&argv, port, &token, &log, &host_dir, relay_host) {
         Ok(pid) => {
-            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
+            // A serve we cannot authenticate to is an orphan — reap it
+            // instead of leaking a child the app will never adopt.
+            if let Err(e) = persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref()) {
+                kill_tree(pid);
+                remove_pid_file(app, Some(pid));
+                let st = {
+                    let mut s = serve_lock(&serve_state)?;
+                    s.klanker_version = version;
+                    s.failed_spawns += 1;
+                    s.last_spawn = Some(Instant::now());
+                    s.state = "stopped".into();
+                    s.detail = Some(format!("token persist failed: {e}"));
+                    ServeStatus::of(&s)
+                };
+                emit_serve_state(app, &st);
+                return Err(e);
+            }
             write_pid_file(app, pid, port, expected_host_id.as_deref());
-            s.failed_spawns += 1;
-            s.last_spawn = Some(Instant::now());
-            s.state = if probe_health(port).is_some() {
-                "running".into()
-            } else {
-                "starting".into()
+            let healthy = probe_health(port).is_some();
+            let st = {
+                let mut s = serve_lock(&serve_state)?;
+                s.klanker_version = version;
+                s.failed_spawns += 1;
+                s.last_spawn = Some(Instant::now());
+                s.state = if healthy { "running".into() } else { "starting".into() };
+                s.pid = Some(pid);
+                s.port = port;
+                s.host = relay_host.into();
+                s.owned = true;
+                s.detail = None;
+                ServeStatus::of(&s)
             };
-            s.pid = Some(pid);
-            s.port = port;
-            s.owned = true;
-            s.detail = None;
+            emit_serve_state(app, &st);
+            Ok(st)
         }
         Err(e) => {
-            s.failed_spawns += 1;
-            s.last_spawn = Some(Instant::now());
-            s.state = "stopped".into();
-            s.detail = Some(e);
+            let st = {
+                let mut s = serve_lock(&serve_state)?;
+                s.klanker_version = version;
+                s.failed_spawns += 1;
+                s.last_spawn = Some(Instant::now());
+                s.state = "stopped".into();
+                s.detail = Some(e);
+                ServeStatus::of(&s)
+            };
+            emit_serve_state(app, &st);
+            Ok(st)
         }
     }
-    let st = ServeStatus::of(&s);
-    emit_serve_state(app, &st);
-    Ok(st)
+}
+
+/// Short-lived ServeState guard — blocking probes/kills never hold it.
+/// Takes `&State` (not `&AppHandle`): the guard borrows through the
+/// caller-owned State, which outlives every block it is used in.
+fn serve_lock<'s>(
+    state: &'s tauri::State<'_, ServeState>,
+) -> Result<std::sync::MutexGuard<'s, Serve>, String> {
+    state.0.lock().map_err(|e| e.to_string())
+}
+
+/// Serializes ensure/restart/status so two lifecycle ops never interleave
+/// (double-spawn). Only ever locked inside spawn_blocking workers, so
+/// waiting here never stalls an async runtime thread.
+static LIFECYCLE: Mutex<()> = Mutex::new(());
+
+enum ProbeOutcome {
+    Adopt(u16, Option<String>),
+    AuthLost(u16),
 }
 
 fn status(app: &AppHandle) -> Result<(ServeStatus, bool), String> {
     let expected_host_id = crate::desktop_host_dir()
         .ok()
         .and_then(|d| crate::desktop_host_id_at(&d).ok());
-    let state = app.state::<ServeState>();
-    let mut s = state.0.lock().map_err(|e| e.to_string())?;
-    let prev = (s.state.clone(), s.port, s.owned, s.pid);
+    let serve_state = app.state::<ServeState>();
+    let (prev, candidates) = {
+        let s = serve_lock(&serve_state)?;
+        (
+            (s.state.clone(), s.port, s.owned, s.pid, s.host.clone()),
+            candidate_ports(&s, app),
+        )
+    };
 
     let mut handled = false;
-    for port in candidate_ports(&s, app) {
+    let mut outcome: Option<ProbeOutcome> = None;
+    for port in candidates {
         let Some(health) = probe_health(port) else {
             continue;
         };
@@ -961,24 +1159,52 @@ fn status(app: &AppHandle) -> Result<(ServeStatus, bool), String> {
         handled = true;
         let (token, vault_tok, keyring_tok) = resolved_token();
         if auth_ok(port, &token) {
-            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
-            adopt_or_mark(&mut s, app, port);
+            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref())?;
+            outcome = Some(ProbeOutcome::Adopt(port, port_bind_addr(port)));
         } else {
-            s.state = "lost".into();
-            s.owned = false;
-            s.port = port;
-            s.detail = Some("auth token mismatch — restart respawns a serve we can reach".into());
+            outcome = Some(ProbeOutcome::AuthLost(port));
         }
         break;
     }
-    if !handled && (s.state == "running" || s.state == "starting") {
-        let owned_dead = s.owned && s.pid.is_some() && !pid_alive(s.pid.unwrap_or(0));
-        if owned_dead || !s.owned {
-            s.state = "lost".into();
-            s.detail = Some("serve stopped answering".into());
+
+    let mark_lost = if !handled {
+        let (state_name, owned, pid) = {
+            let s = serve_lock(&serve_state)?;
+            (s.state.clone(), s.owned, s.pid)
+        };
+        (state_name == "running" || state_name == "starting")
+            && (!owned || pid.is_some_and(|p| !pid_alive(p)))
+    } else {
+        false
+    };
+
+    // The adopt probe spawns tasklist/proc reads and touches the keyring —
+    // resolve it before the commit lock, never under it.
+    let adopt_pid = if matches!(outcome, Some(ProbeOutcome::Adopt(..))) {
+        adopt_probe(app)
+    } else {
+        None
+    };
+    let mut s = serve_lock(&serve_state)?;
+    match outcome {
+        Some(ProbeOutcome::Adopt(port, bind)) => {
+            adopt_commit(&mut s, port, adopt_pid);
+            s.host = bind.unwrap_or_else(|| "127.0.0.1".into());
         }
+        Some(ProbeOutcome::AuthLost(port)) => {
+            s.state = "lost".into();
+            s.owned = false;
+            s.port = port;
+            s.detail =
+                Some("auth token mismatch — restart respawns a serve we can reach".into());
+        }
+        None => {}
     }
-    let changed = (s.state.clone(), s.port, s.owned, s.pid) != prev;
+    if mark_lost {
+        s.state = "lost".into();
+        s.detail = Some("serve stopped answering".into());
+    }
+    let changed = (s.state.clone(), s.port, s.owned, s.pid, s.host.clone()) != prev;
     Ok((ServeStatus::of(&s), changed))
 }
 
@@ -1037,69 +1263,97 @@ pub fn kill_owned(app: &AppHandle) {
         let Ok(state) = binding.0.lock() else {
             return;
         };
-        if state.owned {
-            if let Some(pid) = state.pid {
-                if pid_alive(pid) {
-                    kill_tree(pid);
-                }
-            }
-        }
         (state.owned, state.pid)
     };
     if owned {
+        if let Some(pid) = owned_pid {
+            if pid_alive(pid) {
+                kill_tree(pid);
+            }
+        }
         remove_pid_file(app, owned_pid);
     }
 }
 
 // --- commands ------------------------------------------------------------
 
+/// All lifecycle work (TCP probes, tasklist/netstat, kill_tree, spawn
+/// grace sleeps) is blocking — it runs on `spawn_blocking` so tokio
+/// worker threads stay free and the UI never stalls.
 #[tauri::command]
 pub async fn serve_status(app: AppHandle) -> Result<ServeStatus, String> {
-    let (st, changed) = status(&app)?;
-    if changed {
-        emit_serve_state(&app, &st);
-    } else {
-        crate::tray::update_tray_tooltip(&app, &st);
-    }
-    Ok(st)
+    tauri::async_runtime::spawn_blocking(move || {
+        let _cycle = LIFECYCLE.lock().map_err(|e| e.to_string())?;
+        let (st, changed) = status(&app)?;
+        if changed {
+            emit_serve_state(&app, &st);
+        } else {
+            crate::tray::update_tray_tooltip(&app, &st);
+        }
+        Ok(st)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Ensure a local serve answers. Called by the web layer when the active
 /// instance is the managed `local` entry — spawn policy lives in JS.
+/// `hub_mode` binds the spawned serve on 0.0.0.0 (LAN-reachable hub)
+/// instead of the 127.0.0.1 default.
 #[tauri::command]
-pub async fn serve_ensure_local(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
-    do_ensure(&app, workdir.as_deref().unwrap_or(""), false)
+pub async fn serve_ensure_local(app: AppHandle, hub_mode: Option<bool>) -> Result<ServeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _cycle = LIFECYCLE.lock().map_err(|e| e.to_string())?;
+        do_ensure(&app, hub_mode.unwrap_or(false), false)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Manual retry from the "server lost" state — resets the respawn budget.
 /// Both owned and external same-host serves are stopped cleanly before respawn
 /// so at most one serve runs per host.
 #[tauri::command]
-pub async fn serve_restart(app: AppHandle, workdir: Option<String>) -> Result<ServeStatus, String> {
-    let mut killed = None;
-    {
-        let state = app.state::<ServeState>();
-        let mut s = state.0.lock().map_err(|e| e.to_string())?;
-        s.failed_spawns = 0;
-        if s.owned {
-            if let Some(pid) = s.pid.take() {
-                kill_tree(pid);
-                killed = Some(pid);
+pub async fn serve_restart(app: AppHandle, hub_mode: Option<bool>) -> Result<ServeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _cycle = LIFECYCLE.lock().map_err(|e| e.to_string())?;
+        let serve_state = app.state::<ServeState>();
+        let killed = {
+            let mut s = serve_lock(&serve_state)?;
+            s.failed_spawns = 0;
+            let pid = if s.owned { s.pid.take() } else { None };
+            if pid.is_some() {
+                s.state = "stopped".into();
+                s.owned = false;
             }
-            s.state = "stopped".into();
-            s.owned = false;
+            pid
+        };
+        if let Some(pid) = killed {
+            kill_tree(pid);
+            for _ in 0..40 {
+                if !pid_alive(pid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            remove_pid_file(&app, Some(pid));
+        }
+        do_ensure(&app, hub_mode.unwrap_or(false), true)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// init() cannot propagate errors — persist failures land in the serve
+/// log instead of vanishing.
+fn log_persist_err(app: &AppHandle, res: Result<(), String>) {
+    if let Err(e) = res {
+        if let Ok(log) = log_path(app) {
+            if let Ok(mut f) = OpenOptions::new().append(true).open(log) {
+                let _ = writeln!(f, "[shell] token persist failed: {e}");
+            }
         }
     }
-    if let Some(pid) = killed {
-        for _ in 0..40 {
-            if !pid_alive(pid) {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-        remove_pid_file(&app, Some(pid));
-    }
-    do_ensure(&app, workdir.as_deref().unwrap_or(""), true)
 }
 
 /// Warm the state at app start: adopt recorded or canonical port serve ONLY
@@ -1120,12 +1374,14 @@ pub fn init(app: &AppHandle) {
             .unwrap_or(false);
         let (token, vault_tok, keyring_tok) = resolved_token();
         if pid_is_ours(pid) && host_ok && auth_ok(port, &token) {
-            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
+            log_persist_err(app, persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref()));
+            let bind = port_bind_addr(port);
             let state = app.state::<ServeState>();
             if let Ok(mut s) = state.0.lock() {
                 s.state = "running".into();
                 s.pid = Some(pid);
                 s.port = port;
+                s.host = bind.unwrap_or_else(|| "127.0.0.1".into());
                 s.owned = true;
             };
             return;
@@ -1141,10 +1397,13 @@ pub fn init(app: &AppHandle) {
             .unwrap_or(true);
         let (token, vault_tok, keyring_tok) = resolved_token();
         if host_ok && auth_ok(DEFAULT_PORT, &token) {
-            persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref());
+            log_persist_err(app, persist_token(&token, vault_tok.as_deref(), keyring_tok.as_deref()));
+            let bind = port_bind_addr(DEFAULT_PORT);
+            let owned_pid = adopt_probe(app);
             let state = app.state::<ServeState>();
             if let Ok(mut s) = state.0.lock() {
-                adopt_or_mark(&mut s, app, DEFAULT_PORT);
+                adopt_commit(&mut s, DEFAULT_PORT, owned_pid);
+                s.host = bind.unwrap_or_else(|| "127.0.0.1".into());
             };
         }
     }
@@ -1335,14 +1594,17 @@ Aktive Verbindungen
         let matched = HealthProbe {
             host_id: Some("host_abc".into()),
             port: Some(8787),
+            version: None,
         };
         let missing_hid = HealthProbe {
             host_id: None,
             port: Some(8787),
+            version: None,
         };
         let blank_hid = HealthProbe {
             host_id: Some("   ".into()),
             port: Some(8787),
+            version: None,
         };
         assert!(can_reclaim_by_port(&matched, Some("host_abc")));
         assert!(!can_reclaim_by_port(&matched, Some("host_other")));
@@ -1350,5 +1612,43 @@ Aktive Verbindungen
         assert!(!can_reclaim_by_port(&matched, Some(" ")));
         assert!(!can_reclaim_by_port(&missing_hid, Some("host_abc")));
         assert!(!can_reclaim_by_port(&blank_hid, Some("host_abc")));
+    }
+
+    #[test]
+    fn parse_lsof_listen_addr_maps_wildcard_loopback_and_v6() {
+        let sample = "p1234\nf3\nn*:8787\np5555\nf4\nn127.0.0.1:9010\nn[::1]:9011\n";
+        assert_eq!(parse_lsof_listen_addr(sample, 8787).as_deref(), Some("0.0.0.0"));
+        assert_eq!(parse_lsof_listen_addr(sample, 9010).as_deref(), Some("127.0.0.1"));
+        assert_eq!(parse_lsof_listen_addr(sample, 9011).as_deref(), Some("::1"));
+        // A listener on a different port never aliases (host suffix match only).
+        assert_eq!(parse_lsof_listen_addr(sample, 787).as_deref(), None);
+        assert_eq!(parse_lsof_listen_addr("", 8787).as_deref(), None);
+    }
+
+    #[test]
+    fn tasklist_csv_pid_match_is_exact_column_not_substring() {
+        let out = "\"python.exe\",\"1234\",\"Console\",\"1\",\"45,120 K\"\r\n\
+                   \"uv.exe\",\"9123\",\"Console\",\"1\",\"8,912 K\"\r\n\
+                   \"klanker.exe\",\"123\",\"Services\",\"0\",\"12,000 K\"\r\n";
+        assert!(tasklist_csv_has_pid(out, 123));
+        assert!(tasklist_csv_has_pid(out, 1234));
+        assert!(tasklist_csv_has_pid(out, 9123));
+        // Substring matches that the old `.contains(&pid.to_string())` hit.
+        assert!(!tasklist_csv_has_pid(out, 12));
+        assert!(!tasklist_csv_has_pid(out, 23));
+        assert!(!tasklist_csv_has_pid(out, 45));
+        assert!(!tasklist_csv_has_pid(out, 120));
+        // tasklist /NH "no tasks" line + empty output.
+        assert!(!tasklist_csv_has_pid("INFO: No tasks are running which match the specified criteria.\r\n", 123));
+        assert!(!tasklist_csv_has_pid("", 123));
+    }
+
+    #[test]
+    fn health_probe_parses_version_and_klanker_version() {
+        let raw = "HTTP/1.1 200 OK\r\n\r\n{\"ok\":true,\"version\":\"0.9.1\",\"host_id\":\"host_v\",\"port\":8787}";
+        let p = parse_health_response(raw).unwrap();
+        assert_eq!(p.version.as_deref(), Some("0.9.1"));
+        let raw2 = "HTTP/1.1 200 OK\r\n\r\n{\"ok\":true,\"klanker_version\":\"0.9.2\"}";
+        assert_eq!(parse_health_response(raw2).unwrap().version.as_deref(), Some("0.9.2"));
     }
 }

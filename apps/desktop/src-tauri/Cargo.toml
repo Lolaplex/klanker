@@ -4,6 +4,9 @@ version = "0.0.1"
 description = "Klanker — Adaptive Agent Workbench"
 authors = ["Lolaplex"]
 edition = "2021"
+# `File::try_lock` (secrets vault lock) stabilized in 1.89 — pin so a
+# stable-older toolchain fails at resolution time, not mid-build.
+rust-version = "1.89"
 
 [lib]
 name = "klanker_desktop_lib"

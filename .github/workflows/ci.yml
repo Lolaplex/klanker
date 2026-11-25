@@ -13,7 +13,7 @@ jobs:
   test:
     name: Test (Ubuntu - Python 3.12)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -67,3 +67,57 @@ jobs:
           fi
           PAYLOAD=$(python3 -c "import json, os; repo=os.environ['GITHUB_REPOSITORY']; server=os.environ['GITHUB_SERVER_URL']; repo_url=f'{server}/{repo}'; ref=os.environ.get('GITHUB_HEAD_REF') or os.environ.get('GITHUB_REF_NAME'); run_url=f'{server}/{repo}/actions/runs/{os.environ[\"GITHUB_RUN_ID\"]}'; print(json.dumps({'embeds':[{'title':f'🔴 CI Failure: {repo}','url':run_url,'description':f\"Workflow **{os.environ['GITHUB_WORKFLOW']}** failed on \`{ref}\`\\n[View run]({run_url}) · [Repository]({repo_url})\",'color':15158332}]}))")
           curl -fsS -X POST -H 'Content-Type: application/json' -d "$PAYLOAD" "$CI_WEBHOOK_URL"
+
+  web:
+    name: Web (typecheck + unit tests + build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm --dir apps/web install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm --dir apps/web run typecheck
+
+      - name: Unit tests
+        run: pnpm --dir apps/web test
+
+      - name: Build
+        run: pnpm --dir apps/web run build
+
+  rust:
+    name: Rust (desktop src-tauri tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libdbus-1-dev
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: Cargo test
+        run: cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml

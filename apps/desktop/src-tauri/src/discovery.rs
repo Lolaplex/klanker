@@ -25,6 +25,10 @@ pub struct DiscoveredPeer {
     pub ip: String,
     pub fqdn: Option<String>,
     pub endpoint: String,
+    /// From `GET /health` — feeds a hub-connect suggestion (connectHub
+    /// needs the hub URL + a ws invite code), not a raw HTTP mount.
+    pub host_id: Option<String>,
+    pub version: Option<String>,
 }
 
 fn silent_command(program: &str) -> Command {
@@ -75,27 +79,33 @@ fn tailscale_peers() -> Vec<(String, String, Option<String>)> {
     peers
 }
 
-/// True when `ip:port` answers `GET /health` with an HTTP 200 line.
-fn probe_health(ip: &str, port: u16) -> bool {
+/// `GET /health` on `ip:port` — parsed host_id/version when a klanker
+/// serve answers, else None. The response body (not a bare 200) is what
+/// upgrades a scan hit into a hub-connect suggestion.
+fn probe_health(ip: &str, port: u16) -> Option<crate::serve::HealthProbe> {
     let Ok(mut addrs) = format!("{ip}:{port}").to_socket_addrs() else {
-        return false;
+        return None;
     };
-    let Some(addr) = addrs.next() else { return false };
-    let Ok(mut s) = TcpStream::connect_timeout(&addr, PROBE_TIMEOUT) else {
-        return false;
-    };
+    let addr = addrs.next()?;
+    let mut s = TcpStream::connect_timeout(&addr, PROBE_TIMEOUT).ok()?;
     let _ = s.set_read_timeout(Some(PROBE_TIMEOUT));
     let _ = s.set_write_timeout(Some(PROBE_TIMEOUT));
-    if s
-        .write_all(b"GET /health HTTP/1.1\r\nHost: klanker\r\nConnection: close\r\n\r\n")
-        .is_err()
-    {
-        return false;
+    s.write_all(b"GET /health HTTP/1.1\r\nHost: klanker\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut out = Vec::with_capacity(512);
+    let mut buf = [0u8; 512];
+    loop {
+        match s.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                out.extend_from_slice(&buf[..n]);
+                if out.len() >= 4096 {
+                    break;
+                }
+            }
+        }
     }
-    let mut buf = [0u8; 64];
-    let Ok(n) = s.read(&mut buf) else { return false };
-    String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200")
-        || String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.0 200")
+    crate::serve::parse_health_response(&String::from_utf8_lossy(&out))
 }
 
 fn discover_blocking() -> Vec<DiscoveredPeer> {
@@ -104,11 +114,13 @@ fn discover_blocking() -> Vec<DiscoveredPeer> {
         for &port in DISCOVERY_PORTS {
             let (h, i, f) = (hostname.clone(), ip.clone(), fqdn.clone());
             handles.push(std::thread::spawn(move || {
-                probe_health(&i, port).then(|| DiscoveredPeer {
+                probe_health(&i, port).map(|health| DiscoveredPeer {
                     hostname: h,
                     endpoint: format!("http://{i}:{port}"),
                     ip: i,
                     fqdn: f,
+                    host_id: health.host_id,
+                    version: health.version,
                 })
             }));
         }
