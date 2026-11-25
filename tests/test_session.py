@@ -24,6 +24,16 @@ def _git(repo, *args):
                           capture_output=True, text=True, check=True)
 
 
+
+def _can_symlink(tmp_path):
+    probe = tmp_path / ".symlink-probe"
+    try:
+        probe.symlink_to(tmp_path, target_is_directory=True)
+    except OSError:
+        return False
+    probe.unlink()
+    return True
+
 @pytest.fixture
 def repo(tmp_path):
     r = tmp_path / "repo"
@@ -31,7 +41,7 @@ def repo(tmp_path):
     _git(r, "init", "-b", "main")
     _git(r, "config", "user.email", "t@t")
     _git(r, "config", "user.name", "t")
-    (r / "f.txt").write_text("v1")
+    (r / "f.txt").write_text("v1", encoding="utf-8")
     _git(r, "add", "-A")
     _git(r, "commit", "-m", "init")
     return r
@@ -83,7 +93,7 @@ def test_worktree_outside_repo_and_idempotent(repo, tmp_path):
     assert tmp_path / "wts" in wt.parents
     assert repo not in wt.parents
     assert _head(wt) == "klanker/s-sessx1234"
-    assert (wt / "f.txt").read_text() == "v1"
+    assert (wt / "f.txt").read_text(encoding="utf-8") == "v1"
     assert ensure_worktree(repo, "sessx1234") == wt
     # the user's checkout stays clean -- no untracked worktree dirs
     assert _git(repo, "status", "--porcelain").stdout.strip() == ""
@@ -91,8 +101,8 @@ def test_worktree_outside_repo_and_idempotent(repo, tmp_path):
 
 def test_checkpoint_commits_only_in_worktree(repo):
     wt = ensure_worktree(repo, "s1aaaaaa")
-    (wt / "new.txt").write_text("wip")
-    (repo / "user.txt").write_text("user edit on main")
+    (wt / "new.txt").write_text("wip", encoding="utf-8")
+    (repo / "user.txt").write_text("user edit on main", encoding="utf-8")
     res = checkpoint(repo, "s1aaaaaa", "dev-a")
     assert res["committed"] is True
     assert res["unpushed"] is True  # no remote configured
@@ -117,7 +127,7 @@ def test_checkpoint_with_existing_worktree_no_crash(repo):
 def test_other_session_worktree_never_committed(repo):
     ensure_worktree(repo, "AAAAAAAA1")
     wt_b = ensure_worktree(repo, "BBBBBBBB2")
-    (wt_b / "b.txt").write_text("b")
+    (wt_b / "b.txt").write_text("b", encoding="utf-8")
     res = checkpoint(repo, "BBBBBBBB2")
     assert res["committed"] is True
     files = _git(wt_b, "show", "--name-only", "--format=", "HEAD").stdout.split()
@@ -136,7 +146,7 @@ def test_checkpoint_pushes_to_reachable_remote(repo, tmp_path):
     _git(tmp_path, "init", "--bare", str(bare))
     _git(repo, "remote", "add", "origin", str(bare))
     wt = ensure_worktree(repo, "s5eeeeee")
-    (wt / "p.txt").write_text("p")
+    (wt / "p.txt").write_text("p", encoding="utf-8")
     res = checkpoint(repo, "s5eeeeee")
     assert res["pushed"] is True and res["unpushed"] is False
     assert session_branch("s5eeeeee") in _git(bare, "branch").stdout
@@ -145,7 +155,7 @@ def test_checkpoint_pushes_to_reachable_remote(repo, tmp_path):
 def test_checkpoint_unreachable_remote_flags_unpushed(repo, tmp_path):
     _git(repo, "remote", "add", "origin", str(tmp_path / "missing.git"))
     wt = ensure_worktree(repo, "s6ffffff")
-    (wt / "q.txt").write_text("q")
+    (wt / "q.txt").write_text("q", encoding="utf-8")
     res = checkpoint(repo, "s6ffffff")
     assert res["committed"] is True
     assert res["unpushed"] is True and res["pushed"] is False
@@ -154,7 +164,7 @@ def test_checkpoint_unreachable_remote_flags_unpushed(repo, tmp_path):
 def test_switch_host_full_flow(conn, repo):
     bind_session(conn, "s4cccccc", "dev-a", node="hostA")
     wt = ensure_worktree(repo, "s4cccccc")
-    (wt / "wip.txt").write_text("half-done")
+    (wt / "wip.txt").write_text("half-done", encoding="utf-8")
     res = switch_host(conn, "s4cccccc", "dev-b", repo=repo, old_host="dev-a",
                       node="hostA")
     assert res["bound"] is True
@@ -216,6 +226,8 @@ def test_checkpoint_and_switch_refuse_invalid_id(conn, repo):
 
 
 def test_symlinked_repo_dir_under_root_refused(repo, tmp_path):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
     outside = tmp_path / "outside"
     outside.mkdir()
     probe = worktree_path(repo, "sessaaaa")
@@ -227,6 +239,8 @@ def test_symlinked_repo_dir_under_root_refused(repo, tmp_path):
 
 
 def test_symlinked_session_dir_refused(repo, tmp_path):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
     outside = tmp_path / "outside2"
     outside.mkdir()
     probe = worktree_path(repo, "sessbbbb")
@@ -238,6 +252,8 @@ def test_symlinked_session_dir_refused(repo, tmp_path):
 
 
 def test_symlinked_root_is_resolved_and_allowed(repo, tmp_path, monkeypatch):
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
     real = tmp_path / "realroot"
     real.mkdir()
     link = tmp_path / "linkroot"
@@ -262,7 +278,7 @@ def test_remove_worktree(repo):
 
 def test_remove_worktree_refuses_dirty_unless_forced(repo):
     wt = ensure_worktree(repo, "sesseeee")
-    (wt / "f.txt").write_text("dirty")
+    (wt / "f.txt").write_text("dirty", encoding="utf-8")
     res = remove_worktree(repo, "sesseeee")
     assert not res["removed"] and res["error"]
     assert wt.exists()
@@ -322,6 +338,9 @@ def test_link_swapped_during_worktree_add_is_undone(repo, tmp_path,
     outside.mkdir()
     real_git = session_mod._git
 
+    if not _can_symlink(tmp_path):
+        pytest.skip("symlink privilege required")
+
     def racing_git(r, *args, **kw):
         if args[:2] == ("worktree", "add"):
             target = Path(args[4] if args[2] == "-b" else args[2])
@@ -343,7 +362,7 @@ def test_link_swapped_during_worktree_add_is_undone(repo, tmp_path,
 def test_outside_checkout_of_session_branch_never_used(conn, repo, tmp_path):
     elsewhere = tmp_path / "outside-co"
     _git(repo, "worktree", "add", "-b", "klanker/s-outside1", str(elsewhere))
-    (elsewhere / "untracked.txt").write_text("not yours")
+    (elsewhere / "untracked.txt").write_text("not yours", encoding="utf-8")
     before = _git(elsewhere, "rev-parse", "HEAD").stdout.strip()
     with pytest.raises(InvalidSessionId, match="outside the worktree root"):
         ensure_worktree(repo, "outside1")
@@ -361,7 +380,7 @@ def test_outside_checkout_of_session_branch_never_used(conn, repo, tmp_path):
 def test_inside_root_worktree_still_reused_and_checkpointed(repo):
     wt = ensure_worktree(repo, "inside01")
     assert ensure_worktree(repo, "inside01") == wt
-    (wt / "f.txt").write_text("v2")
+    (wt / "f.txt").write_text("v2", encoding="utf-8")
     assert checkpoint(repo, "inside01")["committed"]
 
 
@@ -384,7 +403,7 @@ def test_session_gate_binds_once(tmp_path, monkeypatch, repo):
     (h.dir / "clients").mkdir(parents=True, exist_ok=True)
     (h.dir / "clients" / "hubs.json").write_text(
         '{"hubs": {"h1": {"device_id": "dev-self",'
-        ' "hub_url": "http://hub"}}}')
+        ' "hub_url": "http://hub"}}}', encoding="utf-8")
     monkeypatch.setenv("AGENTS_WORKSPACE", "wgate")
     monkeypatch.setenv("AGENTS_WORKDIR", str(repo))
 
