@@ -1,81 +1,83 @@
 import React, { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Settings2, X } from "lucide-react";
-import { KlankerInstance, ProcessStatus } from "../types/klanker";
+import { ChevronDown, ChevronRight, Lock, Plus, Settings2, X } from "lucide-react";
+import { WorkspaceHosts, WorkspaceRow } from "../types/klanker";
 import { KlankerMark } from "./KlankerMark";
+import { wsSyncBadge, type WsBadgeKind } from "../wsTree";
 
 export interface SessionRow {
   chatId: string;
   session: string;
   label: string;
   pending: boolean;
+  /** Bound/executing host label — session:host binding or live lease. */
+  host?: string;
 }
 
 export interface PersonaRow {
   id: string;
   name?: string;
+  /** Manifest role (persona.json) — the contact's function. */
+  role?: string;
+  /** Open + running handoffs for this contact (ws inbox feed). */
+  unread?: number;
 }
 
 interface KlankerListProps {
-  instances: KlankerInstance[];
-  /** The relay this app spawned/attached. Other local-kind instances are
-   *  legacy multi-instance leftovers, listed separately from the managed one. */
-  managedId?: string | null;
-  activeId: string | null;
-  unread: ReadonlySet<string>;
-  statuses: Record<string, ProcessStatus | undefined>;
+  /** Top-level rows — local + synced + shared workspaces fronted by the
+   *  serving relay, deduped to one row per id (klanker#150). */
+  workspaces: WorkspaceRow[];
+  wsHostsOf: (ws: string) => WorkspaceHosts | undefined;
+  personasOf: (ws: string) => PersonaRow[] | undefined;
+  sessionRowsOf: (ws: string, persona: string) => SessionRow[] | undefined;
   selWs: string;
   selPersona: string;
   openChatId: string | null;
-  workspaces: { id: string; label?: string }[];
-  personasOf: (ws: string) => PersonaRow[] | undefined;
-  sessionRowsOf: (ws: string, persona: string) => SessionRow[] | undefined;
-  onSelect: (instance: KlankerInstance) => void;
   onExpandWs: (ws: string) => void;
   onExpandPersona: (ws: string, persona: string) => void;
   onSelectChat: (ws: string, persona: string, chatId: string) => void;
   onNewChat: (ws: string, persona: string) => void;
   onDeleteChat: (ws: string, persona: string, row: SessionRow) => void;
   onNewWorkspace: () => void;
-  onInstanceSettings: (instance: KlankerInstance) => void;
   onDeleteWorkspace: (ws: string) => void;
   onWorkspaceSettings: (ws: string) => void;
   onNewPersona: (ws: string) => void;
   onDeletePersona: (ws: string, persona: string) => void;
 }
 
-function rowHealth(row: ProcessStatus | undefined): "up" | "down" | "busy" {
-  if (row?.state === "running" || row?.state === "not_owned") return "up";
-  if (row?.state === "port_busy") return "busy";
-  return "down";
-}
+const badgeClass = (kind: WsBadgeKind): string => {
+  const base = "shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full border text-[9px] uppercase tracking-wider";
+  switch (kind) {
+    case "hub":
+      return `${base} border-white text-white`;
+    case "synced":
+      return `${base} border-[#525252] text-[#a3a3a3]`;
+    case "offline":
+      return `${base} border-red-500/60 text-red-400`;
+    default:
+      return `${base} border-[#262626] text-[#737373]`;
+  }
+};
 
-function dotClass(row: ProcessStatus | undefined): string {
-  const health = rowHealth(row);
-  if (health === "down") return "bg-[#525252]";
-  if (health === "busy") return "border border-white";
-  return row?.state === "running" ? "bg-white animate-pulse" : "bg-white";
-}
-
+/**
+ * Workspace-first sidebar (klanker#150): Workspaces at root with a sync
+ * badge + share/settings action, expanding to Personas (contacts: role +
+ * handoff count) and then Chats/Sessions (title + bound-host pill).
+ * Devices/hosts live in the DevicesPanel — never as tree roots.
+ */
 export const KlankerList: React.FC<KlankerListProps> = ({
-  instances,
-  managedId = null,
-  activeId,
-  unread,
-  statuses,
+  workspaces,
+  wsHostsOf,
+  personasOf,
+  sessionRowsOf,
   selWs,
   selPersona,
   openChatId,
-  workspaces,
-  personasOf,
-  sessionRowsOf,
-  onSelect,
   onExpandWs,
   onExpandPersona,
   onSelectChat,
   onNewChat,
   onDeleteChat,
   onNewWorkspace,
-  onInstanceSettings,
   onDeleteWorkspace,
   onWorkspaceSettings,
   onNewPersona,
@@ -85,8 +87,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
   const [openPersona, setOpenPersona] = useState<ReadonlySet<string>>(
     () => new Set(selWs && selPersona ? [`${selWs} ${selPersona}`] : [])
   );
-  // Component remounts per instance (key=activeId): expand the saved
-  // selection once so the tree opens where the user left it.
+  // Expand the saved selection once so the tree opens where the user left it.
   useEffect(() => {
     if (selWs) {
       onExpandWs(selWs);
@@ -94,20 +95,6 @@ export const KlankerList: React.FC<KlankerListProps> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const rows = instances.slice().sort((a, b) => Number(unread.has(b.id)) - Number(unread.has(a.id)));
-  // One managed local instance (its workspaces separate the data); remotes are
-  // connected/discovered peers; other local files predate the managed model.
-  const managed = rows.filter((i) => i.kind === "local" && (!managedId || i.id === managedId));
-  const remotes = rows.filter((i) => i.kind === "remote");
-  const legacy = rows.filter((i) => i.kind === "local" && managedId !== null && i.id !== managedId);
-  type Item = KlankerInstance | "__connected__" | "__other__";
-  const items: Item[] = [
-    ...managed,
-    ...(remotes.length ? (["__connected__"] as const) : []),
-    ...remotes,
-    ...(legacy.length ? (["__other__"] as const) : []),
-    ...legacy,
-  ];
 
   const toggleWs = (ws: string) => {
     setOpenWs((prev) => {
@@ -145,213 +132,174 @@ export const KlankerList: React.FC<KlankerListProps> = ({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain">
-        {instances.length === 0 ? (
-          <p className="px-3 py-3 text-[#525252] font-mono text-xs">No Klankers.</p>
-        ) : (
-          items.map((item) => {
-            if (typeof item === "string") {
-              return (
-                <div
-                  key={item}
-                  className="px-3 pt-3 pb-1 font-mono text-[10px] uppercase tracking-wider text-[#525252]"
-                >
-                  {item === "__connected__" ? "connected" : "other local"}
-                </div>
-              );
-            }
-            const inst = item;
-            const row = statuses[inst.id];
-            const selected = inst.id === activeId;
-            const hot = unread.has(inst.id) && !selected;
-            return (
-              <div key={inst.id}>
-                <div
-                  className={`flex items-center transition-colors ${
-                    selected ? "bg-[#141414]" : "hover:bg-[#181818]"
+        <div className="px-3 pt-3 pb-1 flex items-center justify-between">
+          <span className="font-mono text-[10px] uppercase tracking-wider text-[#525252]">workspaces</span>
+          <button
+            type="button"
+            onClick={onNewWorkspace}
+            title="New workspace"
+            aria-label="New workspace"
+            className="inline-flex h-6 w-6 items-center justify-center text-[#525252] hover:text-white transition-colors"
+          >
+            <Plus className="w-3 h-3" />
+          </button>
+        </div>
+        {workspaces.length === 0 && (
+          <p className="px-3 py-2 text-[#525252] font-mono text-[11px]">no workspaces yet — create one.</p>
+        )}
+        {workspaces.map((w) => {
+          const wsOpen = openWs.has(w.id);
+          const personas = personasOf(w.id);
+          const badge = wsSyncBadge(w, wsHostsOf(w.id));
+          return (
+            <div key={w.id} className="group">
+              <div className="flex items-center hover:bg-[#181818] transition-colors">
+                <button
+                  type="button"
+                  onClick={() => toggleWs(w.id)}
+                  className={`flex-1 min-w-0 min-h-11 text-left pl-3 pr-2 py-2 flex items-center gap-1 font-mono text-[11px] transition-colors ${
+                    selWs === w.id ? "text-white" : "text-[#a3a3a3]"
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSelect(inst)}
-                    title={rowHealth(row)}
-                    className={`flex-1 min-w-0 min-h-11 text-left px-3 py-2 flex items-center gap-2 font-mono text-xs transition-colors ${
-                      selected ? "text-white" : "text-[#a3a3a3]"
-                    }`}
-                  >
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass(row)}`} />
-                    <span className={`truncate ${hot ? "font-semibold text-white" : ""}`}>{inst.name}</span>
-                    {row?.detail !== "unauthorized" && hot ? (
-                      <span className="ml-auto h-1.5 w-1.5 shrink-0 bg-white" />
-                    ) : null}
-                  </button>
-                  {row?.detail === "unauthorized" && (
-                    <button
-                      type="button"
-                      onClick={() => onInstanceSettings(inst)}
-                      title="Relay rejected the stored secret — click to re-enter"
-                      className="shrink-0 border border-red-500/60 px-1 text-[9px] uppercase tracking-wider text-red-400 hover:bg-red-500/10 transition-colors"
-                    >
-                      auth
-                    </button>
+                  {chevron(wsOpen)}
+                  <span className="truncate">{w.label || w.id}</span>
+                  <span className={badgeClass(badge.kind)} title={`sync: ${badge.label}`}>
+                    {badge.kind === "local" && <Lock className="w-2.5 h-2.5" />}
+                    {badge.label}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onWorkspaceSettings(w.id)}
+                  title="Share / workspace settings"
+                  aria-label="Workspace settings"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-[#525252] opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity"
+                >
+                  <Settings2 className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteWorkspace(w.id)}
+                  title="Archive workspace"
+                  aria-label="Archive workspace"
+                  className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-[#525252] opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+              {wsOpen && (
+                <div>
+                  {(personas ?? []).map((p) => {
+                    const pKey = `${w.id} ${p.id}`;
+                    const pOpen = openPersona.has(pKey);
+                    const sessions = sessionRowsOf(w.id, p.id);
+                    return (
+                      <div key={p.id} className="group/persona">
+                        <div className="flex items-center hover:bg-[#181818] transition-colors">
+                          <button
+                            type="button"
+                            onClick={() => togglePersona(w.id, p.id)}
+                            className={`flex-1 min-w-0 min-h-11 text-left pl-6 pr-2 py-2 flex items-center gap-1 font-mono text-[11px] transition-colors ${
+                              selPersona === p.id && selWs === w.id ? "text-white" : "text-[#a3a3a3]"
+                            }`}
+                          >
+                            {chevron(pOpen)}
+                            <span className="truncate">{p.name || p.id}</span>
+                            {p.role && (
+                              <span className="shrink-0 text-[9px] uppercase tracking-wider text-[#525252]">
+                                {p.role}
+                              </span>
+                            )}
+                          </button>
+                          {(p.unread ?? 0) > 0 && (
+                            <span
+                              className="shrink-0 min-w-4 px-1 text-center rounded-full bg-white text-black text-[9px] font-mono"
+                              title="open/running handoffs"
+                            >
+                              {p.unread}
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onDeletePersona(w.id, p.id)}
+                            title="Archive persona"
+                            aria-label="Archive persona"
+                            className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-[#525252] opacity-100 md:opacity-0 md:group-hover/persona:opacity-100 hover:text-white transition-opacity"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                        {pOpen && (
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => onNewChat(w.id, p.id)}
+                              className="min-h-11 w-full text-left pl-9 pr-2 py-2 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
+                            >
+                              new chat
+                            </button>
+                            {(sessions ?? []).map((s) => {
+                              const chatSelected = openChatId === s.chatId;
+                              return (
+                                <div
+                                  key={s.chatId}
+                                  className={`group flex items-center transition-colors ${
+                                    chatSelected ? "bg-[#141414]" : "hover:bg-[#181818]"
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => onSelectChat(w.id, p.id, s.chatId)}
+                                    title={s.session}
+                                    className={`flex-1 min-w-0 min-h-11 text-left pl-9 pr-1 py-2 font-mono text-[11px] flex items-center gap-1 transition-colors ${
+                                      chatSelected ? "text-white" : "text-[#a3a3a3]"
+                                    }`}
+                                  >
+                                    <span className="truncate">{s.label}</span>
+                                    {s.host && (
+                                      <span
+                                        className="shrink-0 px-1.5 py-0.5 rounded-full border border-[#262626] text-[9px] uppercase tracking-wider text-[#737373]"
+                                        title={`bound host: ${s.host}`}
+                                      >
+                                        @{s.host}
+                                      </span>
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => onDeleteChat(w.id, p.id, s)}
+                                    title="Delete session"
+                                    aria-label="Delete session"
+                                    className={`inline-flex h-11 w-11 shrink-0 items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity ${
+                                      chatSelected ? "text-[#a3a3a3]" : "text-[#525252]"
+                                    }`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {personas === undefined && (
+                    <div className="pl-6 py-0.5 font-mono text-[11px] text-[#525252]">…</div>
                   )}
                   <button
                     type="button"
-                    onClick={() => onInstanceSettings(inst)}
-                    title="Instance settings"
-                    aria-label="Instance settings"
-                    className={`inline-flex h-11 w-11 shrink-0 items-center justify-center transition-colors ${
-                      selected ? "text-[#a3a3a3] hover:text-white" : "text-[#525252] hover:text-white"
-                    }`}
+                    onClick={() => onNewPersona(w.id)}
+                    className="flex min-h-11 w-full items-center gap-1 text-left pl-6 pr-2 py-2 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
                   >
-                    <Settings2 className="w-3.5 h-3.5" />
+                    <Plus className="w-3 h-3" /> persona
                   </button>
                 </div>
-
-                {selected && (
-                  <div className="pb-1">
-                    {workspaces.map((w) => {
-                      const wsOpen = openWs.has(w.id);
-                      const personas = personasOf(w.id);
-                      return (
-                        <div key={w.id} className="group">
-                          <div className="flex items-center hover:bg-[#181818] transition-colors">
-                            <button
-                              type="button"
-                              onClick={() => toggleWs(w.id)}
-                              className={`flex-1 min-w-0 min-h-11 text-left pl-6 pr-2 py-2 flex items-center gap-1 font-mono text-[11px] transition-colors ${
-                                selWs === w.id ? "text-white" : "text-[#a3a3a3]"
-                              }`}
-                            >
-                              {chevron(wsOpen)}
-                              <span className="truncate">{w.label || w.id}</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onWorkspaceSettings(w.id)}
-                              title="Workspace settings"
-                              aria-label="Workspace settings"
-                              className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-[#525252] opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity"
-                            >
-                              <Settings2 className="w-3 h-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onDeleteWorkspace(w.id)}
-                              title="Archive workspace"
-                              aria-label="Archive workspace"
-                              className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-[#525252] opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                          {wsOpen && (
-                            <div>
-                              {(personas ?? []).map((p) => {
-                                const pKey = `${w.id} ${p.id}`;
-                                const pOpen = openPersona.has(pKey);
-                                const sessions = sessionRowsOf(w.id, p.id);
-                                return (
-                                  <div key={p.id} className="group/persona">
-                                    <div className="flex items-center hover:bg-[#181818] transition-colors">
-                                      <button
-                                        type="button"
-                                        onClick={() => togglePersona(w.id, p.id)}
-                                        className={`flex-1 min-w-0 min-h-11 text-left pl-9 pr-2 py-2 flex items-center gap-1 font-mono text-[11px] transition-colors ${
-                                          selPersona === p.id && selWs === w.id
-                                            ? "text-white"
-                                            : "text-[#a3a3a3]"
-                                        }`}
-                                      >
-                                        {chevron(pOpen)}
-                                        <span className="truncate">{p.name || p.id}</span>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => onDeletePersona(w.id, p.id)}
-                                        title="Archive persona"
-                                        aria-label="Archive persona"
-                                        className="inline-flex h-11 w-11 shrink-0 items-center justify-center text-[#525252] opacity-100 md:opacity-0 md:group-hover/persona:opacity-100 hover:text-white transition-opacity"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                    {pOpen && (
-                                      <div>
-                                        <button
-                                          type="button"
-                                          onClick={() => onNewChat(w.id, p.id)}
-                                          className="min-h-11 w-full text-left pl-12 pr-2 py-2 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
-                                        >
-                                          new chat
-                                        </button>
-                                        {(sessions ?? []).map((s) => {
-                                          const chatSelected = openChatId === s.chatId;
-                                          return (
-                                            <div
-                                              key={s.chatId}
-                                              className={`group flex items-center transition-colors ${
-                                                chatSelected ? "bg-[#141414]" : "hover:bg-[#181818]"
-                                              }`}
-                                            >
-                                              <button
-                                                type="button"
-                                                onClick={() => onSelectChat(w.id, p.id, s.chatId)}
-                                                title={s.session}
-                                                className={`flex-1 min-w-0 min-h-11 text-left pl-12 pr-1 py-2 font-mono text-[11px] truncate transition-colors ${
-                                                  chatSelected ? "text-white" : "text-[#a3a3a3]"
-                                                }`}
-                                              >
-                                                {s.label}
-                                              </button>
-                                              <button
-                                                type="button"
-                                                onClick={() => onDeleteChat(w.id, p.id, s)}
-                                                title="Delete session"
-                                                aria-label="Delete session"
-                                                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:text-white transition-opacity ${
-                                                  chatSelected ? "text-[#a3a3a3]" : "text-[#525252]"
-                                                }`}
-                                              >
-                                                <X className="w-3 h-3" />
-                                              </button>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                              {personas === undefined && (
-                                <div className="pl-9 py-0.5 font-mono text-[11px] text-[#525252]">…</div>
-                              )}
-                              <button
-                                type="button"
-                                onClick={() => onNewPersona(w.id)}
-                                className="flex min-h-11 w-full items-center gap-1 text-left pl-9 pr-2 py-2 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
-                              >
-                                <Plus className="w-3 h-3" /> persona
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={onNewWorkspace}
-                      className="flex min-h-11 w-full items-center gap-1 text-left pl-6 pr-2 py-2 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
-                    >
-                      <Plus className="w-3 h-3" /> workspace
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
+              )}
+            </div>
+          );
+        })}
       </div>
-
     </aside>
   );
 };

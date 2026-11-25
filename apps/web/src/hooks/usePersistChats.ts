@@ -1,34 +1,33 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { KlankerInstance } from "../types/klanker";
 import { diffChatBuckets } from "../chatPersist";
 import {
   ChatBucket,
   EMPTY_BUCKET,
+  LS_SEL,
   LS_TITLES,
   chatsKey,
   loadBucket,
   normBucket,
   saveBucket,
-  selStoreKey,
 } from "../chatBuckets";
 
 /**
  * localStorage persistence: dirty-scoped debounced bucket writes (identity
  * diff against the last snapshot — serializing every bucket per token froze
  * iOS mid-stream), synchronous flushes on pagehide/hidden, title cache,
- * per-instance ws/persona selection memory, and bucket hydration on selKey.
+ * workspace-first ws/persona selection memory (`klanker.ws.sel`), and bucket
+ * hydration on selKey.
  */
 export function usePersistChats(args: {
   chats: Record<string, ChatBucket>;
   chatsRef: React.MutableRefObject<Record<string, ChatBucket>>;
   setChats: React.Dispatch<React.SetStateAction<Record<string, ChatBucket>>>;
   sessionTitles: Record<string, string>;
-  activeInstance: KlankerInstance | null;
   selWs: string;
   selPersona: string;
   selKey: string;
 }): { flushPersist: () => void } {
-  const { chats, chatsRef, setChats, sessionTitles, activeInstance, selWs, selPersona, selKey } = args;
+  const { chats, chatsRef, setChats, sessionTitles, selWs, selPersona, selKey } = args;
   const savedBuckets = useRef<Record<string, ChatBucket>>({});
   const persistTimer = useRef(0);
 
@@ -75,13 +74,14 @@ export function usePersistChats(args: {
     } catch {}
   }, [sessionTitles]);
 
-  // Remember last ws/persona selection per instance
+  // Remember the last ws/persona selection — workspace-first: one global
+  // pointer, never partitioned per instance (klanker#150).
   useEffect(() => {
-    if (!activeInstance || !selWs) return;
+    if (!selWs) return;
     try {
-      localStorage.setItem(selStoreKey(activeInstance.id), JSON.stringify({ ws: selWs, persona: selPersona }));
+      localStorage.setItem(LS_SEL, JSON.stringify({ ws: selWs, persona: selPersona }));
     } catch {}
-  }, [activeInstance?.id, selWs, selPersona]);
+  }, [selWs, selPersona]);
 
   // Hydrate the active bucket from localStorage so the last open chat
   // (and the open draft with its composer text) is restored on reload.

@@ -1,13 +1,13 @@
-import type { ChatMessage, KlankerInstance } from "./types/klanker";
+import type { ChatMessage, KlankerInstance, SessionEvent } from "./types/klanker";
 import { api } from "./services/api";
 
-export function eventsToMessages(events: any[]): ChatMessage[] {
+export function eventsToMessages(events: SessionEvent[]): ChatMessage[] {
   return events
     .filter((e) => e?.type === "message" && e?.metadata?.content)
     .map((e) => ({
       id: crypto.randomUUID(),
-      role: e.metadata.role === "user" ? "user" : "klanker",
-      content: String(e.metadata.content),
+      role: e.metadata?.role === "user" ? "user" : "klanker",
+      content: String(e.metadata?.content ?? ""),
       timestamp: e.ts || new Date().toISOString(),
     }));
 }
@@ -56,7 +56,7 @@ export async function reconcileChat(
     const events = await api.sessionEvents(inst, ws, persona, session);
     if (events) {
       const serverMsgs = eventsToMessages(events);
-      ctx.evCache.set(`${inst.id} ${ws} ${persona} ${session}`, serverMsgs);
+      ctx.evCache.set(`${ws} ${persona} ${session}`, serverMsgs);
       ctx.applyToChat(key, chatId, (messages) => mergeMessages(messages, serverMsgs));
       const lastUser = serverMsgs.reduce((acc, m, i) => (m.role === "user" ? i : acc), -1);
       const replied = lastUser < 0 || serverMsgs.some((m, i) => i > lastUser && m.role === "klanker");

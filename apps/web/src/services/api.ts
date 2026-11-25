@@ -18,6 +18,7 @@ import type {
   RoutineActionResult,
   RoutineRow,
   SessionEvent,
+  WsRepoPatch,
   SessionHostSwitch,
   StoreListResult,
   StorePaneResult,
@@ -25,6 +26,7 @@ import type {
   WorkspaceHosts,
   WorkspacePolicyPatch,
   WorkspaceRow,
+  WsInbox,
   WsInvite,
 } from "../types/klanker";
 import { parseSseChunk, parseStoreListResponse } from "../relayEvents.ts";
@@ -360,20 +362,6 @@ const wstr = (v: unknown): string | undefined =>
   typeof v === "string" && v ? v : undefined;
 const wbool = (v: unknown): boolean | undefined =>
   typeof v === "boolean" ? v : undefined;
-
-/** /v1/workspaces row → WorkspaceRow; null on a non-object payload. */
-function mapWorkspaceWire(w: unknown, fallbackId: string): WorkspaceRow | null {
-  if (!w || typeof w !== "object") return null;
-  const o = w as WireRow;
-  return {
-    id: wstr(o.id) || fallbackId,
-    label: wstr(o.label) || wstr(o.name) || wstr(o.id) || fallbackId,
-    workdir: wstr(o.workdir),
-    workdir_lock: wbool(o.workdir_lock),
-    browser_profile: wstr(o.browser_profile),
-    approval_mode: wstr(o.approval_mode),
-  };
-}
 
 /** Capability flags: desktop (Tauri) gets spawn/keyring/updates; web/PWA does not. */
 export const caps = {
@@ -745,22 +733,13 @@ export const api = {
 
   async listWorkspaces(inst: KlankerInstance): Promise<WorkspaceRow[]> {
     const r = await req<{ workspaces?: (WireRow | string)[] }>(inst, "/v1/workspaces", { headers: headers(inst) });
-    return (r.workspaces || []).map((w) => {
-      const o: WireRow = typeof w === "object" && w !== null ? w : {};
-      const fallback = typeof w === "string" ? w : "";
-      return {
-        id: wstr(o.id) || fallback,
-        label: wstr(o.label) || wstr(o.name) || wstr(o.id) || fallback,
-        workdir: wstr(o.workdir),
-        workdir_lock: wbool(o.workdir_lock),
-        browser_profile: wstr(o.browser_profile),
-        approval_mode: wstr(o.approval_mode),
-      };
-    });
+    return (r.workspaces || []).map((w) => mapWorkspaceRow(w));
   },
 
   /** PATCH /v1/workspaces/<id> — workspace config lives on the relay; no
-   *  secrets may ever appear in `patch`. */
+   *  secrets may ever appear in `patch`. General keys and policy keys
+   *  (WorkspacePolicyPatch) compose into one write — the server treats
+   *  them as one atomic update. */
   async updateWorkspace(
     inst: KlankerInstance,
     id: string,
@@ -770,7 +749,7 @@ export const api = {
       workdir_lock?: boolean;
       browser_profile?: string | null;
       approval_mode?: "off" | "ask" | "strict" | null;
-    }
+    } & Partial<WorkspacePolicyPatch>
   ): Promise<WorkspaceRow | null> {
     const r = await req<{ workspace?: WireRow }>(
       inst,
@@ -781,7 +760,9 @@ export const api = {
         body: JSON.stringify(patch),
       }
     );
-    return mapWorkspaceWire(r.workspace, id);
+    const w = r.workspace;
+    if (!w || typeof w !== "object") return null;
+    return mapWorkspaceRow(w, id);
   },
 
   /** Effective pick for a chat: session override when `session` is given,
@@ -848,14 +829,37 @@ export const api = {
     );
   },
 
-  async listPersonas(inst: KlankerInstance, workspace: string): Promise<{ id: string; name?: string }[]> {
+  async listPersonas(
+    inst: KlankerInstance,
+    workspace: string
+  ): Promise<{ id: string; name?: string; role?: string }[]> {
     const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
     const r = await req<{ personas?: (WireRow | string)[] }>(inst, `/v1/personas${q}`, { headers: headers(inst) });
     return (r.personas || []).map((p) => {
       const o: WireRow = typeof p === "object" && p !== null ? p : {};
       const fallback = typeof p === "string" ? p : "";
-      return { id: wstr(o.id) || fallback, name: wstr(o.name) || wstr(o.id) || fallback };
+      return {
+        id: wstr(o.id) || fallback,
+        name: wstr(o.name) || wstr(o.id) || fallback,
+        role: wstr(o.role),
+      };
     });
+  },
+
+  /** GET /v1/workspaces/<ws>/inbox — per-persona handoff/unread counts +
+   *  recent handoff events for the sidebar contacts badges. null when the
+   *  relay predates the feed or denies it (ws_member tokens). */
+  async wsInbox(inst: KlankerInstance, workspace: string): Promise<WsInbox | null> {
+    try {
+      const r = await req<{ personas?: WsInbox["personas"]; recent?: WsInbox["recent"] }>(
+        inst,
+        `/v1/workspaces/${encodeURIComponent(workspace)}/inbox`,
+        { headers: headers(inst) }
+      );
+      return { personas: r.personas || {}, recent: r.recent || [] };
+    } catch {
+      return null;
+    }
   },
 
   /** Server-side sessions for (workspace, persona). */
@@ -863,7 +867,7 @@ export const api = {
     inst: KlankerInstance,
     workspace: string,
     persona: string
-  ): Promise<{ id: string; goal?: string; title?: string; created_at?: string; last_active?: string }[]> {
+  ): Promise<{ id: string; goal?: string; title?: string; host?: string; created_at?: string; last_active?: string }[]> {
     try {
       const r = await req<{ sessions?: WireRow[] }>(
         inst,
@@ -874,6 +878,7 @@ export const api = {
         id: wstr(s.id) || wstr(s.session) || "",
         goal: wstr(s.goal),
         title: wstr(s.title),
+        host: wstr(s.host),
         created_at: wstr(s.created_at),
         last_active: wstr(s.last_active) || wstr(s.updated_at),
       }));
@@ -1674,7 +1679,37 @@ export const api = {
       "PATCH",
       { ...patch }
     );
-    return mapWorkspaceWire(r.workspace, ws);
+    const w = r.workspace;
+    if (!w || typeof w !== "object") return null;
+    return mapWorkspaceRow(w, ws);
+  },
+
+  /** GET /v1/workspaces/<ws>/repo-paths — this host's checkout map
+   *  (host_paths.json). Owner/admin only; older relays and denied
+   *  callers read an empty map rather than throwing. */
+  async fetchRepoPaths(ws: string): Promise<Record<string, string>> {
+    try {
+      const r = await localRelayJson<{ paths?: Record<string, unknown> }>(
+        `/v1/workspaces/${encodeURIComponent(ws)}/repo-paths`
+      );
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(r.paths || {})) {
+        if (typeof v === "string" && v) out[k] = v;
+      }
+      return out;
+    } catch {
+      return {};
+    }
+  },
+
+  /** PUT /v1/workspaces/<ws>/repo-paths — write host-local checkout
+   *  paths (server applies each slug via set_host_repo_path). */
+  async putRepoPaths(ws: string, paths: Record<string, string>): Promise<void> {
+    await localRelayJson(
+      `/v1/workspaces/${encodeURIComponent(ws)}/repo-paths`,
+      "PUT",
+      { paths }
+    );
   },
 
   /** GET /v1/workspaces/<ws>/hosts — member devices + presence + active
@@ -1762,6 +1797,28 @@ export function serveToProcess(ss: ServeStatus): ProcessStatus {
     state,
     detail: ss.detail ?? undefined,
   };
+}
+
+/** Serialize a relay workspace row (list/GET/PATCH all share the shape);
+ *  policy keys ride along when the relay serves them (agents-relay#43). */
+function mapWorkspaceRow(w: WireRow | string, fallbackId = ""): WorkspaceRow {
+  const o: WireRow = typeof w === "object" && w !== null ? w : {};
+  const fallback = typeof w === "string" ? w : "";
+  const id = wstr(o.id) || fallback || fallbackId;
+  const row: WorkspaceRow = {
+    id,
+    label: wstr(o.label) || wstr(o.name) || wstr(o.id) || id,
+    workdir: wstr(o.workdir),
+    workdir_lock: wbool(o.workdir_lock),
+    browser_profile: wstr(o.browser_profile),
+    approval_mode: wstr(o.approval_mode),
+  };
+  if (o.sync_policy !== undefined) row.sync_policy = wstr(o.sync_policy);
+  if (Array.isArray(o.sync_hosts)) row.sync_hosts = o.sync_hosts.map(String);
+  if (o.default_host !== undefined) row.default_host = wstr(o.default_host);
+  if (Array.isArray(o.repos)) row.repos = o.repos as WsRepoPatch[];
+  if (o.execution && typeof o.execution === "object") row.execution = o.execution as Record<string, unknown>;
+  return row;
 }
 
 /** Map a legacy `~/.klanker` instance.json onto the current shape. */
@@ -1888,7 +1945,7 @@ function hostKey(inst: { endpoint?: { base_url?: string }; base_url?: string }):
  *  paths instead. */
 async function localRelayFetch(
   path: string,
-  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
   body?: Record<string, unknown>
 ): Promise<Response | null> {
   if (!caps.keyring) return null;
@@ -1916,7 +1973,7 @@ async function localRelayFetch(
  *  structured conflicts (409 holder) are readable off the Error. */
 async function localRelayJson<T>(
   path: string,
-  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" = "GET",
   body?: Record<string, unknown>
 ): Promise<T> {
   let res: Response | null;

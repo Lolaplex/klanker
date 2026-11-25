@@ -3,6 +3,7 @@ import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole, type ChatPick } from "./components/ChatConsole";
 import { InstanceSheet } from "./components/InstanceSheet";
+import { DevicesPanel } from "./components/DevicesPanel";
 import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ManagePanel } from "./components/ManagePanel";
@@ -22,12 +23,15 @@ import {
   ChatBucket,
   TurnBusy,
   EMPTY_BUCKET,
+  LS_SEL,
   STANDALONE,
+  busyForChat,
+  busyKey,
   loadBucket,
   mapChat,
   mintSessionId,
   normBucket,
-  selStoreKey,
+  sendHeld,
 } from "./chatBuckets";
 import { reconcileChat } from "./chatSync";
 import { Kicker, runResumableTurn } from "./turnStream";
@@ -51,23 +55,40 @@ function loadedSettings(loaded: DesktopSettings): DesktopSettings {
   return { ...DEFAULT_SETTINGS, ...loaded };
 }
 
+/** Read the workspace-first selection pointer (`klanker.ws.sel`). */
+function readWsSel(): { ws: string; persona: string } {
+  try {
+    const s = JSON.parse(localStorage.getItem(LS_SEL) || "null");
+    return {
+      ws: s?.ws && /^[\w.-]+$/.test(String(s.ws)) ? String(s.ws) : "",
+      persona: s?.persona ? String(s.persona) : "",
+    };
+  } catch {
+    return { ws: "", persona: "" };
+  }
+}
+
 export function App() {
   const [activeInstance, setActiveInstance] = useState<KlankerInstance | null>(null);
   const [chats, setChats] = useState<Record<string, ChatBucket>>({});
-  const [turnBusy, setTurnBusy] = useState<TurnBusy | null>(null);
+  // One live turn per `ws::session` — parallel sessions never lock each
+  // other (klanker#150).
+  const [turnBusy, setTurnBusy] = useState<Record<string, TurnBusy>>({});
+  // Turn-finished-elsewhere markers keyed `${ws} ${persona}` (contacts badge).
   const [unread, setUnread] = useState<ReadonlySet<string>>(() => new Set());
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [settings, setSettings] = useState<DesktopSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const [instanceSheetInst, setInstanceSheetInst] = useState<KlankerInstance | null>(null);
-  const [selWs, setSelWs] = useState("");
+  const [devicesOpen, setDevicesOpen] = useState(false);
+  const [selWs, setSelWs] = useState(() => readWsSel().ws);
   // Per-chat provider+model override, keyed by "<inst> <ws> <persona>"; absent = instance default.
   const [chatPicks, setChatPicks] = useState<Record<string, ChatPick>>({});
   const [chatProviders, setChatProviders] = useState<ProviderRow[]>([]);
   const [providersStale, setProvidersStale] = useState(false);
   const [chatFavorites, setChatFavorites] = useState<ModelPick[]>([]);
-  const [selPersona, setSelPersona] = useState("");
+  const [selPersona, setSelPersona] = useState(() => readWsSel().persona || "default");
   const [wsNote, setWsNote] = useState<string | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string | null>(null);
@@ -86,42 +107,35 @@ export function App() {
   chatsRef.current = chats;
   const turnBusyRef = useRef(turnBusy);
   turnBusyRef.current = turnBusy;
+  const selWsRef = useRef(selWs);
+  selWsRef.current = selWs;
+  const selPersonaRef = useRef(selPersona);
+  selPersonaRef.current = selPersona;
   const settingsRef = useRef(settings);
   const settingsWrite = useRef(Promise.resolve());
   const saveGen = useRef(0);
   // Buffered SSE deltas: one setChats per frame instead of one per token.
-  const deltaFlush = useRef<() => void>(() => undefined);
+  // Parallel sessions each hold a queue — the set flushes them all.
+  const deltaFlush = useRef(new Set<() => void>());
+  const flushDeltas = useCallback(() => {
+    for (const f of deltaFlush.current) f();
+  }, []);
   // Restored messages per session + in-flight title fetches (no refetch spam).
   const evCache = useRef(new Map<string, ChatMessage[]>());
 
-  const selKey = activeInstance ? `${activeInstance.id} ${selWs} ${selPersona}` : "";
+  // Bucket key: `${ws} ${persona}` — the primary endpoint fronts every
+  // workspace, so chat state is never partitioned per instance (klanker#150).
+  const selKey = selWs ? `${selWs} ${selPersona || "default"}` : "";
 
   const selectInstance = useCallback((inst: KlankerInstance | null) => {
-    deltaFlush.current();
+    for (const f of deltaFlush.current) f();
     activeIdRef.current = inst?.id ?? null;
     api.saveActiveId(inst?.id ?? null);
     setActiveInstance(inst);
     if (!inst) return;
     tree.setTreePersonas({});
     tree.setServerSessions({});
-    setUnread((prev) => {
-      if (!prev.has(inst.id)) return prev;
-      const next = new Set(prev);
-      next.delete(inst.id);
-      return next;
-    });
-    // inst.workspace is the workdir boundary, not a workspace id — the ws
-    // selection only ever comes from the stored choice.
-    let savedWs = "";
-    let savedPersona = (inst.persona || "").trim() || "default";
-    try {
-      const s = JSON.parse(localStorage.getItem(selStoreKey(inst.id)) || "null");
-      // Older sessions stored the workdir path here; ws ids are bare slugs.
-      if (s?.ws && /^[\w.-]+$/.test(String(s.ws))) savedWs = String(s.ws);
-      if (s?.persona) savedPersona = String(s.persona);
-    } catch {}
-    setSelWs(savedWs);
-    setSelPersona(savedPersona);
+    tree.setWsHosts({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -145,6 +159,7 @@ export function App() {
   });
 
   const herdStatus = activeInstance ? inst.herd[activeInstance.id] ?? null : null;
+  const devicesInst = inst.instances.find((i) => i.id === "local") ?? activeInstance ?? inst.instances[0] ?? null;
 
   const approvals = useApprovals({ activeInstance, status: herdStatus, workspaceId: selWs });
   const relayCompat = useRelayCompat({ activeInstance, managedId: inst.managedId, herd: inst.herd });
@@ -212,7 +227,6 @@ export function App() {
     chatsRef,
     setChats,
     sessionTitles: tree.sessionTitles,
-    activeInstance,
     selWs,
     selPersona,
     selKey,
@@ -238,18 +252,29 @@ export function App() {
   }, [selKey, openChat]);
 
   const messages = openChat?.messages ?? [];
-  const isLoadingTurn = Boolean(
-    turnBusy && openChat && turnBusy.instanceId === activeInstance?.id && turnBusy.chatId === openChat.id
-  );
+  // Header headline: Workspace > Persona + the open chat's title.
+  const headerChatTitle = (() => {
+    if (!openChat || !selWs || !selPersona) return undefined;
+    const row = tree
+      .sessionRowsOf(selWs, selPersona)
+      ?.find((r) => r.chatId === openChat.id || r.session === openChat.session);
+    if (row && row.label !== "new chat" && row.label !== "…") return row.label;
+    const first = openChat.messages.find((m) => m.role === "user")?.content?.trim();
+    if (first) return first.length > 28 ? `${first.slice(0, 28)}…` : first;
+    return openChat.session || undefined;
+  })();
+  // This chat's own turn shows the spinner; another row bound to the same
+  // session holds the composer. A busy `ws::ses1` never holds `ws::ses2`.
+  const isLoadingTurn = Boolean(openChat && busyForChat(turnBusy, openChat.id));
   const sendHold = Boolean(
-    turnBusy && activeInstance && turnBusy.instanceId === activeInstance.id && turnBusy.chatId !== openChat?.id
+    openChat && sendHeld(turnBusy, selWs, openChat.session, openChat.id)
   );
 
   const applyToChat = useCallback(
     (key: string, chatId: string, fn: (messages: ChatMessage[]) => ChatMessage[]) => {
       setChats((prev) =>
         mapChat(prev, key, chatId, (item) => {
-          if (turnBusyRef.current?.chatId === chatId) return item;
+          if (busyForChat(turnBusyRef.current, chatId)) return item;
           const next = fn(item.messages);
           return next === item.messages ? item : { ...item, messages: next };
         })
@@ -319,11 +344,16 @@ export function App() {
   });
 
   const selectChat = (ws: string, persona: string, chatId: string) => {
-    if (!activeInstance) return;
-    deltaFlush.current();
-    const key = `${activeInstance.id} ${ws} ${persona}`;
+    flushDeltas();
+    const key = `${ws} ${persona}`;
     setSelWs(ws);
     setSelPersona(persona);
+    setUnread((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
     setChats((prev) => {
       const current = normBucket(prev[key] ?? loadBucket(key) ?? EMPTY_BUCKET);
       const hit = current.items.find((i) => i.id === chatId || (i.session && i.session === chatId));
@@ -342,7 +372,7 @@ export function App() {
     const inst0 = activeInstance;
     if (!inst0) return;
     if (!(await dialogs.confirm(`Delete chat "${row.label || row.session}"? This cannot be undone.`, { danger: true }))) return;
-    const key = `${inst0.id} ${ws} ${persona}`;
+    const key = `${ws} ${persona}`;
     // Optimistic: drop the row from both stores before the server answers.
     tree.setServerSessions((prev) => ({
       ...prev,
@@ -365,11 +395,16 @@ export function App() {
   };
 
   const newChat = (ws: string, persona: string) => {
-    if (!activeInstance) return;
-    deltaFlush.current();
-    const key = `${activeInstance.id} ${ws} ${persona}`;
+    flushDeltas();
+    const key = `${ws} ${persona}`;
     setSelWs(ws);
     setSelPersona(persona);
+    setUnread((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
     setChats((prev) => {
       const current = normBucket(prev[key] ?? loadBucket(key) ?? EMPTY_BUCKET);
       const draft = current.items.find((i) => i.draft);
@@ -492,6 +527,24 @@ export function App() {
     }
   };
 
+  // Hub LAN toggle (devices panel): persist the setting then restart the
+  // managed serve so the new bind host actually takes effect.
+  const handleToggleHubMode = async (on: boolean) => {
+    await updateSettings((current) => ({ ...current, hub_mode: on }));
+    if (caps.spawn) {
+      try {
+        await api.serveRestart(on);
+        const saved = inst.instancesRef.current.find((i) => i.id === "local");
+        if (saved) {
+          const st = await api.getGatewayStatus(saved);
+          inst.setHerd((prev) => ({ ...prev, local: st }));
+        }
+      } catch (e) {
+        setWsNote(`hub mode: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+  };
+
   const handleCreate = (draft: KlankerInstance) =>
     handleSaveInstance({ ...draft, provider: "" });
 
@@ -502,22 +555,13 @@ export function App() {
       const remaining = inst.instances.filter((i) => i.id !== id);
       inst.setInstances(remaining);
       if (activeInstance?.id === id) {
-        selectInstance(remaining[0] ?? null);
+        // Deleting the endpoint itself: fall back to the primary local
+        // relay — remote rows were never a chat endpoint anyway.
+        selectInstance(remaining.find((i) => i.id === "local" || i.kind === "local") ?? remaining[0] ?? null);
       }
-      setUnread((prev) => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
       inst.setHerd((prev) => {
         const next = { ...prev };
         delete next[id];
-        return next;
-      });
-      setChats((prev) => {
-        const next = { ...prev };
-        for (const k of Object.keys(next)) if (k.startsWith(`${id} `)) delete next[k];
         return next;
       });
     } catch (e) {
@@ -526,7 +570,9 @@ export function App() {
   };
 
   const handleStop = () => {
-    const busy = turnBusyRef.current;
+    const chat = openChat;
+    if (!chat) return;
+    const busy = busyForChat(turnBusyRef.current, chat.id);
     if (!busy) return;
     const inst0 = inst.instancesRef.current.find((i) => i.id === busy.instanceId);
     if (inst0) void api.stopRun(inst0, busy.run).catch(() => undefined);
@@ -536,7 +582,6 @@ export function App() {
     const inst0 = activeInstance;
     if (!inst0) return;
     const id = inst0.id;
-    if (turnBusyRef.current?.instanceId === id) return;
     const current = chatsRef.current[selKey];
     let chat = current?.items.find((item) => item.id === current.openId);
     if (!chat) {
@@ -552,6 +597,10 @@ export function App() {
     }
     const chatId = chat.id;
     const session = chat.session || mintSessionId();
+    // One live turn per (ws, session) — other sessions in the same bucket
+    // stay sendable (klanker#150).
+    const bk = busyKey(selWs || "default", session);
+    if (turnBusyRef.current[bk] || busyForChat(turnBusyRef.current, chatId)) return;
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -576,9 +625,16 @@ export function App() {
         messages: [...item.messages, userMessage, assistantMessage],
       }))
     );
-    const busy: TurnBusy = { instanceId: id, chatId, run: crypto.randomUUID().replace(/-/g, "") };
-    turnBusyRef.current = busy;
-    setTurnBusy(busy);
+    const busy: TurnBusy = {
+      instanceId: id,
+      wsId: selWs || "default",
+      persona: selPersona || "default",
+      session,
+      chatId,
+      run: crypto.randomUUID().replace(/-/g, ""),
+    };
+    turnBusyRef.current = { ...turnBusyRef.current, [bk]: busy };
+    setTurnBusy(turnBusyRef.current);
     const started = Date.now();
     let sawTrailer = false;
 
@@ -595,7 +651,7 @@ export function App() {
         }))
       );
     });
-    deltaFlush.current = () => deltas.flush();
+    deltaFlush.current.add(deltas.flush);
 
     try {
       // Provider = raw host manifest name (acp.devin, lmstudio.local, …);
@@ -725,12 +781,12 @@ export function App() {
         }))
       );
     } finally {
-      deltaFlush.current = () => undefined;
+      deltaFlush.current.delete(deltas.flush);
       flushPersist();
-      if (turnBusyRef.current?.instanceId === id && turnBusyRef.current.chatId === chatId) {
-        turnBusyRef.current = null;
-      }
-      setTurnBusy((b) => (b?.instanceId === id && b.chatId === chatId ? null : b));
+      turnBusyRef.current = Object.fromEntries(
+        Object.entries(turnBusyRef.current).filter(([, b]) => !(b.chatId === chatId && b.run === busy.run))
+      );
+      setTurnBusy(turnBusyRef.current);
       setStreamStatus(null);
       if (document.hidden || !document.hasFocus()) {
         void notify("Klanker turn finished", inst0.name || inst0.id);
@@ -744,13 +800,18 @@ export function App() {
           applyToChat,
         }, true);
       }
-      if (activeIdRef.current !== id) {
-        setUnread((prev) => {
-          if (prev.has(id) || activeIdRef.current === id) return prev;
-          const next = new Set(prev);
-          next.add(id);
-          return next;
-        });
+      // Turn finished while the user was looking at a different
+      // ws/persona — mark that contact unread (sidebar badge).
+      {
+        const contactKey = `${busy.wsId} ${busy.persona}`;
+        if (contactKey !== `${selWsRef.current} ${selPersonaRef.current}`) {
+          setUnread((prev) => {
+            if (prev.has(contactKey)) return prev;
+            const next = new Set(prev);
+            next.add(contactKey);
+            return next;
+          });
+        }
       }
     }
   };
@@ -795,25 +856,23 @@ export function App() {
       >
         <KlankerList
           key={activeInstance?.id ?? "none"}
-          instances={inst.instances}
-          managedId={inst.managedId}
-          activeId={activeInstance?.id ?? null}
-          unread={unread}
-          statuses={inst.herd}
+          workspaces={tree.workspaces}
+          wsHostsOf={tree.wsHostsOf}
+          personasOf={(ws) =>
+            tree.personasOf(ws)?.map((p) => ({
+              ...p,
+              unread: (p.unread ?? 0) + (unread.has(`${ws} ${p.id}`) ? 1 : 0),
+            }))
+          }
+          sessionRowsOf={tree.sessionRowsOf}
           selWs={selWs}
           selPersona={selPersona}
           openChatId={openChat?.id ?? null}
-          workspaces={tree.workspaces}
-          personasOf={tree.personasOf}
-          sessionRowsOf={tree.sessionRowsOf}
-          onSelect={(i) => { selectInstance(i); setNavOpen(false); }}
           onExpandWs={tree.expandWs}
           onExpandPersona={tree.expandPersona}
           onSelectChat={(ws, p, id) => { selectChat(ws, p, id); setNavOpen(false); }}
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
-
-          onInstanceSettings={(i) => { setInstanceSheetInst(i); setNavOpen(false); }}
           onWorkspaceSettings={(ws) => { setWsSettingsId(ws); setNavOpen(false); }}
           onDeleteWorkspace={async (ws) => {
             const inst0 = activeInstance;
@@ -870,6 +929,13 @@ export function App() {
         <Header
           activeInstance={activeInstance}
           selWs={selWs}
+          selPersona={selPersona}
+          personaLabel={
+            tree.personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || undefined
+          }
+          chatTitle={headerChatTitle}
+          status={herdStatus}
+          onOpenDevices={() => setDevicesOpen(true)}
           onOpenSettings={openSettings}
           onOpenManage={() => setManageOpen(true)}
           onOpenNav={() => setNavOpen(true)}
@@ -1006,7 +1072,30 @@ export function App() {
         </div>
       </div>
 
-      <NewKlankerModal isOpen={isNewModalOpen} onClose={() => setIsNewModalOpen(false)} onSave={handleCreate} />
+      <NewKlankerModal
+        isOpen={isNewModalOpen}
+        onClose={() => setIsNewModalOpen(false)}
+        onSave={handleCreate}
+        onConnected={() => void inst.refreshInstances()}
+      />
+      {devicesOpen && devicesInst && (
+        <DevicesPanel
+          instance={devicesInst}
+          status={inst.herd.local ?? null}
+          settings={settings}
+          instances={inst.instances}
+          onToggleHubMode={handleToggleHubMode}
+          onEditInstance={(i) => {
+            setDevicesOpen(false);
+            setInstanceSheetInst(i);
+          }}
+          onConnect={() => {
+            setDevicesOpen(false);
+            setIsNewModalOpen(true);
+          }}
+          onClose={() => setDevicesOpen(false)}
+        />
+      )}
       {instanceSheetInst && (
         <InstanceSheet
           instance={inst.instances.find((i) => i.id === instanceSheetInst.id) ?? instanceSheetInst}
@@ -1057,7 +1146,7 @@ export function App() {
         />
       )}
       {pairOpen && activeInstance && (
-        <PairModal instance={activeInstance} onClose={() => setPairOpen(false)} />
+        <PairModal instance={activeInstance} workspace={selWs} onClose={() => setPairOpen(false)} />
       )}
       <DialogHost />
     </div>

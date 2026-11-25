@@ -8,6 +8,9 @@ interface NewKlankerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (instance: KlankerInstance) => void | Promise<void>;
+  /** Fired after a successful /v1/hub/connect (no instance row is made —
+   *  the link shows in the devices panel). */
+  onConnected?: () => void;
 }
 
 function blankInstance(name: string): KlankerInstance {
@@ -31,13 +34,15 @@ function blankInstance(name: string): KlankerInstance {
   };
 }
 
-export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClose, onSave }) => {
+export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClose, onSave, onConnected }) => {
   const [pairInput, setPairInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [pickedPeer, setPickedPeer] = useState<DiscoveredPeer | null>(null);
   const [offers, setOffers] = useState<DiscoveredPeer[] | null>(null);
   const [advanced, setAdvanced] = useState(false);
+  const [advPairInput, setAdvPairInput] = useState("");
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [secret, setSecret] = useState("");
@@ -72,9 +77,11 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   const close = () => {
     setPairInput("");
     setError(null);
+    setNote(null);
     setPickedPeer(null);
     setOffers(null);
     setAdvanced(false);
+    setAdvPairInput("");
     setName("");
     setUrl("");
     setSecret("");
@@ -88,10 +95,14 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     inputRef.current?.focus();
   };
 
+  /** Primary flow (klanker#151): paste a hub/ws invite link or code —
+   *  the local relay redeems it via /v1/hub/connect, persists the link
+   *  and live-attaches the channel (device pair + ws grant in one step). */
   const connect = async (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
     setError(null);
+    setNote(null);
     let target = parsePairInput(pairInput);
     if (!target && pickedPeer) {
       const code = parseBareCode(pairInput);
@@ -100,9 +111,38 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     if (!target) {
       setError(
         pickedPeer
-          ? `enter the pair code shown on ${pickedPeer.hostname}`
-          : "paste a pair link (https://host/#pair=…) or type CODE@host"
+          ? `enter the invite code shown on ${pickedPeer.hostname}`
+          : "paste an invite link (https://host/#pair=…) or type CODE@host"
       );
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api.connectHub({
+        url: target.origin,
+        code: target.credential,
+        label: pickedPeer?.hostname || "",
+      });
+      if (!res.ok) throw new Error(res.error || "hub connect failed");
+      onConnected?.();
+      close();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Advanced / ops remote: redeem a mode=remote pair code directly and
+   *  mount the relay over /v1/remotes — the pre-hub path for relays
+   *  without channel support. */
+  const connectDirect = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setError(null);
+    const target = parsePairInput(advPairInput);
+    if (!target) {
+      setError("paste a pair link (https://host/#pair=…) or type CODE@host");
       return;
     }
     setBusy(true);
@@ -164,7 +204,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 space-y-4">
           <form onSubmit={(e) => void connect(e)} className="space-y-2">
             <label className="text-[11px] text-[#737373] uppercase tracking-wider block">
-              {pickedPeer ? `pair code for ${pickedPeer.hostname}` : "pair link or code"}
+              {pickedPeer ? `invite code for ${pickedPeer.hostname}` : "connect to hub / pair device"}
             </label>
             <input
               ref={inputRef}
@@ -177,9 +217,10 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
             />
             {pickedPeer && (
               <p className="text-[10px] text-[#525252]">
-                mint a code on {pickedPeer.endpoint.replace(/^https?:\/\//, "")} (pair → remote cli), then type it here.
+                mint an invite on {pickedPeer.endpoint.replace(/^https?:\/\//, "")} (share sheet → invite device), then type it here.
               </p>
             )}
+            {note && <p className="text-[11px] text-[#a3a3a3]">{note}</p>}
             {error && <p className="text-[11px] text-red-500">{error}</p>}
             <button
               type="submit"
@@ -221,49 +262,72 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
             onClick={() => setAdvanced((v) => !v)}
             className="text-[10px] text-[#525252] hover:text-[#a3a3a3] uppercase tracking-wider"
           >
-            {advanced ? "− hide manual url+secret" : "+ old relay? manual url+secret"}
+            {advanced ? "− hide ops remote" : "+ advanced / ops remote"}
           </button>
 
           {advanced && (
-            <form onSubmit={handleManual} className="space-y-3 border border-[#262626] rounded p-2.5">
-              <div>
-                <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Name</label>
+            <div className="space-y-3 border border-[#262626] rounded p-2.5">
+              <p className="text-[10px] text-[#525252]">
+                legacy direct mount — for relays without hub channel support. Pair links redeem
+                straight into a stored remote; the manual form mounts a url+secret.
+              </p>
+              <form onSubmit={(e) => void connectDirect(e)} className="space-y-2">
+                <label className="text-[11px] text-[#737373] uppercase tracking-wider block">remote pair link / code</label>
                 <input
                   type="text"
-                  required
-                  placeholder="Name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  placeholder="https://host/#pair=… or CODE@host"
+                  value={advPairInput}
+                  onChange={(e) => setAdvPairInput(e.target.value)}
                   className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
                 />
-              </div>
-              <div>
-                <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Relay URL</label>
-                <input
-                  type="text"
-                  placeholder="https://relay.example.com"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
-                />
-              </div>
-              <div>
-                <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Instance secret</label>
-                <input
-                  type="password"
-                  placeholder="RELAY_SECRET of that instance"
-                  value={secret}
-                  onChange={(e) => setSecret(e.target.value)}
-                  className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full min-h-9 px-4 py-1.5 bg-[#1f1f1f] hover:bg-[#262626] text-white rounded transition-colors"
-              >
-                Add manually
-              </button>
-            </form>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full min-h-9 px-4 py-1.5 bg-[#1f1f1f] hover:bg-[#262626] text-white rounded transition-colors disabled:opacity-50"
+                >
+                  {busy ? "pairing…" : "Pair remote"}
+                </button>
+              </form>
+              <form onSubmit={handleManual} className="space-y-3 border-t border-[#262626] pt-3">
+                <div>
+                  <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Name</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Relay URL</label>
+                  <input
+                    type="text"
+                    placeholder="https://relay.example.com"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Instance secret</label>
+                  <input
+                    type="password"
+                    placeholder="RELAY_SECRET of that instance"
+                    value={secret}
+                    onChange={(e) => setSecret(e.target.value)}
+                    className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full min-h-9 px-4 py-1.5 bg-[#1f1f1f] hover:bg-[#262626] text-white rounded transition-colors"
+                >
+                  Add manually
+                </button>
+              </form>
+            </div>
           )}
         </div>
       </div>

@@ -86,11 +86,13 @@ export function useInstances(args: {
       try {
         const list = await api.listKlankers();
         setInstances(list);
-        const remembered = api.loadActiveId();
+        // Workspace-first (klanker#150): the endpoint is always the local
+        // `klanker serve` / browser origin — it fronts every local, synced
+        // and shared workspace. Remotes stay manageable through the devices
+        // panel; they are never a chat endpoint.
         const initial =
-          list.find((i) => i.id === remembered) ??
-          list[0] ??
-          null;
+          list.find((i) => i.id === "local" || i.kind === "local") ??
+          (caps.spawn ? null : localInstance());
         if (initial) selectRef.current(initial);
       } catch (e) {
         console.error("Failed to load instances:", e);
@@ -109,7 +111,16 @@ export function useInstances(args: {
     void (async () => {
       try {
         // Runtime global only — no @tauri-apps dependency, PWA-safe.
-        const listen = (window as any).__TAURI__?.event?.listen;
+        const listen = (window as {
+          __TAURI__?: {
+            event?: {
+              listen?: (
+                name: string,
+                cb: (ev: { payload?: { port?: number; pid?: number; state?: string } }) => void
+              ) => Promise<() => void>;
+            };
+          };
+        }).__TAURI__?.event?.listen;
         if (typeof listen !== "function") return;
         unlisten = await listen(
           "klanker:serve-state",

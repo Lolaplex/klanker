@@ -38,6 +38,20 @@ describe("parsePairInput", () => {
     });
   });
 
+  it("parses ws-invite fragments — both `&` and double-hash `#` separators", () => {
+    // #ws=a&pair=t and #ws=a#pair=t must both yield the credential — the
+    // second form shipped from the minted ws invite and used to fall
+    // through to null (silent connect failure).
+    assert.deepEqual(parsePairInput("https://relay.example/#ws=alpha&pair=tok_a"), {
+      origin: "https://relay.example",
+      credential: "tok_a",
+    });
+    assert.deepEqual(parsePairInput("https://relay.example/#ws=alpha#pair=tok_b"), {
+      origin: "https://relay.example",
+      credential: "tok_b",
+    });
+  });
+
   it("rejects junk, bare codes and urls without a pair credential", () => {
     assert.equal(parsePairInput("hello"), null);
     assert.equal(parsePairInput("ABCD-EFGH"), null);

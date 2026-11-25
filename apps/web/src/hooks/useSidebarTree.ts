@@ -1,14 +1,27 @@
 import { useEffect, useRef, useState } from "react";
-import type { ChatMessage, KlankerInstance, ProcessStatus } from "../types/klanker";
+import type {
+  ChatMessage,
+  KlankerInstance,
+  ProcessStatus,
+  WorkspaceHosts,
+  WorkspaceRow,
+  WsInboxPersona,
+} from "../types/klanker";
 import { api } from "../services/api";
 import type { PersonaRow, SessionRow } from "../components/KlankerList";
-import { ChatBucket, clipTitle } from "../chatBuckets";
+import { ChatBucket, LS_TITLES, clipTitle } from "../chatBuckets";
 import { eventsToMessages } from "../chatSync";
+import { dedupeWorkspaces, sessionHostPill } from "../wsTree";
+
+/** Cached title key — `${ws} ${persona} ${session}` (klanker#150). */
+const titleKey = (ws: string, persona: string, session: string) => `${ws} ${persona} ${session}`;
 
 /**
- * Sidebar workspace/persona/session tree: workspace list for the active
- * instance, lazy persona + session loaders, prefetch of session titles, and
- * the row mappers KlankerList renders.
+ * Sidebar workspace/persona/session tree for the primary endpoint (local
+ * `klanker serve` / browser origin — it fronts every local+synced+shared
+ * workspace, so there is no per-instance split). Lazy persona + session +
+ * hosts + inbox loaders, prefetch of session titles, and the row mappers
+ * KlankerList renders.
  */
 export function useSidebarTree(args: {
   activeInstance: KlankerInstance | null;
@@ -19,12 +32,16 @@ export function useSidebarTree(args: {
   evCache: React.MutableRefObject<Map<string, ChatMessage[]>>;
   onResetApprovals: () => void;
 }): {
-  workspaces: { id: string; label?: string }[];
-  setWorkspaces: (rows: { id: string; label?: string }[]) => void;
+  workspaces: WorkspaceRow[];
+  setWorkspaces: (rows: WorkspaceRow[]) => void;
+  wsHosts: Record<string, WorkspaceHosts>;
+  setWsHosts: React.Dispatch<React.SetStateAction<Record<string, WorkspaceHosts>>>;
   treePersonas: Record<string, PersonaRow[]>;
   setTreePersonas: React.Dispatch<React.SetStateAction<Record<string, PersonaRow[]>>>;
-  serverSessions: Record<string, { id: string; goal?: string; title?: string }[]>;
-  setServerSessions: React.Dispatch<React.SetStateAction<Record<string, { id: string; goal?: string; title?: string }[]>>>;
+  serverSessions: Record<string, { id: string; goal?: string; title?: string; host?: string }[]>;
+  setServerSessions: React.Dispatch<
+    React.SetStateAction<Record<string, { id: string; goal?: string; title?: string; host?: string }[]>>
+  >;
   sessionTitles: Record<string, string>;
   setSessionTitles: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   expandWs: (ws: string) => void;
@@ -32,17 +49,22 @@ export function useSidebarTree(args: {
   refreshWorkspaces: () => void;
   refreshPersonas: (ws?: string) => void;
   refreshSessions: (ws?: string, persona?: string) => void;
+  wsHostsOf: (ws: string) => WorkspaceHosts | undefined;
   personasOf: (ws: string) => PersonaRow[] | undefined;
   sessionRowsOf: (ws: string, persona: string) => SessionRow[] | undefined;
 } {
   const { activeInstance, status, chats, setSelWs, setWsNote, evCache, onResetApprovals } = args;
-  const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
+  const [wsHosts, setWsHosts] = useState<Record<string, WorkspaceHosts>>({});
   const [treePersonas, setTreePersonas] = useState<Record<string, PersonaRow[]>>({});
-  const [serverSessions, setServerSessions] = useState<Record<string, { id: string; goal?: string; title?: string }[]>>({});
-  // Session titles keyed "inst ws persona session": prefetched eagerly, cached in localStorage.
+  const [personaCounts, setPersonaCounts] = useState<Record<string, Record<string, WsInboxPersona>>>({});
+  const [serverSessions, setServerSessions] = useState<
+    Record<string, { id: string; goal?: string; title?: string; host?: string }[]>
+  >({});
+  // Session titles keyed "ws persona session": prefetched eagerly, cached in localStorage.
   const [sessionTitles, setSessionTitles] = useState<Record<string, string>>(() => {
     try {
-      return JSON.parse(localStorage.getItem("klanker.titles") || "{}") as Record<string, string>;
+      return JSON.parse(localStorage.getItem(LS_TITLES) || "{}") as Record<string, string>;
     } catch {
       return {};
     }
@@ -50,20 +72,44 @@ export function useSidebarTree(args: {
   const titleFetches = useRef(new Set<string>());
   const workspacesRef = useRef(workspaces);
   workspacesRef.current = workspaces;
+  const wsHostsRef = useRef(wsHosts);
+  wsHostsRef.current = wsHosts;
+  const personaCountsRef = useRef(personaCounts);
+  personaCountsRef.current = personaCounts;
   const instId = activeInstance?.id;
 
   const expandWs = (ws: string) => {
     const inst = activeInstance;
-    if (!inst || treePersonas[ws]) return;
-    void api
-      .listPersonas(inst, ws)
-      .then((rows) => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: rows })))
-      .catch(() => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: [] })));
+    if (!inst) return;
+    if (!treePersonas[ws]) {
+      void api
+        .listPersonas(inst, ws)
+        .then((rows) => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: rows })))
+        .catch(() => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: [] })));
+    }
+    // Member devices + presence (sync badge, bound-host pills) and per-persona
+    // handoff counts — the local relay's operator surface fronts them for
+    // every workspace it serves. Older relays 404 cleanly to "absent".
+    if (!wsHosts[ws]) {
+      void api
+        .fetchWorkspaceHosts(ws)
+        .then((h) => setWsHosts((prev) => (prev[ws] ? prev : { ...prev, [ws]: h })))
+        .catch(() => {});
+    }
+    if (!personaCounts[ws]) {
+      void api
+        .wsInbox(inst, ws)
+        .then((r) => {
+          if (r) setPersonaCounts((prev) => ({ ...prev, [ws]: r.personas }));
+        })
+        .catch(() => {});
+    }
   };
   const expandWsRef = useRef(expandWs);
   expandWsRef.current = expandWs;
 
-  // Workspace list for the active instance
+  // Workspace list for the primary endpoint — dedupe keeps a shared/synced
+  // ws to exactly one top-level row however many devices serve it.
   useEffect(() => {
     onResetApprovals();
     setWorkspaces([]);
@@ -73,7 +119,7 @@ export function useSidebarTree(args: {
     let stop = false;
     void (async () => {
       try {
-        const rows = await api.listWorkspaces(inst);
+        const rows = dedupeWorkspaces(await api.listWorkspaces(inst));
         if (stop) return;
         setWorkspaces(rows);
         setSelWs((cur) => cur || rows[0]?.id || "");
@@ -90,7 +136,7 @@ export function useSidebarTree(args: {
 
   // Persona rows are not a permanent cache: remote edits (routines,
   // other clients) must surface. Re-pull on tab visibility, window focus,
-  // and every 30s while visible.
+  // and every 30s while visible — hosts/inbox refresh once loaded.
   useEffect(() => {
     const inst = activeInstance;
     if (!inst || status?.state !== "running") return;
@@ -100,6 +146,20 @@ export function useSidebarTree(args: {
           .listPersonas(inst, ws.id)
           .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws.id]: rows })))
           .catch(() => {});
+        if (wsHostsRef.current[ws.id]) {
+          void api
+            .fetchWorkspaceHosts(ws.id)
+            .then((h) => setWsHosts((prev) => ({ ...prev, [ws.id]: h })))
+            .catch(() => {});
+        }
+        if (personaCountsRef.current[ws.id]) {
+          void api
+            .wsInbox(inst, ws.id)
+            .then((r) => {
+              if (r) setPersonaCounts((prev) => ({ ...prev, [ws.id]: r.personas }));
+            })
+            .catch(() => {});
+        }
       }
     };
     const onVisible = () => {
@@ -135,14 +195,14 @@ export function useSidebarTree(args: {
           setSessionTitles((prev) => {
             const next = { ...prev };
             for (const s of seeded) {
-              const ck = `${inst.id} ${ws} ${persona} ${s.id}`;
+              const ck = titleKey(ws, persona, s.id);
               if (!next[ck]) next[ck] = clipTitle(s.title!);
             }
             return next;
           });
         }
         for (const s of list) {
-          const ck = `${inst.id} ${ws} ${persona} ${s.id}`;
+          const ck = titleKey(ws, persona, s.id);
           if (s.title || sessionTitles[ck] || evCache.current.has(ck) || titleFetches.current.has(ck)) continue;
           titleFetches.current.add(ck);
           void api
@@ -160,12 +220,26 @@ export function useSidebarTree(args: {
       .catch(() => setServerSessions((prev) => (prev[key] ? prev : { ...prev, [key]: [] })));
   };
 
-  const personasOf = (ws: string): PersonaRow[] | undefined => treePersonas[ws];
+  const wsHostsOf = (ws: string): WorkspaceHosts | undefined => wsHosts[ws];
+
+  const personasOf = (ws: string): PersonaRow[] | undefined => {
+    const rows = treePersonas[ws];
+    if (!rows) return undefined;
+    const counts = personaCounts[ws];
+    if (!counts) return rows;
+    return rows.map((p) => {
+      const c = counts[p.id];
+      // Unread = open handoffs plus running ones (the contacts badge).
+      const unread = (c?.unread ?? c?.open ?? 0) + (c?.running ?? 0);
+      return unread ? { ...p, unread } : p;
+    });
+  };
 
   const sessionRowsOf = (ws: string, persona: string): SessionRow[] | undefined => {
-    const key = `${instId} ${ws} ${persona}`;
+    const key = `${ws} ${persona}`;
     const b = chats[key];
-    const server = serverSessions[`${ws} ${persona}`];
+    const server = serverSessions[key];
+    const hosts = wsHosts[ws];
     if (!b && server === undefined) return undefined;
     const localRows: SessionRow[] = (b?.items ?? [])
       // Hide drafts (the "new chat" button owns them) and legacy zombies:
@@ -179,8 +253,9 @@ export function useSidebarTree(args: {
           session: i.session,
           label: first
             ? clipTitle(first)
-            : sessionTitles[`${instId} ${ws} ${persona} ${i.session}`] || remote?.title || remote?.goal || "new chat",
+            : sessionTitles[titleKey(ws, persona, i.session)] || remote?.title || remote?.goal || "new chat",
           pending: !remote,
+          host: sessionHostPill(remote?.host, i.session, hosts) || undefined,
         };
       });
     const covered = new Set(localRows.map((r) => r.session));
@@ -189,8 +264,9 @@ export function useSidebarTree(args: {
       .map((s) => ({
         chatId: s.id,
         session: s.id,
-        label: sessionTitles[`${instId} ${ws} ${persona} ${s.id}`] || s.title || s.goal || "…",
+        label: sessionTitles[titleKey(ws, persona, s.id)] || s.title || s.goal || "…",
         pending: false,
+        host: sessionHostPill(s.host, s.id, hosts) || undefined,
       }));
     return [...localRows, ...remoteRows];
   };
@@ -200,7 +276,8 @@ export function useSidebarTree(args: {
     if (!inst || status?.state !== "running") return;
     void api
       .listWorkspaces(inst)
-      .then((rows) => {
+      .then((raw) => {
+        const rows = dedupeWorkspaces(raw);
         setWorkspaces(rows);
         setSelWs((cur) => cur || rows[0]?.id || "");
         rows.forEach((w) => expandWsRef.current(w.id));
@@ -216,6 +293,12 @@ export function useSidebarTree(args: {
       void api
         .listPersonas(inst, w.id)
         .then((rows) => setTreePersonas((prev) => ({ ...prev, [w.id]: rows })))
+        .catch(() => {});
+      void api
+        .wsInbox(inst, w.id)
+        .then((r) => {
+          if (r) setPersonaCounts((prev) => ({ ...prev, [w.id]: r.personas }));
+        })
         .catch(() => {});
     }
   };
@@ -236,9 +319,23 @@ export function useSidebarTree(args: {
   };
 
   return {
-    workspaces, setWorkspaces, treePersonas, setTreePersonas,
-    serverSessions, setServerSessions, sessionTitles, setSessionTitles,
-    expandWs, expandPersona, refreshWorkspaces, refreshPersonas, refreshSessions,
-    personasOf, sessionRowsOf,
+    workspaces,
+    setWorkspaces,
+    wsHosts,
+    setWsHosts,
+    treePersonas,
+    setTreePersonas,
+    serverSessions,
+    setServerSessions,
+    sessionTitles,
+    setSessionTitles,
+    expandWs,
+    expandPersona,
+    refreshWorkspaces,
+    refreshPersonas,
+    refreshSessions,
+    wsHostsOf,
+    personasOf,
+    sessionRowsOf,
   };
 }

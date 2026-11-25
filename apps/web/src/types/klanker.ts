@@ -138,6 +138,21 @@ export interface WorkspaceRow {
   workdir_lock?: boolean;
   browser_profile?: string;
   approval_mode?: "off" | "ask" | "strict" | string;
+  // Ownership/share policy (agents-relay#43) — present on relays that
+  // serve the full workspace row; absent on older ones (missing reads local).
+  sync_policy?: string;
+  sync_hosts?: string[];
+  default_host?: string;
+  repos?: WsRepoPatch[];
+  execution?: Record<string, unknown>;
+}
+
+/** repos[] wire row: {slug, url, checkout_mode} — `path` is refused
+ *  server-side (host-local checkouts live in host_paths.json). */
+export interface WsRepoPatch {
+  slug: string;
+  url?: string;
+  checkout_mode?: "worktree" | "shared" | string;
 }
 
 /** Relay session/trace event (`GET .../sessions/<id>` → events[]).
@@ -246,6 +261,9 @@ export interface HubDevice {
   last_seen: number;
   has_token: boolean;
   connected: boolean;
+  /** ws_member allowlist / shared ws ids — optional, newer relays only. */
+  allowlist?: string[];
+  workspaces?: string[];
 }
 
 /** GET /v1/hub/leases row: active (ws, session) execution lease. */
@@ -277,8 +295,24 @@ export interface WorkspacePolicyPatch {
   sync_policy?: "local" | "synced" | "shared" | string;
   sync_hosts?: string[];
   default_host?: string | null;
-  repos?: Record<string, unknown>;
+  repos?: WsRepoPatch[];
   execution?: Record<string, unknown>;
+}
+
+/** GET /v1/workspaces/<ws>/inbox — team feed: per-persona handoff counts
+ *  plus the recent handoff/reply events (agents-relay wake.team_inbox). */
+export interface WsInbox {
+  personas: Record<string, WsInboxPersona>;
+  recent: { at?: string; task?: string; title?: string; status?: string; from?: string; to?: string }[];
+}
+
+export interface WsInboxPersona {
+  open?: number;
+  running?: number;
+  done?: number;
+  failed?: number;
+  unread?: number;
+  total?: number;
 }
 
 /** GET /v1/workspaces/<ws>/hosts payload. */
@@ -311,14 +345,18 @@ export interface WorkspaceHostLease {
 }
 
 /** POST /v1/workspaces/<ws>/sessions/<sid>/host payload — returned parsed
- *  (never thrown) so 409 lease conflicts surface `holder` to the caller. */
+ *  (never thrown) so 409 lease conflicts surface `holder` to the caller.
+ *  Error bodies carry `failover` ("standby"|"none") + `bound_host`; the
+ *  success `checkpoint` carries `unpushed`. */
 export interface SessionHostSwitch {
   ok?: boolean;
   session?: string;
   host?: string;
   unchanged?: boolean;
-  checkpoint?: Record<string, unknown>;
+  checkpoint?: { unpushed?: boolean } & Record<string, unknown>;
   holder?: string;
+  bound_host?: string;
+  failover?: string;
   error?: string;
   status?: number;
 }
