@@ -312,8 +312,8 @@ def _session_op(h: Any, body: dict, op: str) -> None:
     from agents_workspace import Host
 
     from .session import (
-        _git, _git_ok, checkpoint, ensure_worktree, session_branch,
-        session_view)
+        _git, _git_ok, checkpoint, ensure_worktree, remove_worktree,
+        session_branch, session_view)
     from .remote_dispatch import _host_path_for
 
     sid = str(body.get("session") or body.get("id") or "").strip()
@@ -352,6 +352,14 @@ def _session_op(h: Any, body: dict, op: str) -> None:
         h._write_json({"ok": not bool(res.get("error")),
                        **res}, 200)
         return
+    if op == "cleanup":
+        # orphaned session worktree after a hub-routed switch: the
+        # caller only asks once the checkpoint pushed (unpushed work is
+        # never stranded); a dirty worktree refuses on git's own check
+        res = remove_worktree(checkout, sid)
+        h._write_json({"ok": not bool(res.get("error")),
+                       **res}, 200)
+        return
     # prepare: fetch the session branch (best effort) + ensure worktree
     fetch_err = ""
     branch = str(view.get("branch") or session_branch(sid))
@@ -379,7 +387,8 @@ def _post(h: Any, path: str, q: dict[str, str]) -> None:
     if body is None:
         return
     if path in (f"{_PREFIX}/sessions/checkpoint",
-                f"{_PREFIX}/sessions/prepare"):
+                f"{_PREFIX}/sessions/prepare",
+                f"{_PREFIX}/sessions/cleanup"):
         _session_op(h, body, path.rsplit("/", 1)[-1])
         return
     if path == f"{_PREFIX}/recall":

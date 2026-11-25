@@ -220,6 +220,11 @@ def test_parse_invite_strict():
         "https://hub.example/#pair=ABCD-EFGH") == \
         ("https://hub.example", "ABCD-EFGH")
     assert _parse_invite("http://h:8787/#pair=zz12") == ("http://h:8787", "zz12")
+    # urlsafe pair tokens contain '_'/'-' (secrets.token_urlsafe) — the
+    # fragment credential class must admit them (klanker#154 gate catch)
+    assert _parse_invite(
+        "https://hub.example/#pair=_Ab3-xZ9") == \
+        ("https://hub.example", "_Ab3-xZ9")
     assert _parse_invite("ABCD-EFGH") == ("", "ABCD-EFGH")
     for bad in ("", "https://hub.example/pair=ABCD-EFGH",
                 "https://hub.example#pair=", "ABCD",

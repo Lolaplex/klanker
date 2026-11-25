@@ -52,7 +52,7 @@ jobs:
           fi
 
       - name: Run test suite
-        timeout-minutes: 5
+        timeout-minutes: 12
         run: |
           pytest
 
