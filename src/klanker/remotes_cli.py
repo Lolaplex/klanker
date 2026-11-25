@@ -62,14 +62,11 @@ def resolve_remote(rid: str) -> dict[str, Any] | None:
 def _read_token(args: Any) -> str:
     if getattr(args, "token_stdin", False):
         return sys.stdin.read().strip()
-    token = str(getattr(args, "token", "") or "").strip()
-    if token:
-        return token
     if getattr(args, "prompt", False) or sys.stdin.isatty():
         return getpass.getpass("remote token (empty for none): ").strip()
     print(
         "Error: no token flag in non-TTY mode — pass --token-stdin "
-        "(or --token/--prompt interactively)",
+        "(or --prompt interactively)",
         file=sys.stderr,
     )
     raise SystemExit(2)
@@ -104,7 +101,8 @@ def cmd_remote(args: Any) -> int:
             print(f"Error: {exc}", file=sys.stderr)
             return 2
         token = _read_token(args)
-        body: dict[str, Any] = {"id": rid, "base_url": base_url}
+        body: dict[str, Any] = {"id": rid, "base_url": base_url,
+                                "label": name}
         if token:
             body["secret"] = token
         row, err = upsert_remote(_relay_config(), body)
@@ -192,11 +190,42 @@ def _cmd_remote_pair(args: Any) -> int:
         return 2
     host_id = str(data.get("host_id") or "").strip() or "-"
     print(f"paired remote {row['id']} -> {row['base_url']} (host_id={host_id}, token stored in host vault)")
+    if not _is_hub_paired(base_url):
+        print(
+            "warning: paired as legacy remote without a hub channel — "
+            "op-sync will NOT run; pair via `klanker pair --remote` + "
+            "`agents-relay channel connect` for workspace sync",
+            file=sys.stderr,
+        )
     return 0
+
+
+def _is_hub_paired(base_url: str) -> bool:
+    from agents_workspace import Host
+
+    try:
+        rows = (json.loads(
+            (Host.from_env().clients / "hubs.json").read_text(
+                encoding="utf-8")) or {}).get("hubs") or {}
+    except (OSError, json.JSONDecodeError):
+        rows = {}
+    base = base_url.rstrip("/")
+    return any(str(r.get("hub_url") or "").rstrip("/") == base
+               for r in rows.values())
 
 
 def cmd_pair(args: Any) -> int:
     """Mint a single-use pairing code / QR URL against the running local serve."""
+    ws_shortcut = str(getattr(args, "ws", "") or "").strip()
+    if ws_shortcut:
+        # `klanker pair --ws <id>` = `klanker workspace invite <id>`
+        from argparse import Namespace
+
+        from .wshare import cmd_ws_invite
+
+        return cmd_ws_invite(Namespace(
+            id=ws_shortcut, hub=str(getattr(args, "hub", "") or ""),
+            json=False))
     if not sys.stdout.isatty():
         print(
             "Error: refusing to mint pairing credentials on non-TTY stdout "

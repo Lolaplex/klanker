@@ -1,18 +1,205 @@
-"""Klanker-owned ``/v1/klanker/*`` management routes, grafted onto the relay.
+"""Live hub-link + session host management hooks (agents-relay#43).
 
-``klanker serve`` runs the agents-relay HTTP adapter in-process; ``install()``
-wraps ``TurnHandler`` so the dashboard manages skills, routines and memory over
-the same origin and auth, not only through chat turns.
+Wired by ``klanker serve`` into ``agents_relay.http_adapter``:
+
+- ``hub_links()``: public hubs.json rows + live connected state —
+  never tokens.
+- ``hub_connect(body)``: redeem an invite code/URL against a hub,
+  persist the hubs.json row + host-vault token, and let the running
+  SyncRuntime attach a ChannelClient on its next tick — no serve
+  restart.
+- ``hub_disconnect(hub_id)``: stop the live client + retire workers,
+  drop the row + vault secret.
+- ``session_host_switch(ws, sid, host, force)``: the HTTP entry into
+  ``session.switch_host`` — checkpoint -> rebind -> cleanup.
 """
-
 from __future__ import annotations
 
 import json
-import shutil
-from pathlib import Path
-from typing import Any
+import logging
+import re
+import urllib.parse
 
-from . import __version__
+log = logging.getLogger(__name__)
+
+_INVITE_RE = re.compile(r"^#?pair=([A-Za-z0-9_-]{3,64})$")
+_CODE_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+
+
+def _runtime():
+    from .wssync import _runtime as _rt
+
+    return _rt()
+
+
+def _hubs_path():
+    from agents_workspace import Host
+
+    return Host.from_env().clients / "hubs.json"
+
+
+def _hub_rows() -> dict:
+    try:
+        return dict(
+            (json.loads(_hubs_path().read_text(encoding="utf-8")) or {})
+            .get("hubs") or {})
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def hub_links() -> dict:
+    """GET /v1/hub/links — public row metadata + live attach state."""
+    rt = _runtime()
+    links = []
+    for hub_id, row in sorted(_hub_rows().items()):
+        status = (rt.client_status(hub_id) if rt is not None
+                  else {"connected": False, "revoked": False,
+                        "last_error": ""})
+        links.append({
+            "hub_id": hub_id,
+            "hub_url": str(row.get("hub_url") or ""),
+            "device_id": str(row.get("device_id") or ""),
+            "label": str(row.get("label") or ""),
+            "connected_at": int(row.get("connected_at") or 0),
+            "connected": bool(status.get("connected")),
+            "revoked": bool(status.get("revoked")),
+            "last_error": str(status.get("last_error") or ""),
+        })
+    return {"links": links}
+
+
+def _parse_connect(body: dict) -> tuple[str, str]:
+    """(hub_url, code) from a pair URL or bare url+code fields.
+
+    Fragment shapes minted by pairing.py: ``#pair=<code>``,
+    ``#kind=remote&pair=<code>`` and ``#kind=ws&ws=<id>&pair=<code>``
+    (ws invite — the ws id rides inside the token, the code is what we
+    redeem)."""
+    url = str(body.get("url") or "").strip().rstrip("/")
+    code = str(body.get("code") or body.get("token") or "").strip()
+    frag = urllib.parse.urlparse(url).fragment
+    if frag:
+        params = urllib.parse.parse_qs(frag, keep_blank_values=True)
+        pair = str((params.get("pair") or [""])[0])
+        if pair:
+            code = pair
+            url = url.split("#", 1)[0].rstrip("/")
+    if not url or not url.startswith(("http://", "https://")):
+        return "", ""
+    if not _CODE_RE.match(code):
+        return url, ""
+    return url, code
+
+
+def hub_connect(body: dict) -> dict:
+    """POST /v1/hub/connect — redeem + persist + live-attach."""
+    from agents_relay.channel_client import connect_hub
+
+    url, code = _parse_connect(body)
+    if not url or not code:
+        return {"ok": False, "error": "need url + pair code",
+                "status": 400}
+    label = str(body.get("label") or "")
+    try:
+        row = connect_hub(url, code, label=label)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False,
+                "error": f"redeem failed: {exc}", "status": 502}
+    rt = _runtime()
+    if rt is not None:
+        rt._attach_new_hubs()  # immediate attach, not next-tick
+    return {"ok": True, "hub_id": row.get("hub_id"),
+            "device_id": row.get("device_id"),
+            "ws": row.get("ws") or "",
+            "reused": bool(row.get("reused")),
+            "connected": bool(
+                rt is not None and rt.client_connected(
+                    str(row.get("hub_id") or "")))}
+
+
+def hub_disconnect(hub_id: str) -> dict:
+    """DELETE /v1/hub/links/<id> — retire client, row, and token."""
+    from agents_relay.channel_client import disconnect_hub
+
+    rt = _runtime()
+    if rt is not None:
+        rt.detach_client(hub_id)
+    if not disconnect_hub(hub_id):
+        return {"ok": False, "error": "unknown hub", "status": 404}
+    return {"ok": True, "hub_id": hub_id}
+
+
+def session_host_switch(ws_id: str, session_id: str, new_host: str,
+                        *, force: bool = False) -> dict:
+    """POST /v1/workspaces/<ws>/sessions/<sid>/host."""
+    from agents_store.db import connect
+    from agents_workspace import Host
+
+    from .remote_dispatch import _host_path_for
+    from .session import (remove_worktree, session_view,
+                          switch_host)
+
+    host = Host.from_env()
+    try:
+        if not host.workspace_exists(ws_id):
+            return {"error": "unknown workspace", "status": 404}
+        ws = host.workspace(ws_id)
+    except Exception:  # noqa: BLE001
+        return {"error": "unknown workspace", "status": 404}
+    conn = None
+    try:
+        conn = connect(ws.dir / "store.db", check_same_thread=False)
+        view = session_view(conn, session_id)
+        old = str(view.get("host") or "")
+        if old == new_host:
+            return {"session": session_id, "host": new_host,
+                    "unchanged": True}
+        slug = str(view.get("repo") or "").split(":", 1)[0]
+        checkout = _host_path_for(ws, slug) if slug else None
+        res = switch_host(
+            conn, session_id, new_host, repo=checkout,
+            old_host=old, ws_id=ws.id, force=force)
+        if not res.get("bound"):
+            return {"error": res.get("error"),
+                    "status": int(res.get("status") or 409),
+                    "holder": res.get("holder", "")}
+        if checkout is not None and res.get("checkpoint") \
+                and not res["checkpoint"].get("unpushed"):
+            remove_worktree(checkout, session_id)
+        return {"session": session_id, "host": new_host,
+                "checkpoint": res.get("checkpoint")}
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def ws_policy_changed(ws_id: str) -> None:
+    """PATCH /v1/workspaces policy write -> reconcile immediately,
+    not at the next tick (agents-relay#43)."""
+    rt = _runtime()
+    if rt is None:
+        return
+    try:
+        rt._reconcile_shares()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("share reconcile after policy change failed: %s",
+                    exc)
+
+
+# --- ``/v1/klanker/*`` dashboard surface -------------------------------------
+#
+# ``klanker serve`` runs the agents-relay HTTP adapter in-process;
+# ``install()`` wraps ``TurnHandler`` so the dashboard manages skills,
+# routines and memory over the same origin and auth, not only through
+# chat turns. ``/v1/hub/*`` and session-switch hooks above are wired
+# through the adapter's ``*_fn`` seams; these older routes keep the
+# handler-subclass graft.
+
+import shutil  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any  # noqa: E402
+
+from . import __version__  # noqa: E402
 
 _PREFIX = "/v1/klanker"
 
@@ -114,9 +301,86 @@ def _get(h: Any, path: str, q: dict[str, str]) -> None:
     h.send_error(404)
 
 
+def _session_op(h: Any, body: dict, op: str) -> None:
+    """POST /v1/klanker/sessions/{checkpoint,prepare} — the spoke side of
+    a remote host switch (klanker#155): the old host checkpoints its
+    worktree, the new host fetches + materializes it. Admin-only via the
+    device gate in _dispatch; the channel RPC rides loopback."""
+    import os
+
+    from agents_store.db import connect
+    from agents_workspace import Host
+
+    from .session import (
+        _git, _git_ok, checkpoint, ensure_worktree, session_branch,
+        session_view)
+    from .remote_dispatch import _host_path_for
+
+    sid = str(body.get("session") or body.get("id") or "").strip()
+    if not sid:
+        h.send_error(400, "session is required")
+        return
+    host = Host.from_env()
+    ws_id = str(body.get("workspace") or os.environ.get(
+        "AGENTS_WORKSPACE", "") or "").strip()
+    try:
+        ws = host.workspace(ws_id) if ws_id else host.select_workspace()
+    except Exception:  # noqa: BLE001
+        h.send_error(404, "unknown workspace")
+        return
+    conn = None
+    try:
+        conn = connect(ws.dir / "store.db", check_same_thread=False)
+        view = session_view(conn, sid)
+    finally:
+        if conn is not None:
+            conn.close()
+    slug = str(view.get("repo") or "").split(":", 1)[0]
+    checkout = _host_path_for(ws, slug) if slug else None
+    if checkout is None:
+        # no repo recorded/resolved on this host — a pure-conversation
+        # session has nothing to checkpoint/prepare
+        h._write_json({"ok": True, "skipped": True,
+                       "unpushed": False}, 200)
+        return
+    if op == "checkpoint":
+        try:
+            hid = str(host.host_id())
+        except Exception:  # noqa: BLE001
+            hid = ""
+        res = checkpoint(checkout, sid, hid)
+        h._write_json({"ok": not bool(res.get("error")),
+                       **res}, 200)
+        return
+    # prepare: fetch the session branch (best effort) + ensure worktree
+    fetch_err = ""
+    branch = str(view.get("branch") or session_branch(sid))
+    try:
+        remotes = _git(checkout, "remote").stdout.split()
+        if remotes:
+            remote = "origin" if "origin" in remotes else remotes[0]
+            if not _git_ok(checkout, "fetch", remote, branch,
+                           timeout=30.0):
+                fetch_err = "fetch failed"
+    except Exception as exc:  # noqa: BLE001
+        fetch_err = str(exc)
+    try:
+        wt = ensure_worktree(checkout, sid)
+    except Exception as exc:  # noqa: BLE001
+        h._write_json({"ok": False, "error": str(exc),
+                       "fetch_error": fetch_err}, 200)
+        return
+    h._write_json({"ok": True, "worktree": str(wt),
+                   "fetch_error": fetch_err}, 200)
+
+
 def _post(h: Any, path: str, q: dict[str, str]) -> None:
     body = h._read_json()
     if body is None:
+        return
+    if path in (f"{_PREFIX}/sessions/checkpoint",
+                f"{_PREFIX}/sessions/prepare"):
+        _session_op(h, body, path.rsplit("/", 1)[-1])
         return
     if path == f"{_PREFIX}/recall":
         ws = _resolve_ws(q.get("workspace", "") or str(body.get("workspace") or ""))
@@ -215,16 +479,102 @@ def _delete(h: Any, path: str, q: dict[str, str]) -> None:
     h.send_error(404)
 
 
+def _repo_paths(h: Any, method: str, path: str,
+                query: dict[str, str]) -> None:
+    """``GET``/``PUT /v1/workspaces/<ws>/repo-paths`` — the backend for
+    ``<host>/host_paths.json`` (klanker#155; the desktop settings modal
+    previously faked this in localStorage).
+
+    Operator surface: admin/cookie callers always; a device token only
+    when it names the ws execution.owner — guests never read or write
+    host-local checkout paths."""
+    from agents_relay.http_adapter import _check_secret
+
+    if not _check_secret(h, h.relay_secret, query):
+        h.send_error(401, "unauthorized")
+        return
+    parts = path.split("/")
+    ws_id = parts[3] if len(parts) == 5 else ""
+    if not ws_id:
+        h.send_error(404)
+        return
+    from agents_workspace import Host
+
+    host = Host.from_env()
+    try:
+        ws = host.workspace(ws_id)
+    except Exception:  # noqa: BLE001
+        h.send_error(404, "unknown workspace")
+        return
+    ctx = h._auth_ctx() if hasattr(h, "_auth_ctx") else {}
+    if ctx.get("kind") == "device":
+        owner = str(
+            (getattr(ws, "execution", None) or {}).get("owner") or "")
+        if not owner or str(ctx.get("device_id") or "") != owner:
+            h.send_error(403, "repo-paths is owner/admin only")
+            return
+    if method == "GET":
+        paths = (host.read_host_paths().get(ws_id) or {})
+        h._write_json({"ok": True, "workspace": ws_id, "paths": paths},
+                      200)
+        return
+    if method == "PUT":
+        body = h._read_json()
+        if body is None:
+            return
+        items = body.get("paths")
+        if not isinstance(items, dict):
+            # flat {slug: path} bodies are accepted too
+            items = {k: v for k, v in body.items()
+                     if isinstance(k, str) and isinstance(v, str)
+                     and k != "workspace"}
+        try:
+            for slug, target in items.items():
+                host.set_host_repo_path(str(slug), str(target),
+                                        ws_id=ws_id)
+        except (TypeError, ValueError) as exc:
+            h.send_error(400, str(exc))
+            return
+        paths = (host.read_host_paths().get(ws_id) or {})
+        h._write_json({"ok": True, "workspace": ws_id, "paths": paths},
+                      200)
+        return
+    h.send_error(405)
+
+
 def _dispatch(h: Any, method: str) -> bool:
-    """Handle ``/v1/klanker/*``; returns True when the request was consumed."""
-    from agents_relay.http_adapter import _check_secret, _parse_query
+    """Handle ``/v1/klanker/*`` + ``/v1/workspaces/<ws>/repo-paths``;
+    returns True when the request was consumed.
+
+    ``_check_secret`` admits ANY paired device token (revocable channel
+    credential) — this surface mints routines, deletes skills/memory and
+    flips recall, i.e. operator surface. Device callers of every role
+    are denied (klanker#155 C3): a ws_member token must never reach the
+    admin graft, and other device roles stay channel-only."""
+    from agents_relay.http_adapter import (
+        _check_secret, _parse_query, _ws_member_gate)
 
     path, query = _parse_query(h.path)
+    if path.startswith("/v1/workspaces/") \
+            and path.rstrip("/").endswith("/repo-paths"):
+        _repo_paths(h, method, path.rstrip("/"), query)
+        return True
     if not path.startswith(_PREFIX):
         return False
     if not _check_secret(h, h.relay_secret, query):
         h.send_error(401, "unauthorized")
         return True
+    ctx = h._auth_ctx() if hasattr(h, "_auth_ctx") else {}
+    if ctx.get("kind") == "device":
+        if ctx.get("role") == "ws_member":
+            reason = _ws_member_gate(
+                ctx, method, path, path.split("/"), query)
+            if reason:
+                h.send_error(403, reason)
+                return True
+        else:
+            h.send_error(403, "device tokens cannot use the admin surface")
+            return True
     try:
         if method == "GET":
             _get(h, path, query)
@@ -256,6 +606,14 @@ def handler_class(base: type) -> type:
         def do_POST(self) -> None:
             if not _dispatch(self, "POST"):
                 super().do_POST()
+
+        def do_PUT(self) -> None:
+            if not _dispatch(self, "PUT"):
+                fn = getattr(super(), "do_PUT", None)
+                if fn is not None:
+                    fn()
+                else:
+                    self.send_error(501)
 
         def do_DELETE(self) -> None:
             if not _dispatch(self, "DELETE"):

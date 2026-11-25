@@ -84,9 +84,23 @@ def register_recall() -> bool:
     return True
 
 
+def register_session_gate() -> bool:
+    """Register the session bind gate (first host-local tool →
+    ``session:host`` datom). False when the harness lacks the hook."""
+    try:
+        from runner import register_session_gate as register
+    except ImportError:
+        return False
+    from .session import session_bind_gate
+
+    register(session_bind_gate)
+    return True
+
+
 def register_harness_hooks() -> dict[str, bool]:
     """Install both hooks. Failures are logged and do not raise."""
-    installed = {"content_backend": False, "final_check": False, "recall": False}
+    installed = {"content_backend": False, "final_check": False,
+                 "recall": False, "session_gate": False}
     try:
         installed["content_backend"] = register_content_backend()
     except Exception:
@@ -99,4 +113,8 @@ def register_harness_hooks() -> dict[str, bool]:
         installed["recall"] = register_recall()
     except Exception:
         log.warning("recall provider was not registered", exc_info=True)
+    try:
+        installed["session_gate"] = register_session_gate()
+    except Exception:
+        log.warning("session gate was not registered", exc_info=True)
     return installed

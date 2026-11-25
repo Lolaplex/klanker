@@ -154,13 +154,15 @@ def test_sync_workspaces_excludes_local_policy(tmp_path, monkeypatch):
     host.dir.mkdir(parents=True, exist_ok=True)
     a = host.create("a")
     b = host.create("b")
-    host.update_workspace(str(b.id), sync_policy="local")
+    # W05: create defaults to local — synced must be explicit, and
+    # local + non-empty sync_hosts raises.
+    host.update_workspace(str(a.id), sync_policy="synced")
     from klanker.wssync import sync_workspaces
 
     m = sync_workspaces()
     assert str(a.id) in m
     assert str(b.id) not in m
-    assert m[str(a.id)]["hosts"] is None
+    assert m[str(a.id)]["hosts"] == frozenset()
 
 
 @_POLICY
@@ -172,11 +174,189 @@ def test_sync_workspaces_host_allowlist(tmp_path, monkeypatch):
     host = Host.from_env()
     host.dir.mkdir(parents=True, exist_ok=True)
     a = host.create("a")
-    host.update_workspace(str(a.id), sync_hosts=["dev-b"])
+    host.update_workspace(
+        str(a.id), sync_policy="synced", sync_hosts=["dev-b"])
     from klanker.wssync import sync_workspaces
 
     m = sync_workspaces()
     assert m[str(a.id)]["hosts"] == frozenset({"dev-b"})
+
+
+def test_hub_drops_ops_from_non_member_device(tmp_path, monkeypatch):
+    """R1 write ACL: ops for a ws from a device outside sync_hosts are
+    dropped before ingest — no worker, no datoms, no fan-out."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    ws = host.create("ws1")
+    hub_dir = ws.dir
+    _seed_grants(hub_dir)
+    host.update_workspace(
+        "ws1", sync_policy="synced", sync_hosts=["dev-a", "dev-b"])
+    rt = SyncRuntime()
+
+    class FakeHub:
+        def __init__(self):
+            self.op_handler = None
+            self.published = []
+        def set_op_handler(self, h): self.op_handler = h
+        def set_ack_handler(self, h): pass
+        def set_ws_handler(self, h): pass
+        def set_connect_handler(self, h): pass
+        def connected_devices(self):
+            return ["dev-a", "dev-b", "evil"]
+        def publish(self, device_id, kind, payload):
+            self.published.append((device_id, kind, payload))
+
+    hub = FakeHub()
+    rt.attach_hub(
+        hub,
+        {"ws1": {"dir": hub_dir, "hosts": frozenset({"dev-a", "dev-b"})}},
+        "hubNode")
+
+    # mint a real op frame on a foreign store, sent by a non-member
+    src_dir = tmp_path / "src"
+    _seed_grants(src_dir)
+    src = WsSync("ws1", src_dir, "evilNode", "hub",
+                 lambda k, p: None, local_node="evilNode")
+    res = src.store.transact([Change(e=None, a="title", v="forged")],
+                             wrapper="test")
+    frames = []
+    src._send = lambda kind, p: frames.append((kind, p))
+    src.drain()
+    op_payload = next(p for k, p in frames if k == "op")
+
+    hub.op_handler("evil", op_payload)
+    assert ("ws1", "evil") not in rt._hub_workers   # no worker spawned
+    hconn = connect(hub_dir / "store.db", check_same_thread=False)
+    assert Store(hconn).view(res.entity) == {}
+    assert [p for p in hub.published if p[1] == "op"] == []
+
+    # same op from a member: ingested on the hub, then fanned out as a
+    # hub-local batch (never the spoke's raw batch_cursor, klanker#146)
+    hub.op_handler("dev-a", op_payload)
+    assert Store(hconn).view(res.entity) != {}
+    fan = [p for p in hub.published
+           if p[0] == "dev-b" and p[1] == "op"]
+    assert fan, "member worker never drained to the other member"
+    # the forwarded frame is a NEW hub-minted batch (own batch_cursor),
+    # never the spoke's raw payload object (klanker#146)
+    assert fan[0][2] is not op_payload
+    assert fan[0][2]["envelopes"] == op_payload["envelopes"]
+    # the spoke itself never gets its own op echoed back
+    assert [p for p in hub.published
+            if p[0] == "dev-a" and p[1] == "op"
+            and p[2].get("envelopes") == op_payload.get("envelopes")] == []
+    hconn.close()
+
+
+class _FakeShareHub:
+    """Minimal hub channel double for ws-share control frames."""
+
+    def __init__(self):
+        self.ws_handler = None
+        self.op_handler = None
+        self.published = []   # (device, kind, payload)
+
+    def set_op_handler(self, h): self.op_handler = h
+    def set_ack_handler(self, h): pass
+    def set_ws_handler(self, h): self.ws_handler = h
+    def broadcast(self, kind, payload, skip=frozenset()): pass
+    def connected_devices(self): return []
+    def publish(self, device_id, kind, payload):
+        self.published.append((device_id, kind, payload))
+
+
+@_POLICY
+def test_hub_announce_provisions_and_fans_out(tmp_path, monkeypatch):
+    """ws:announce from a device provisions the ws on the hub, records
+    ownership, and pushes announce+backfill to newly added members."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    rt = SyncRuntime()
+    hub = _FakeShareHub()
+    rt.attach_hub(hub, {}, "hubNode")
+
+    hub.ws_handler("dev-a", "ws:announce", {
+        "ws": "w1", "label": "shared-ws",
+        "sync_hosts": ["dev-b"], "seq": 1})
+    ws = host.workspace("w1")
+    assert ws.dir.is_dir()                       # provisioned on hub
+    assert set(ws.sync_hosts) == {"dev-a", "dev-b"}
+    assert (ws.execution or {}).get("owner") == "dev-a"
+    assert ("dev-b", "ws:announce") in [
+        (d, k) for d, k, _ in hub.published]
+    assert ("w1", "dev-b") in rt._hub_workers    # backfill worker exists
+    # owner cannot be displaced by another device
+    hub.ws_handler("dev-b", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-b", "evil"], "seq": 2})
+    ws = host.workspace("w1")
+    assert set(ws.sync_hosts) == {"dev-a", "dev-b"}   # unchanged
+
+
+@_POLICY
+def test_hub_announce_revokes_removed_member(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    rt = SyncRuntime()
+    hub = _FakeShareHub()
+    rt.attach_hub(hub, {}, "hubNode")
+
+    hub.ws_handler("dev-a", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-b", "dev-c"], "seq": 1})
+    hub.published.clear()
+    hub.ws_handler("dev-a", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-b"], "seq": 2})
+    assert ("dev-c", "ws:revoke") in [
+        (d, k) for d, k, _ in hub.published]
+    assert set(host.workspace("w1").sync_hosts) == {"dev-a", "dev-b"}
+
+
+@_POLICY
+def test_spoke_announce_provisions_and_revoke_freezes(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    rt = SyncRuntime()
+
+    class FakeClient:
+        hub_id = "hub1"
+        device_id = "dev-b"
+        def __init__(self):
+            self.sent = []
+            self.on_ws = None
+            self.on_op = None
+            self.on_ack = None
+            self.on_hello = None
+        def send(self, kind, payload): self.sent.append((kind, payload))
+
+    client = FakeClient()
+    rt.attach_client(client, [])       # spoke with no local ws yet
+    client.on_ws("ws:announce", {
+        "ws": "w1", "label": "shared-ws", "owner": "dev-a",
+        "sync_hosts": ["dev-a", "dev-b"], "seq": 1})
+    assert host.workspace_exists("w1")
+    workers = rt._client_workers["hub1"]
+    assert [w.ws_id for w in workers] == ["w1"]
+    workers[0].conn.close()
+    client.on_ws("ws:revoke", {"ws": "w1", "seq": 2})
+    assert rt._client_workers["hub1"] == []
+    assert host.workspace("w1").sync_policy == "local"
 
 
 def _local_origins_supported() -> bool:
@@ -258,7 +438,9 @@ def test_tick_projects_once_per_ws_dir_and_drains(tmp_path):
     n = w1.conn.execute(
         "SELECT COUNT(*) FROM tx WHERE origin_actor = 'proj@nodeA:s1'"
     ).fetchone()[0]
-    assert n == 1
+    # tx 1: msg datoms; tx 2: session:title/last_active refresh — both
+    # exactly once across both workers on the same ws_dir
+    assert n == 2
     assert ("dev1", "op") in sent and ("dev2", "op") in sent
     w1.conn.close(); w2.conn.close()
 
@@ -267,3 +449,171 @@ def test_session_attrs_seed(link):
     names = {r[0] for r in link.a.conn.execute("SELECT name FROM attr")}
     assert "session:host" in names
     assert "msg:text" in names
+
+
+# ---------- klanker#146 hardening ------------------------------------------
+
+
+@_POLICY
+def test_hub_announce_rejects_unowned_existing_ws(tmp_path, monkeypatch):
+    """Hijack guard: a ws that exists on the hub with no recorded owner
+    can never be claimed over the wire — explicit share required."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    ws = host.create("w1")
+    host.update_workspace("w1", sync_policy="synced",
+                          sync_hosts=["localdev"])
+    rt = SyncRuntime()
+    hub = _FakeShareHub()
+    rt.attach_hub(hub, {"w1": {"dir": ws.dir,
+                             "hosts": frozenset({"localdev"})}},
+                  "hubNode")
+    hub.ws_handler("dev-x", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-x"], "seq": 1})
+    ws = host.workspace("w1")
+    assert (ws.execution or {}).get("owner") in (None, "")
+    assert "dev-x" not in (ws.sync_hosts or ())
+    assert ("w1", "dev-x") not in rt._hub_workers
+
+
+@_POLICY
+def test_hub_announce_rejects_local_policy_ws(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    host.create("w1")  # default: local
+    rt = SyncRuntime()
+    hub = _FakeShareHub()
+    rt.attach_hub(hub, {}, "hubNode")
+    hub.ws_handler("dev-a", "ws:announce", {
+        "ws": "w1", "sync_hosts": ["dev-a"], "seq": 1})
+    ws = host.workspace("w1")
+    assert ws.sync_policy == "local"
+    assert not (ws.sync_hosts or ())
+    assert ("w1", "dev-a") not in rt._hub_workers
+
+
+@_POLICY
+def test_live_acl_evicts_worker_on_member_removal(tmp_path, monkeypatch):
+    """Removing a device from sync_hosts must kill its hub worker — a
+    stale worker would keep acking/ingesting for a revoked member."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    ws = host.create("w1")
+    host.update_workspace(
+        "w1", sync_policy="synced", sync_hosts=["dev-a", "dev-b"],
+        execution={"owner": "dev-a"})
+    rt = SyncRuntime()
+    hub = _FakeShareHub()
+    rt.attach_hub(hub, {"w1": {"dir": ws.dir,
+                             "hosts": frozenset({"dev-a", "dev-b"})}},
+                  "hubNode")
+    w = rt._hub_worker("dev-b", "w1")
+    assert w is not None
+    host.update_workspace("w1", sync_hosts=["dev-a"])
+    assert rt._hub_worker("dev-b", "w1") is None  # live gate, no spawn
+    # reconcile sweep also evicts the stale worker entry
+    rt._hub_workers[("w1", "dev-b")] = w
+    rt._reconcile_shares()
+    assert ("w1", "dev-b") not in rt._hub_workers
+
+
+def test_shared_peerbook_per_workspace(tmp_path):
+    """Two workers on the same ws dir share one PeerBook — sibling
+    instances clobbered each other's acked cursors (klanker#146)."""
+    ws_dir = tmp_path / "ws"
+    rt = __import__("klanker.wssync", fromlist=["SyncRuntime"]).SyncRuntime()
+    w1 = WsSync("w1", ws_dir, "n", "dev-a", lambda k, p: None,
+                book=rt._book_for(ws_dir))
+    w2 = WsSync("w1", ws_dir, "n", "dev-b", lambda k, p: None,
+                book=rt._book_for(ws_dir))
+    assert w1.book is w2.book
+    w1.close()
+    w2.close()
+
+
+@_POLICY
+def test_share_state_survives_restart(tmp_path, monkeypatch):
+    """Persisted share state: a runtime restart must not re-announce
+    member sets it already delivered (klanker#146)."""
+    monkeypatch.setenv("AGENTS_HOST_DIR", str(tmp_path / "host"))
+    from agents_workspace import Host
+    from klanker.wssync import SyncRuntime
+
+    host = Host.from_env()
+    host.dir.mkdir(parents=True, exist_ok=True)
+    rt = SyncRuntime()
+    rt._announce_sent[("dev-a", "w1")] = frozenset({"dev-a", "dev-b"})
+    rt._share_state[("spoke", "hub1", "w1")] = frozenset({"dev-a"})
+    rt._save_share_state()
+    rt2 = SyncRuntime()
+    assert rt2._announce_sent[("dev-a", "w1")] == {"dev-a", "dev-b"}
+    assert rt2._share_state[("spoke", "hub1", "w1")] == {"dev-a"}
+
+
+def test_tick_sec_clamped(monkeypatch):
+    monkeypatch.setenv("KLANKER_SYNC_TICK_SEC", "0.01")
+    import importlib
+
+    import klanker.wssync as wsmod
+    try:
+        importlib.reload(wsmod)
+        assert wsmod.TICK_SEC >= 1.0
+    finally:
+        monkeypatch.delenv("KLANKER_SYNC_TICK_SEC", raising=False)
+        importlib.reload(wsmod)
+
+
+def test_on_op_never_raises_on_channel_thread(tmp_path):
+    """A malformed op frame must not propagate into the channel reader
+    thread — it logs and swallows."""
+    w = WsSync("w1", tmp_path / "ws", "n", "peer",
+               lambda k, p: None)
+    w.on_op({"envelopes": [{"v": 1, "actor": "x", "seq": "notanint",
+                            "datoms": "garbage"}]})
+    w.on_op({"envelopes": "notalist"})
+    w.close()
+
+
+def test_migrated_datoms_sync_across_hosts(link, tmp_path):
+    """W13: persona:*, cfg:* and mem:* registered on BOTH ends of the wire —
+    import txs on A must converge on B with 0 refusals."""
+    from klanker.migrate import _Importer
+
+    imp = _Importer(link.a.conn, link.a.local_node)
+    imp.submit("config", "config.json", "model",
+               [("cfg:model", "cfg:key", "model", True),
+                ("cfg:model", "cfg:value", "k2", True)])
+    imp.submit("personas", "personas/coder/persona.json", "coder",
+               [("persona:coder", "persona:id", "coder", True),
+                ("persona:coder", "persona:name", "Coder", True)])
+    imp.submit("memory", "memory/N.md", "N",
+               [("mem:N", "mem:file", "N.md", True),
+                ("mem:N", "mem:title", "Notes", True),
+                ("mem:N", "mem:text", "# Notes\n\n- remember me", True)])
+    imp.flush()
+    link.a.drain()
+    link.pump()
+    assert _view(link.b.store, "cfg:model")["cfg:value"] == "k2"
+    assert _view(link.b.store, "persona:coder")["persona:name"] == "Coder"
+    assert "remember me" in _view(link.b.store, "mem:N")["mem:text"]
+    refused = link.b.conn.execute(
+        "SELECT COUNT(*) FROM refusal").fetchone()[0]
+    assert refused == 0
+
+
+def test_migrate_attrs_seed_on_wssync(link):
+    names = {r[0] for r in link.a.conn.execute("SELECT name FROM attr")}
+    for a in ("persona:id", "cfg:key", "cfg:value", "mem:text"):
+        assert a in names

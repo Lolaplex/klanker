@@ -7,8 +7,8 @@ from agents_store.db import connect
 from agents_store.ingest import ingest, ops_since
 
 from klanker.msgsync import (
-    list_sessions, message_entity, next_seq, project_session,
-    project_traces, session_messages)
+    ensure_domain, list_sessions, message_entity, next_seq,
+    project_session, project_traces, session_messages)
 
 
 @dataclass
@@ -67,7 +67,8 @@ def test_idempotent_replay(ws):
     stats = project_session(conn, ws_dir, "s1", events, node="hostA")
     assert stats["projected"] == 0
     n = conn.execute("SELECT COUNT(*) FROM datom").fetchone()[0]
-    assert n == 5  # one entity, 5 attrs, once
+    # one entity x 5 attrs, once + session:title/last_active refresh
+    assert n == 7
 
 
 def test_tool_role_missing_role_and_empty_skipped(ws):
@@ -134,7 +135,8 @@ def test_seq_continues_from_store_not_cursor(ws):
     project_session(conn, ws_dir, "s1",
                     [_ev("2026-11-22T10:00:00Z", "user", "one")], node="h")
     (ws_dir / "msg_cursors.json").unlink(missing_ok=True)
-    assert next_seq(conn, "proj@h:s1") == 2
+    # seq 1 msg tx + seq 2 session:title/last_active refresh tx
+    assert next_seq(conn, "proj@h:s1") == 3
     stats = project_session(conn, ws_dir, "s1", [
         _ev("2026-11-22T10:00:00Z", "user", "one"),
         _ev("2026-11-22T10:00:09Z", "user", "two")], node="h")
@@ -188,3 +190,107 @@ def test_project_traces_shrunk_file_replays_safely(ws):
     day.write_text(json.dumps(_line("2026-11-22T10:00:00Z", "user", "hi")) + "\n")
     s = project_traces(conn, ws_dir, node="h")
     assert s["projected"] == 0 and s["skipped"] == 1
+
+
+def _frame(ts, first, last, kind="undo", content="", session="s1"):
+    return Ev(ts=ts, session=session, type="frame", metadata={
+        "kind": kind,
+        "summarized_from": {"first_ts": first, "last_ts": last},
+        "content": content, "source": "session-op"})
+
+
+def test_undo_frame_marks_covered_turn_deleted(ws):
+    ws_dir, conn = ws
+    project_session(conn, ws_dir, "s1", [
+        _ev("2026-11-22T10:00:00Z", "user", "turn one"),
+        _ev("2026-11-22T10:00:05Z", "assistant", "answer one"),
+        _ev("2026-11-22T10:01:00Z", "user", "turn two"),
+        _ev("2026-11-22T10:01:05Z", "assistant", "answer two")], node="h")
+    project_session(conn, ws_dir, "s1", [
+        _frame("2026-11-22T10:01:05Z",
+               "2026-11-22T10:01:00Z", "2026-11-22T10:01:05Z")], node="h")
+    msgs = session_messages(conn, "s1")
+    assert [m["text"] for m in msgs] == ["turn one", "answer one"]
+    assert list_sessions(conn) == ["s1"]
+    view = _view(conn, "session:s1")
+    assert view["session:title"] == "turn one"
+    assert view["session:last_active"] == "2026-11-22T10:00:05Z"
+
+
+def test_all_msgs_covered_drops_session(ws):
+    ws_dir, conn = ws
+    project_session(conn, ws_dir, "s1", [
+        _ev("2026-11-22T10:00:00Z", "user", "only turn")], node="h")
+    project_session(conn, ws_dir, "s1", [
+        _frame("2026-11-22T10:00:00Z",
+               "2026-11-22T10:00:00Z", "2026-11-22T10:00:00Z")], node="h")
+    assert session_messages(conn, "s1") == []
+    assert list_sessions(conn) == []
+
+
+def test_covering_frame_retires_earlier_frame(ws):
+    ws_dir, conn = ws
+    project_session(conn, ws_dir, "s1", [
+        _ev("2026-11-22T10:00:00Z", "user", "a"),
+        _frame("2026-11-22T10:00:05Z",
+               "2026-11-22T10:00:05Z", "2026-11-22T10:00:05Z",
+               kind="compaction", content="first summary")], node="h")
+    frame1 = [e for (e,) in conn.execute(
+        "SELECT e FROM v_current WHERE a = 'frame:session'")][0]
+    # a wider frame whose span contains frame1's ts retires it, and its
+    # summary msg (msg:frame_id -> frame1) is superseded with it
+    project_session(conn, ws_dir, "s1", [
+        _frame("2026-11-22T10:01:00Z",
+               "2026-11-22T10:00:00Z", "2026-11-22T10:01:00Z",
+               kind="compaction", content="wider summary")], node="h")
+    assert _view(conn, frame1)["frame:retired"] == "true"
+    msgs = session_messages(conn, "s1")
+    assert [m["text"] for m in msgs] == ["wider summary"]
+
+
+def test_deleted_state_ships_to_peer(tmp_path):
+    a = connect(tmp_path / "a.db")
+    b = connect(tmp_path / "b.db")
+    (tmp_path / "wa").mkdir()
+    (tmp_path / "wb").mkdir()
+    # host B registers the domain before remote ops land (WsSync does this
+    # on open): ingest refuses unknown attrs.
+    ensure_domain(b)
+    events = [
+        _ev("2026-11-22T10:00:00Z", "user", "turn one"),
+        _ev("2026-11-22T10:00:05Z", "assistant", "answer one"),
+        _ev("2026-11-22T10:01:00Z", "user", "turn two"),
+        _frame("2026-11-22T10:01:00Z",
+               "2026-11-22T10:01:00Z", "2026-11-22T10:01:00Z")]
+    project_session(a, tmp_path / "wa", "s1", events, node="hostA")
+    _ship(a, b, "hostA")
+    # Host B only ever saw ops: the covered "turn two" must not resurrect.
+    assert [m["text"] for m in session_messages(b, "s1")] == [
+        "turn one", "answer one"]
+    assert _view(b, "session:s1")["session:title"] == "turn one"
+
+
+def test_persona_and_user_projected(ws):
+    ws_dir, conn = ws
+    ev = _ev("2026-11-22T10:00:00Z", "user", "hi")
+    ev.metadata["persona"] = "default"
+    ev.metadata["user"] = "5712"
+    ev.metadata["alias"] = "telegram:5712"
+    project_session(conn, ws_dir, "s1", [ev], node="h")
+    view = _view(conn, message_entity("s1", "2026-11-22T10:00:00Z", "user", "hi"))
+    assert view["msg:persona"] == "default"
+    # display alias is the portable handle; raw id only when no alias
+    assert view["msg:user"] == "telegram:5712"
+
+
+def test_host_local_paths_redacted_from_synced_text(ws):
+    ws_dir, conn = ws
+    tdir = ws_dir / "traces"
+    tdir.mkdir()
+    leak = f"log at {ws_dir}\\run\\x.txt"
+    project_session(conn, ws_dir, "s1", [
+        _ev("2026-11-22T10:00:00Z", "user", leak)], node="h",
+        traces_dir=tdir)
+    text = session_messages(conn, "s1")[0]["text"]
+    assert str(ws_dir) not in text
+    assert "~" in text

@@ -325,6 +325,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Isolation backend (default: AGENTS_WS_ISOLATION or local)")
     ws_create.add_argument("--image", default="", help="Container image (isolation=container)")
     ws_sub.add_parser("list", help="List workspaces")
+    ws_share = ws_sub.add_parser(
+        "share", help="Share a workspace with a paired device (klanker#145)")
+    ws_share.add_argument("id", help="Workspace id")
+    ws_share.add_argument(
+        "--to", required=True,
+        help="Target channel device id (hub /v1/hub/devices)")
+    ws_share.add_argument(
+        "--hub", default="",
+        help="Scope to one paired hub's own device id (hubs.json)")
+    ws_unshare = ws_sub.add_parser(
+        "unshare", help="Revoke a device's access to a workspace")
+    ws_unshare.add_argument("id", help="Workspace id")
+    ws_unshare.add_argument("--to", default="", help="Device id to revoke")
+    ws_unshare.add_argument(
+        "--hub", default="",
+        help="Scope to one paired hub's own device id (hubs.json)")
+    ws_members = ws_sub.add_parser(
+        "members", help="Show ws sync policy, owner and member devices")
+    ws_members.add_argument("id", help="Workspace id")
+    ws_invite = ws_sub.add_parser(
+        "invite", help="Mint a ws-scoped pair code/QR on the hub")
+    ws_invite.add_argument("id", help="Workspace id")
+    ws_invite.add_argument("--hub", default="", help="Hub id (hubs.json)")
+    ws_invite.add_argument(
+        "--json", action="store_true",
+        help="Machine output — required on non-TTY stdout")
+    ws_join = ws_sub.add_parser(
+        "join", help="Redeem a ws invite (pairs device + grants ws)")
+    ws_join.add_argument("invite", help="Invite code or pair URL")
+    ws_join.add_argument("--label", default="", help="Device label")
 
     # 4. Run background cron / scheduled flows
     cron_p = sub.add_parser("cron", help="Run scheduled care flows via harness executor")
@@ -404,7 +434,6 @@ def build_parser() -> argparse.ArgumentParser:
     remote_add.add_argument("name", help="Display name (also the default id slug)")
     remote_add.add_argument("url", help="Remote base URL (http/https)")
     remote_add.add_argument("--id", default="", help="Explicit remote id slug")
-    remote_add.add_argument("--token", default="", help="Remote token (prefer --token-stdin)")
     remote_add.add_argument("--token-stdin", action="store_true", help="Read token from stdin")
     remote_add.add_argument("--prompt", action="store_true", help="Ask for the token via getpass")
     remote_rm = remote_sub.add_parser("rm", help="Remove a remote and its vault token")
@@ -415,8 +444,35 @@ def build_parser() -> argparse.ArgumentParser:
     remote_pair.add_argument("code", nargs="?", default="", help="One-time pairing code")
     remote_pair.add_argument("--id", default="", help="Explicit remote id slug")
 
+    gate_p = sub.add_parser("_session-gate", help=argparse.SUPPRESS)
+    gate_p.add_argument("session", help="Session id")
+    gate_p.add_argument("tool", nargs="?", default="", help="First host-local tool")
+
+    ses_p = sub.add_parser(
+        "session", help="Session host binding (klanker#148)")
+    ses_sub = ses_p.add_subparsers(dest="session_cmd")
+    ses_show = ses_sub.add_parser("show", help="Show session:host binding state")
+    ses_show.add_argument("id", help="Session id")
+    ses_sw = ses_sub.add_parser(
+        "switch", help="Move a session to another host (checkpoint first)")
+    ses_sw.add_argument("id", help="Session id")
+    ses_sw.add_argument("host", help="Target channel device id")
+    ses_sw.add_argument(
+        "--force", action="store_true",
+        help="Switch even with wip_unpushed on the old host")
+    ses_rm = ses_sub.add_parser(
+        "rm", help="Unbind a session and drop its session worktree")
+    ses_rm.add_argument("id", help="Session id")
+    ses_rm.add_argument(
+        "--force", action="store_true",
+        help="Remove the worktree even when dirty")
+
     pair_p = sub.add_parser("pair", help="Create a single-use 60s pairing code/QR for Web or remote CLI")
     pair_p.add_argument("--remote", action="store_true", help="Mint a remote CLI pairing code")
+    pair_p.add_argument(
+        "--ws", default="",
+        help="Shortcut: mint a workspace invite on the hub (klanker workspace invite)")
+    pair_p.add_argument("--hub", default="", help="Hub id for --ws (hubs.json)")
     pair_p.add_argument("--ttl", type=int, default=60, help="Validity window in seconds (15-120)")
 
     return parser
@@ -441,6 +497,8 @@ KNOWN_SUBCOMMANDS = {
     "evidence",
     "persona",
     "workspace",
+    "session",
+    "_session-gate",
     "import",
     "migrate",
     "bg",
@@ -586,15 +644,26 @@ def main(argv: list[str] | None = None) -> int:
         from .migrate import migrate_to_store
 
         ws_id = getattr(args, "workspace", "") or ""
+        ws_dir = None
         if ws_id:
-            from agents_workspace import Host
+            cand = Path(ws_id).expanduser()
+            if cand.is_dir():
+                # explicit dir: treat it as the workspace dir itself
+                ws_dir = cand.resolve()
+            else:
+                from agents_workspace import Host
 
-            ws = Host.from_env().workspace(ws_id)
+                try:
+                    ws_dir = Host.from_env().workspace(ws_id).dir
+                except (ValueError, OSError) as exc:
+                    print(f"Error: unknown workspace: {ws_id} ({exc})",
+                          file=sys.stderr)
+                    return 2
         else:
-            ws = Workspace.from_env()
+            ws_dir = Workspace.from_env().dir
         try:
             stats = migrate_to_store(
-                ws.dir, archive=bool(args.archive),
+                ws_dir, archive=bool(args.archive),
                 memory_max_bytes=getattr(args, "memory_max_bytes", None))
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -635,10 +704,30 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"workspace {ws.id} created")
             return 0
+        if cmd in ("share", "unshare", "members", "invite", "join"):
+            from . import wshare
+
+            return {
+                "share": wshare.cmd_ws_share,
+                "unshare": wshare.cmd_ws_unshare,
+                "members": wshare.cmd_ws_members,
+                "invite": wshare.cmd_ws_invite,
+                "join": wshare.cmd_ws_join,
+            }[cmd](args)
         for w in host.list_workspaces():
             iso = getattr(w, "isolation", "") or "local"
             print(f"{w.id}  {w.label or ''}  isolation={iso}")
         return 0
+
+    elif args.command == "_session-gate":
+        from .session import cmd_session_gate
+
+        return cmd_session_gate(args)
+
+    elif args.command == "session":
+        from .session import cmd_session
+
+        return cmd_session(args)
 
     elif args.command == "doctor":
         from .doctor import run as doctor_run
@@ -772,15 +861,71 @@ def main(argv: list[str] | None = None) -> int:
         _sync_rt = None
         try:
             from agents_relay import channel as _ch, channel_client as _cc
+            from agents_relay import http_adapter as _ha
 
-            from .wssync import SyncRuntime, sync_workspaces
+            from .wssync import (
+                SyncRuntime, _execution_lease_sec, _set_runtime,
+                approval_apply, approval_mirror_decided,
+                approval_mirror_pending, sync_workspaces,
+                ws_grant_apply, ws_invite_auth)
 
             _sync_rt = SyncRuntime()
+            _set_runtime(_sync_rt)
             _ws_map = sync_workspaces()
             _sync_rt.attach_hub(_ch.hub(), _ws_map, str(host.host_id()))
             _cc.on_client(lambda c: _sync_rt.attach_client(
                 c, [(ws_id, e["dir"]) for ws_id, e in _ws_map.items()]))
+            _cc.on_client(
+                lambda c: setattr(c, "on_approval", approval_apply))
             _sync_rt.start()
+            if hasattr(_ha, "ws_invite_auth"):
+                _ha.ws_invite_auth = ws_invite_auth
+                _ha.ws_grant_hook = ws_grant_apply
+            if hasattr(_ha, "remote_turn_dispatch"):
+                from .remote_dispatch import (
+                    remote_query_dispatch, remote_turn_dispatch,
+                    run_done_release, turn_lease_guard,
+                    turn_lease_release)
+
+                _ha.remote_turn_dispatch = remote_turn_dispatch
+                _ha.remote_query_dispatch = remote_query_dispatch
+                _ha.turn_lease_hook = turn_lease_guard
+                _ha.turn_lease_release_hook = turn_lease_release
+                from agents_relay import leases as _leases, web as _web
+
+                _leases.lease_ttl_fn = lambda ws_id: (
+                    _execution_lease_sec(ws_id))
+                _web.run_done_hook = run_done_release
+            if hasattr(_ch.hub(), "set_approval_handler"):
+                from agents_relay import approvals as _appr
+
+                # Hub invokes fn(device_id, kind, payload); the apply
+                # contract is (kind, payload, device_id=…) — adapt at
+                # the wire so the authenticated sender id feeds the
+                # member ACL (klanker#155).
+                _ch.hub().set_approval_handler(
+                    lambda dev, kind, p: approval_apply(
+                        kind, p, device_id=dev))
+                _appr.on_pending_fn = approval_mirror_pending
+                _appr.on_decided_fn = approval_mirror_decided
+            # live management surface (agents-relay#43): hub links,
+            # session host switch, policy reconcile — all wired to the
+            # running SyncRuntime, no restart needed.
+            from . import mgmt as _mgmt
+            from agents_relay import http_adapter as _http
+            from agents_relay import workspaces as _wsmod
+
+            _http.hub_links_fn = _mgmt.hub_links
+            _http.hub_connect_fn = _mgmt.hub_connect
+            _http.hub_disconnect_fn = _mgmt.hub_disconnect
+            _http.session_host_switch_fn = _mgmt.session_host_switch
+            _wsmod.ws_policy_changed_fn = _mgmt.ws_policy_changed
+            # First host-local tool in a turn subprocess binds
+            # session:host into the ws store (klanker#145 R6).
+            os.environ.setdefault(
+                "AGENTS_SESSION_BIND_CMD",
+                f'"{sys.executable}" -m klanker _session-gate '
+                "{session} {tool}")
         except Exception as exc:  # noqa: BLE001
             log.warning("workspace sync unavailable: %s", exc)
 

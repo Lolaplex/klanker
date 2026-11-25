@@ -87,6 +87,16 @@ def system_from_argv(argv: list[str]) -> str:
     return ""
 
 
+def session_from_argv(argv: list[str]) -> str:
+    """Return the ``--session`` value from a ``runner.loop`` argv, if present."""
+    for index, arg in enumerate(argv):
+        if arg == "--session" and index + 1 < len(argv):
+            return argv[index + 1].strip()
+        if arg.startswith("--session="):
+            return arg.split("=", 1)[1].strip()
+    return ""
+
+
 def main(argv: list[str] | None = None) -> int:
     from pathlib import Path
 
@@ -125,6 +135,16 @@ def main(argv: list[str] | None = None) -> int:
     channel = channel_from_argv(args)
     if channel:
         os.environ["KLANKER_CHANNEL"] = channel
+    # Gate env is armed unconditionally: the in-process hook covers this
+    # process, and delegate/persona children read the env template — a
+    # missing var runs their first host-local tool unbound (klanker#155).
+    os.environ.setdefault(
+        "AGENTS_SESSION_BIND_CMD",
+        f'"{sys.executable}" -m klanker _session-gate '
+        "{session} {tool}")
+    _sess = session_from_argv(args)
+    if _sess:
+        os.environ.setdefault("AGENTS_PARENT_SESSION", _sess)
     apply_approval_env(telegram=False)
     try:
         from runner.loop import main as loop_main

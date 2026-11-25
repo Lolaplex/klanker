@@ -141,6 +141,16 @@ class Nucleus:
                     provider_key_env=key_env,
                 )
             )
+            # Bind gate must be armed even when this turn carries no
+            # session of its own: a delegate/persona CHILD turn still
+            # binds via AGENTS_PARENT_SESSION, and a missing env var
+            # would run its first host-local tool unbound (klanker#155).
+            env.setdefault(
+                "AGENTS_SESSION_BIND_CMD",
+                f'"{sys.executable}" -m klanker _session-gate '
+                "{session} {tool}")
+            if session:
+                env.setdefault("AGENTS_PARENT_SESSION", str(session))
             if isolation == "container":
                 cmd = to_container_argv(ws, cmd)
                 env = to_container_env(ws, env)
