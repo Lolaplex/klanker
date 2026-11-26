@@ -163,7 +163,7 @@ export function ProviderModelPicker({
               }`}
             >
               <span className="w-4 shrink-0 text-center">{!active && <Check className="w-3.5 h-3.5" />}</span>
-              <span>instance default</span>
+              <span>workspace default</span>
             </button>
 
             {stale && (

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Terminal, Trash2, ArrowUp, Bot, User, Square, Paperclip, X } from "lucide-react";
+import { ArrowUp, Bot, User, Square, Paperclip, X } from "lucide-react";
 import { shouldSubmitOnEnter, focusWithoutScroll } from "../chatUi";
 import { chatToJson, chatToMarkdown, downloadText, exportStem } from "../chatExport";
 import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow } from "../types/klanker";
@@ -30,7 +30,6 @@ interface ChatConsoleProps {
   input: string;
   onInput: (v: string) => void;
   onSendMessage: (msg: string, attachments?: OutAttachment[]) => void;
-  onClearMessages: () => void;
   onStop: () => void;
   isLoading: boolean;
   /** A turn on another device/channel is still running for this session. */
@@ -73,7 +72,6 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   input,
   onInput,
   onSendMessage,
-  onClearMessages,
   onStop,
   isLoading,
   remoteActive,
@@ -207,16 +205,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
   return (
     <div className="flex-1 flex flex-col bg-[#000000] overflow-hidden font-mono text-xs">
-      {/* Console Top Toolbar */}
-      <div className="min-h-11 bg-[#0a0a0a] border-b border-[#262626] flex items-center justify-between px-3 text-[#737373] select-none touch-none">
-        <div className="flex min-w-0 items-center space-x-2">
-          <Terminal className="w-3.5 h-3.5 shrink-0 text-white" />
-          <span className="font-semibold text-white tracking-wider uppercase truncate">
-            {headlineTitle}
-            <span className="text-[#525252] font-normal normal-case"> · {sessionText}</span>
-          </span>
-        </div>
-
+      {/* Console Top Toolbar — right-side controls only. The workspace >
+          persona · chat breadcrumb already lives in the app Header; a
+          second left-side copy here was pure duplication (klanker#158 U03). */}
+      <div className="min-h-11 bg-[#0a0a0a] border-b border-[#262626] flex items-center justify-end px-3 text-[#737373] select-none touch-none">
         <div className="flex items-center space-x-2">
           {messages.length > 0 && (
             <select
@@ -226,7 +218,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
                 e.target.value = "";
                 if (fmt !== "md" && fmt !== "json") return;
                 const doc = {
-                  agent: instance.name,
+                  agent: headlineTitle,
                   speaker: displaySpeaker,
                   session: exportSessionLabel,
                   messages,
@@ -268,20 +260,12 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             <button
               onClick={onStop}
               title="Stop this run"
-              className="inline-flex h-11 items-center gap-1 px-3 border border-[#262626] rounded hover:border-white hover:text-white transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-1.5 border border-[#262626] rounded-md hover:border-white hover:text-white transition-colors"
             >
               <Square className="w-3 h-3" />
               <span>stop</span>
             </button>
           )}
-          <button
-            onClick={onClearMessages}
-            title="Clear Console"
-            className="inline-flex h-11 w-11 items-center justify-center hover:text-white transition-colors"
-            aria-label="Clear console"
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
         </div>
       </div>
 
@@ -360,7 +344,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             </div>
             <div className="bg-[#0a0a0a] border border-[#262626] rounded p-3 text-[#737373] flex items-center space-x-2">
               <span className="w-2 h-2 bg-white rounded-full animate-ping"></span>
-              <span>{streamStatus || "Streaming tokens from harness..."}</span>
+              <span>{streamStatus || "Working..."}</span>
             </div>
           </div>
         )}
@@ -417,7 +401,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               value={input}
               onChange={(e) => onInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`Message ${instance.name}...`}
+              placeholder={`Message ${displaySpeaker}...`}
               className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-white outline-none resize-none overscroll-y-contain font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
             />
             <button
