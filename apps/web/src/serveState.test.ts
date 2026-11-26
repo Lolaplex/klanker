@@ -2,7 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 // Node --test has no DOM: stub the globals api.ts touches at call time.
-(globalThis as any).window = { location: { hostname: "localhost" } };
+// These tests exercise the DESKTOP serve-discovery logic — caps.spawn is
+// computed at import time, so the fake Tauri runtime must be in place
+// before the module loads (in a browser ensureLocalServePort is a no-op).
+(globalThis as any).window = {
+  location: { hostname: "localhost" },
+  __TAURI__: {
+    core: {
+      invoke: async (cmd: string) => (cmd === "serve_status" ? {} : null),
+    },
+  },
+};
 (globalThis as any).localStorage = {
   getItem: () => null,
   setItem: () => {},

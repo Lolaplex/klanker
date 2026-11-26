@@ -325,7 +325,11 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
               <div className="flex flex-col gap-1">
                 <span className={labelClass}>repos — synced checkout map</span>
                 {repos.map((r, i) => (
-                  <div key={r.slug || `row-${i}`} className="flex flex-col gap-1 border border-[#1a1a1a] rounded p-2">
+                  // Index key on purpose: rows are never reordered and every
+                  // input is controlled. Keying on `r.slug` remounted the card
+                  // the moment the first slug character was typed (empty slug
+                  // fell back to `row-N`), stealing focus mid-keystroke.
+                  <div key={i} className="flex flex-col gap-1 border border-[#1a1a1a] rounded p-2">
                     <div className="flex gap-1">
                       <input
                         className={inputClass}

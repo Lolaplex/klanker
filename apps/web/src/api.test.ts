@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { api } from "./services/api.ts";
+import { api, ensureLocalServePort, setAuthExpiredHandler } from "./services/api.ts";
 import type { KlankerInstance } from "./types/klanker.ts";
 
 // Node host: no __TAURI__ → caps.keyring=false → every hub method takes
 // the same-origin fetch path, so a fetch stub covers the whole surface.
+
+// Browser-ish window for localInstance() — never Tauri.
+Object.defineProperty(globalThis, "window", {
+  value: { location: { hostname: "hub.example.com" } },
+  configurable: true,
+});
 
 const lsStore = new Map<string, string>();
 const lsStub = {
@@ -262,6 +268,137 @@ test("listKlankers keeps via=channel + device_id and never POSTs /v1/remotes", a
     assert.equal(relay.device_id, undefined);
     // No auto-migration: the poll issues only the single GET.
     assert.deepEqual(calls.map((c) => `${c.init?.method || "GET"} ${c.url}`), ["GET /v1/remotes"]);
+  } finally {
+    restore();
+  }
+});
+
+test("listKlankers always puts the same-origin local instance first (web herd)", async () => {
+  reset();
+  const { calls, restore } = stubFetch(async (url, init) => {
+    if (url === "/v1/remotes" && !init?.method) {
+      return jsonRes({
+        remotes: [
+          { id: "vps", base_url: "https://vps.example:8787", label: "VPS", has_secret: true },
+        ],
+      });
+    }
+    return jsonRes({ error: "unexpected" }, 500);
+  });
+  try {
+    const list = await api.listKlankers();
+    // The serving relay IS the local instance — present no matter how many
+    // remotes are mounted. herd["local"] undefined was the empty-sidebar bug.
+    assert.equal(list[0].id, "local");
+    assert.equal(list[0].kind, "local");
+    assert.equal(list[0].endpoint?.base_url, "");
+    assert.ok(list.some((i) => i.id === "vps"));
+    // Synthetic entry is never persisted — still a single read-only GET.
+    assert.deepEqual(calls.map((c) => `${c.init?.method || "GET"} ${c.url}`), ["GET /v1/remotes"]);
+  } finally {
+    restore();
+  }
+});
+
+test("listKlankers keeps local first even when /v1/remotes is unreachable", async () => {
+  reset();
+  const { restore } = stubFetch(async () => jsonRes({ error: "boom" }, 500));
+  try {
+    const list = await api.listKlankers();
+    assert.equal(list[0].id, "local");
+    assert.equal(list[0].kind, "local");
+  } finally {
+    restore();
+  }
+});
+
+test("ensureLocalServePort never probes loopback ports in a browser context", async () => {
+  reset();
+  const { calls, restore } = stubFetch(async () => jsonRes({ host_id: "h" }));
+  try {
+    // A browser never has a managed serve: no 127.0.0.1:8787 spam, ever.
+    const port = await ensureLocalServePort();
+    assert.equal(port, null);
+    assert.equal(calls.length, 0);
+  } finally {
+    restore();
+  }
+});
+
+test("401 on a same-origin API call fires the auth-expired handler", async () => {
+  reset();
+  let fired = 0;
+  setAuthExpiredHandler(() => {
+    fired++;
+  });
+  const { restore } = stubFetch(async () => jsonRes({ error: "unauthorized" }, 401));
+  try {
+    const { localInstance } = await import("./services/api.ts");
+    await assert.rejects(api.listWorkspaces(localInstance()));
+    assert.ok(fired >= 1, "auth-expired handler must fire on a dead session cookie");
+  } finally {
+    setAuthExpiredHandler(null);
+    restore();
+  }
+});
+
+test("401 on /v1/auth/login never fires the auth-expired handler", async () => {
+  reset();
+  let fired = 0;
+  setAuthExpiredHandler(() => {
+    fired++;
+  });
+  const { restore } = stubFetch(async () => jsonRes({ error: "bad token" }, 401));
+  try {
+    const { localInstance } = await import("./services/api.ts");
+    await assert.rejects(api.login(localInstance(), "wrong-token"));
+    assert.equal(fired, 0);
+  } finally {
+    setAuthExpiredHandler(null);
+    restore();
+  }
+});
+
+test("401 through the remote proxy never fires the auth-expired handler", async () => {
+  reset();
+  let fired = 0;
+  setAuthExpiredHandler(() => {
+    fired++;
+  });
+  const { restore } = stubFetch(async () => jsonRes({ error: "unauthorized" }, 401));
+  try {
+    const mounted = {
+      id: "vps",
+      kind: "remote",
+      via: "relay",
+      endpoint: { base_url: "https://vps.example:8787" },
+    } as KlankerInstance;
+    await assert.rejects(api.listWorkspaces(mounted));
+    assert.equal(fired, 0);
+  } finally {
+    setAuthExpiredHandler(null);
+    restore();
+  }
+});
+
+test("401 HTML error bodies never surface tags in thrown messages", async () => {
+  reset();
+  const html =
+    '<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n' +
+    "<html><head><title>Error response</title></head><body><h1>Error response</h1>" +
+    "<p>Error code: 401</p><p>Message: unauthorized.</p></body></html>";
+  const { restore } = stubFetch(
+    async () =>
+      new Response(html, { status: 401, headers: { "Content-Type": "text/html" } })
+  );
+  try {
+    const { localInstance } = await import("./services/api.ts");
+    const err = await api.listWorkspaces(localInstance()).then(
+      () => new Error("should have thrown"),
+      (e) => e as Error
+    );
+    assert.equal(/<[^>]+>/.test(err.message), false, `tags leaked: ${err.message}`);
+    assert.match(err.message, /session expired/i);
   } finally {
     restore();
   }

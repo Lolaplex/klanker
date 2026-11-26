@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KlankerInstance, ProcessStatus } from "../types/klanker";
-import { api, caps, ensureLocalServePort, localInstance, rememberSecret, secretAccount, serveToProcess, setLocalServePort } from "../services/api";
+import { api, caps, ensureLocalServePort, localInstance, rememberSecret, secretAccount, serveToProcess, setAuthExpiredHandler, setLocalServePort } from "../services/api";
 import type { AuthState } from "../components/AuthGate";
 
 /**
@@ -158,13 +158,22 @@ export function useInstances(args: {
     };
   }, []);
 
+  // A dead session cookie in a browser context drops the whole UI back to
+  // the AuthGate — detected inside api.ts on any same-origin 401.
+  useEffect(() => {
+    setAuthExpiredHandler(() => setAuth("needed"));
+    return () => setAuthExpiredHandler(null);
+  }, []);
+
   // Health poll every 8s — first repoint the managed serve silently when
   // the last-known port answers with a foreign host_id or nothing at all.
+  // The repoint probe is desktop-only: a browser has no managed serve —
+  // its local instance is the same-origin relay, probed per-instance below.
   useEffect(() => {
     let stop = false;
     const tick = async () => {
       const hasLocal = instancesRef.current.some((i) => i.kind === "local");
-      if (hasLocal) {
+      if (caps.spawn && hasLocal) {
         const port = await ensureLocalServePort();
         if (stop) return;
         if (port === null) {
