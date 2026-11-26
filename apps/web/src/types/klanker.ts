@@ -29,6 +29,9 @@ export interface ProviderRow {
   /** ACP agent: auth methods advertised at initialize + probe auth flag. */
   auth_methods?: string[];
   auth_required?: boolean;
+  /** Server-side secret vault holds the row's key_env (U01 contract —
+   *  never the secret itself, just the configured flag). */
+  key_configured?: boolean;
   /** Probe/config error reported by the relay (e.g. missing agent command). */
   error?: string;
 }

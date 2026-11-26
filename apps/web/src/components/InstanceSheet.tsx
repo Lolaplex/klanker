@@ -1,9 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Trash2, FolderOpen, LogIn, LogOut, X } from "lucide-react";
-import { JobRow, KlankerInstance, ProcessStatus } from "../types/klanker";
+import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { SecretField } from "./SecretField";
-import { TracesPanel } from "./TracesPanel";
-import { ProvidersPanel } from "./ProvidersPanel";
 import { api } from "../services/api";
 import { dialogs } from "../services/dialogs";
 
@@ -12,12 +10,6 @@ interface InstanceSheetProps {
   status: ProcessStatus | null;
   onSave: (updated: KlankerInstance) => void | Promise<void>;
   onDelete: (id: string) => void;
-  /** Job id is its goal-session id — open it as a chat. */
-  onOpenSession?: (ws: string, persona: string, session: string) => void;
-  /** Active workspace selection — scopes traces reads. */
-  activeWorkspace?: string;
-  /** Fired after provider add/delete so the chat picker refetches. */
-  onProvidersChanged?: () => void;
   onClose: () => void;
 }
 
@@ -29,9 +21,6 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   status,
   onSave,
   onDelete,
-  onOpenSession,
-  activeWorkspace = "",
-  onProvidersChanged,
   onClose,
 }) => {
   const [formData, setFormData] = useState<KlankerInstance>(instance);
@@ -40,16 +29,6 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   const [loginNote, setLoginNote] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState(false);
   const [authed, setAuthed] = useState<boolean | null>(null);
-  const [tab, setTab] = useState<"config" | "traces" | "jobs" | "providers">("config");
-  const [jobWs, setJobWs] = useState("");
-  const [jobPersona, setJobPersona] = useState("");
-  const [jobGoal, setJobGoal] = useState("");
-  const [jobList, setJobList] = useState<JobRow[]>([]);
-  const [jobBusy, setJobBusy] = useState(false);
-  const [jobNote, setJobNote] = useState<string | null>(null);
-  const [newPersona, setNewPersona] = useState("");
-  const [workspaces, setWorkspaces] = useState<{ id: string; label?: string }[]>([]);
-  const [personas, setPersonas] = useState<{ id: string; name?: string }[]>([]);
 
   useEffect(() => {
     setFormData(instance);
@@ -57,60 +36,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
     setLoginNote(null);
     setAuthed(null);
     void api.authStatus(instance).then((s) => setAuthed(s.authenticated)).catch(() => setAuthed(null));
-    void api.listWorkspaces(instance).then(setWorkspaces).catch(() => undefined);
   }, [instance.id, instance.updated_at]);
-
-  // Workspace ids come from the relay; instance.workspace is the workdir
-  // boundary (a filesystem path), never a ws id.
-  const firstWs = workspaces[0]?.id || "";
-  const jobWsEff = jobWs || firstWs;
-  const jobPersonaEff = jobPersona || (formData.persona || "").trim() || personas[0]?.id || "";
-
-  useEffect(() => {
-    const ws = tab === "jobs" ? jobWsEff : firstWs;
-    if (!ws) {
-      setPersonas([]);
-      return;
-    }
-    void api.listPersonas(instance, ws).then(setPersonas).catch(() => setPersonas([]));
-  }, [instance.id, firstWs, tab, jobWsEff]);
-
-  useEffect(() => {
-    if (tab !== "jobs" || !jobWsEff) return;
-    let alive = true;
-    const load = () =>
-      api
-        .listJobs(instance, jobWsEff, jobPersonaEff)
-        .then((rows) => alive && setJobList(rows))
-        .catch(() => undefined);
-    void load();
-    const t = setInterval(load, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [tab, instance.id, jobWsEff, jobPersonaEff]);
-
-  const submitJob = async () => {
-    const goal = jobGoal.trim();
-    if (!goal || !jobWsEff || !jobPersonaEff) return;
-    setJobBusy(true);
-    setJobNote(null);
-    try {
-      const job = await api.createJob(instance, {
-        workspace: jobWsEff,
-        persona: jobPersonaEff,
-        goal,
-      });
-      setJobNote(`job ${job.id || ""} queued`);
-      setJobGoal("");
-      setJobList(await api.listJobs(instance, jobWsEff, jobPersonaEff));
-    } catch (e) {
-      setJobNote(e instanceof Error ? e.message : String(e));
-    } finally {
-      setJobBusy(false);
-    }
-  };
 
   const writeForm = (next: KlankerInstance) => {
     draftRef.current = next;
@@ -219,22 +145,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
             {status?.state === "running" ? "up" : "down"}
             {!local && !desktop && authed !== null && <span className="ml-2">{authed ? "· authed" : "· not authed"}</span>}
           </span>
-          <div className="flex bg-[#141414] border border-[#262626] rounded-full p-1 gap-0.5">
-            {(["config", "providers", "traces", "jobs"] as const).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTab(t)}
-                className={`px-3.5 py-1.5 md:py-1 min-h-9 md:min-h-0 rounded-full transition-colors ${
-                  tab === t
-                    ? "bg-white text-black"
-                    : "text-[#a3a3a3] hover:text-white"
-                }`}
-              >
-                {t}
-              </button>
-            ))}
-          </div>
+
         </div>
         {saveNote && (
           <div className="shrink-0 px-4 py-1 border-b border-[#262626] text-[10px] text-[#737373] truncate">
@@ -242,116 +153,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
           </div>
         )}
 
-        {tab === "providers" ? (
-          <ProvidersPanel instance={instance} onChanged={onProvidersChanged} />
-        ) : tab === "traces" ? (
-          <div className="flex-1 min-h-0 overflow-hidden">
-            <TracesPanel instance={instance} workspace={activeWorkspace} />
-          </div>
-        ) : tab === "jobs" ? (
-          <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Workspace</label>
-                <select value={jobWsEff} onChange={(e) => setJobWs(e.target.value)} style={{ colorScheme: "dark" }} className={inputClass}>
-                  {!jobWsEff && <option value="">(pick)</option>}
-                  {workspaces.map((w) => (
-                    <option key={w.id} value={w.id}>{w.label || w.id}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Persona</label>
-                <select value={jobPersonaEff} onChange={(e) => setJobPersona(e.target.value)} style={{ colorScheme: "dark" }} className={inputClass}>
-                  {personas.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name || p.id}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            {personas.length === 0 && jobWsEff && (
-              <div className="flex gap-2">
-                <input
-                  value={newPersona}
-                  onChange={(e) => setNewPersona(e.target.value)}
-                  placeholder="new persona id"
-                  className={inputClass}
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const id = newPersona.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-");
-                    if (!id) return;
-                    void api.createPersona(instance, jobWsEff, id).then(() => {
-                      setNewPersona("");
-                      setJobPersona(id);
-                      return api.listPersonas(instance, jobWsEff).then(setPersonas);
-                    }).catch((e) => setJobNote(e instanceof Error ? e.message : String(e)));
-                  }}
-                  className="px-4 py-3 md:py-2.5 bg-white text-black rounded-xl text-[11px] shrink-0"
-                >
-                  create
-                </button>
-              </div>
-            )}
-            <div>
-              <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Goal</label>
-              <textarea
-                rows={3}
-                value={jobGoal}
-                onChange={(e) => setJobGoal(e.target.value)}
-                placeholder="e.g. fix klanker#44: add delete buttons to the tree"
-                className={`${inputClass} resize-none`}
-              />
-              <button
-                type="button"
-                onClick={() => void submitJob()}
-                disabled={jobBusy || !jobGoal.trim() || !jobWsEff || !jobPersonaEff}
-                className="mt-2 w-full sm:w-auto px-4 py-3 md:py-2.5 bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded-xl text-[11px] transition-colors"
-              >
-                {jobBusy ? "queueing…" : "Run job"}
-              </button>
-              {jobNote && <p className="mt-1 text-[11px] text-[#737373]">{jobNote}</p>}
-            </div>
-            <div className="border-t border-[#262626] pt-3 space-y-2">
-              {jobList.length === 0 ? (
-                <div className="flex flex-col items-center py-6 text-[#525252]">
-                  <div className="w-9 h-9 border border-[#262626] rounded-full flex items-center justify-center mb-2 text-[11px]">∅</div>
-                  <p className="text-[11px]">no jobs in this workspace</p>
-                </div>
-              ) : (
-                jobList.map((j) => (
-                  <button
-                    key={j.id}
-                    type="button"
-                    onClick={() => onOpenSession?.(jobWsEff, jobPersonaEff, j.id)}
-                    title={onOpenSession ? "Open the job's chat" : undefined}
-                    className={`w-full text-left border border-[#262626] bg-[#101010] rounded-xl p-3 ${
-                      onOpenSession ? "hover:border-[#525252] cursor-pointer" : ""
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="text-white text-[11px] leading-snug break-words min-w-0">{j.goal || j.id}</span>
-                      <span
-                        className={`shrink-0 px-2 py-0.5 rounded-full border text-[10px] ${
-                          j.status === "done"
-                            ? "border-white text-white"
-                            : j.status === "failed" || j.status === "stopped"
-                            ? "border-[#525252] text-[#a3a3a3] line-through"
-                            : "border-[#262626] text-[#a3a3a3] animate-pulse"
-                        }`}
-                      >
-                        {j.status || "?"}
-                      </span>
-                    </div>
-                    {j.result && <div className="mt-1.5 text-[11px] text-[#737373] line-clamp-3">{j.result}</div>}
-                    <div className="mt-1.5 text-[10px] text-[#3f3f3f] truncate">{j.id}</div>
-                  </button>
-                ))
-              )}
-            </div>
-          </div>
-        ) : (
+        {(
           <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>

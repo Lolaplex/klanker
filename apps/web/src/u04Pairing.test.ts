@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { PairModal, PairMintedBlock } from "./components/PairModal.tsx";
 import { DevicesPanel } from "./components/DevicesPanel.tsx";
 import { Header } from "./components/Header.tsx";
-import { WorkspaceSettingsModal } from "./components/WorkspaceSettingsModal.tsx";
+import { WorkspaceModal } from "./components/WorkspaceModal.tsx";
 import { NewKlankerModal } from "./components/NewKlankerModal.tsx";
 import { fullInviteUrl, pairLinkView, relayMountError, deviceConnectLabel, parsePairInput } from "./pairLink.ts";
 import type { KlankerInstance, WorkspaceRow } from "./types/klanker.ts";
@@ -180,7 +180,7 @@ describe("Header devices pill", () => {
   });
 });
 
-describe("WorkspaceSettingsModal layer-2 gating", () => {
+describe("WorkspaceModal sharing tab layer-2 gating", () => {
   const ws = (policy: string): WorkspaceRow =>
     ({
       id: "alpha",
@@ -193,9 +193,10 @@ describe("WorkspaceSettingsModal layer-2 gating", () => {
 
   const renderSettings = (policy: string) =>
     renderToStaticMarkup(
-      React.createElement(WorkspaceSettingsModal, {
+      React.createElement(WorkspaceModal, {
         instance: inst,
         workspace: ws(policy),
+        initialTab: "sharing",
         onSaved: () => {},
         onClose: () => {},
       } as never)

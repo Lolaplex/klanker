@@ -7,7 +7,6 @@ import { InstanceSheet } from "./components/InstanceSheet";
 import { DevicesPanel } from "./components/DevicesPanel";
 import { NewKlankerModal } from "./components/NewKlankerModal";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { ManagePanel } from "./components/ManagePanel";
 import {
   DesktopSettings,
   KlankerInstance,
@@ -51,7 +50,7 @@ import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
 import { PairModal } from "./components/PairModal";
 import { WorkspacePane } from "./components/WorkspacePane";
-import { WorkspaceSettingsModal } from "./components/WorkspaceSettingsModal";
+import { WorkspaceModal, type WorkspaceTab } from "./components/WorkspaceModal";
 import { useKeyboardViewport } from "./hooks/useKeyboardViewport";
 import { useInstances } from "./hooks/useInstances";
 import { usePersistChats } from "./hooks/usePersistChats";
@@ -91,7 +90,6 @@ export function App() {
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [settings, setSettings] = useState<DesktopSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [manageOpen, setManageOpen] = useState(false);
   const [instanceSheetInst, setInstanceSheetInst] = useState<KlankerInstance | null>(null);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const [selWs, setSelWs] = useState(() => readWsSel().ws);
@@ -115,7 +113,7 @@ export function App() {
       return next;
     });
   }, []);
-  const [wsSettingsId, setWsSettingsId] = useState<string | null>(null);
+  const [wsModal, setWsModal] = useState<{ id: string; tab?: WorkspaceTab } | null>(null);
   const [pairOpen, setPairOpen] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
   const [storeSupported, setStoreSupported] = useState(false);
@@ -1056,7 +1054,7 @@ export function App() {
           onSelectChat={(ws, p, id) => { selectChat(ws, p, id); setNavOpen(false); }}
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
-          onWorkspaceSettings={(ws) => { setWsSettingsId(ws); setNavOpen(false); }}
+          onWorkspaceSettings={(ws) => { setWsModal({ id: ws }); setNavOpen(false); }}
           onDeleteWorkspace={async (ws) => {
             const inst0 = activeInstance;
             if (!inst0 || !(await dialogs.confirm(`Archive workspace "${ws}"? (restorable from trash)`, { danger: true }))) return;
@@ -1121,14 +1119,8 @@ export function App() {
           status={herdStatus}
           onOpenDevices={() => setDevicesOpen(true)}
           onOpenSettings={openSettings}
-          onOpenManage={() => setManageOpen(true)}
+          onOpenWorkspace={() => selWs && setWsModal({ id: selWs })}
           onOpenNav={() => setNavOpen(true)}
-          showStoreToggle={storeSupported}
-          storeOpen={storeOpen}
-          onToggleStore={() => setStoreOpen((o) => !o)}
-          showVoiceToggle={voiceSupported}
-          voiceEnabled={voiceEnabled}
-          onToggleVoice={toggleVoice}
         />
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -1312,12 +1304,6 @@ export function App() {
             handleDeleteInstance(id);
             setInstanceSheetInst(null);
           }}
-          onProvidersChanged={refreshProviders}
-          activeWorkspace={selWs}
-          onOpenSession={(ws, persona, session) => {
-            setInstanceSheetInst(null);
-            selectChat(ws, persona, session);
-          }}
           onClose={() => setInstanceSheetInst(null)}
         />
       )}
@@ -1327,32 +1313,30 @@ export function App() {
           instance={activeInstance}
           workspace={selWs}
           persona={selPersona}
-          instances={inst.instances}
+          voiceEnabled={voiceEnabled}
+          onToggleVoice={voiceSupported ? toggleVoice : undefined}
           onClose={() => setSettingsOpen(false)}
           onSave={handleSaveSettings}
-          onAddInstance={() => setIsNewModalOpen(true)}
-          onEditInstance={(i) => setInstanceSheetInst(i)}
-          onInstancesChanged={() => void inst.refreshInstances()}
+          onProvidersChanged={refreshProviders}
         />
       )}
-      {manageOpen && activeInstance && (
-        <ManagePanel
+      {wsModal && activeInstance && (
+        <WorkspaceModal
           instance={activeInstance}
-          workspace={selWs}
-          onClose={() => setManageOpen(false)}
-        />
-      )}
-      {wsSettingsId && activeInstance && (
-        <WorkspaceSettingsModal
-          instance={activeInstance}
-          workspace={tree.workspaces.find((w) => w.id === wsSettingsId) ?? { id: wsSettingsId }}
+          workspace={tree.workspaces.find((w) => w.id === wsModal.id) ?? { id: wsModal.id }}
+          initialTab={wsModal.tab}
+          onOpenStoreInspector={storeSupported ? () => setStoreOpen(true) : undefined}
+          onOpenSession={(ws, persona, session) => {
+            setWsModal(null);
+            selectChat(ws, persona, session);
+          }}
           onSaved={(row) => {
             tree.setWorkspaces((tree.workspaces || []).map((w) => (w.id === row.id ? { ...w, ...row } : w)));
             // Policy/default_host may have changed — refresh the hosts
             // payload instead of waiting for workspace.changed.
             tree.refreshHosts(row.id);
           }}
-          onClose={() => setWsSettingsId(null)}
+          onClose={() => setWsModal(null)}
         />
       )}
       {pairOpen && activeInstance && (
