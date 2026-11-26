@@ -2,6 +2,7 @@ import type {
   DesktopBootstrap,
   DesktopSettings,
   DiscoveredPeer,
+  HostInfo,
   HubConnectResult,
   HubDevice,
   HubLease,
@@ -1733,6 +1734,17 @@ export const api = {
   // All deny ws_member device tokens server-side.
 
   /** GET /v1/hub/links — live paired-hub links (this relay as spoke). */
+  /** GET /v1/host — this relay's host identity (U01 contract). */
+  async fetchHostInfo(): Promise<HostInfo> {
+    return localRelayJson<HostInfo>("/v1/host");
+  },
+
+  /** PATCH /v1/host — rename this host; the friendly label is what every
+   *  device row, host picker and session pill displays. */
+  async setHostLabel(label: string): Promise<HostInfo> {
+    return localRelayJson<HostInfo>("/v1/host", "PATCH", { host_label: label });
+  },
+
   async fetchHubLinks(): Promise<HubLink[]> {
     const r = await localRelayJson<{ links?: HubLink[] }>("/v1/hub/links");
     return r.links || [];

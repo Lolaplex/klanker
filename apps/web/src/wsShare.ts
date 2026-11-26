@@ -164,6 +164,30 @@ export function linkBadge(link: HubLink): "connected" | "disconnected" {
   return link.connected ? "connected" : "disconnected";
 }
 
+/** Role badge in operator words — never the wire enum (klanker#159 U04):
+ *  ws_member → Guest, host → Device, client → Client. Unknown roles pass
+ *  through lowercased. */
+export function deviceRoleBadge(role: string | null | undefined): string {
+  switch (String(role || "").toLowerCase()) {
+    case "ws_member":
+      return "guest";
+    case "host":
+      return "device";
+    case "client":
+      return "client";
+    case "":
+      return "device";
+    default:
+      return String(role).toLowerCase();
+  }
+}
+
+/** Shortened device id for muted subtitles — never the primary label. */
+export function shortId(id: string): string {
+  const clean = String(id || "").trim();
+  return clean.length > 12 ? `${clean.slice(0, 8)}…` : clean;
+}
+
 export function deviceBadge(device: HubDevice): "online" | "offline" {
   return device.connected ? "online" : "offline";
 }
