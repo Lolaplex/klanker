@@ -1310,6 +1310,10 @@ pub async fn serve_ensure_local(app: AppHandle, hub_mode: Option<bool>) -> Resul
     .map_err(|e| e.to_string())?
 }
 
+fn resolve_restart_hub_mode(explicit: Option<bool>, prev_host: &str) -> bool {
+    explicit.unwrap_or_else(|| prev_host == "0.0.0.0")
+}
+
 /// Manual retry from the "server lost" state — resets the respawn budget.
 /// Both owned and external same-host serves are stopped cleanly before respawn
 /// so at most one serve runs per host.
@@ -1318,15 +1322,16 @@ pub async fn serve_restart(app: AppHandle, hub_mode: Option<bool>) -> Result<Ser
     tauri::async_runtime::spawn_blocking(move || {
         let _cycle = LIFECYCLE.lock().map_err(|e| e.to_string())?;
         let serve_state = app.state::<ServeState>();
-        let killed = {
+        let (killed, prev_host) = {
             let mut s = serve_lock(&serve_state)?;
             s.failed_spawns = 0;
+            let prev_host = s.host.clone();
             let pid = if s.owned { s.pid.take() } else { None };
             if pid.is_some() {
                 s.state = "stopped".into();
                 s.owned = false;
             }
-            pid
+            (pid, prev_host)
         };
         if let Some(pid) = killed {
             kill_tree(pid);
@@ -1338,7 +1343,8 @@ pub async fn serve_restart(app: AppHandle, hub_mode: Option<bool>) -> Result<Ser
             }
             remove_pid_file(&app, Some(pid));
         }
-        do_ensure(&app, hub_mode.unwrap_or(false), true)
+        let target_hub_mode = resolve_restart_hub_mode(hub_mode, &prev_host);
+        do_ensure(&app, target_hub_mode, true)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1650,5 +1656,14 @@ Aktive Verbindungen
         assert_eq!(p.version.as_deref(), Some("0.9.1"));
         let raw2 = "HTTP/1.1 200 OK\r\n\r\n{\"ok\":true,\"klanker_version\":\"0.9.2\"}";
         assert_eq!(parse_health_response(raw2).unwrap().version.as_deref(), Some("0.9.2"));
+    }
+
+    #[test]
+    fn restart_hub_mode_preserves_prior_lan_bind_when_explicit_none() {
+        assert!(resolve_restart_hub_mode(None, "0.0.0.0"));
+        assert!(!resolve_restart_hub_mode(None, "127.0.0.1"));
+        assert!(!resolve_restart_hub_mode(None, ""));
+        assert!(!resolve_restart_hub_mode(Some(false), "0.0.0.0"));
+        assert!(resolve_restart_hub_mode(Some(true), "127.0.0.1"));
     }
 }
