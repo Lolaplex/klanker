@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Cloud, Globe, Lock, Plus, Settings2, WifiOff, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Cloud, Globe, Lock, Pencil, Plus, Settings2, WifiOff, X } from "lucide-react";
 import { WorkspaceHosts, WorkspaceRow } from "../types/klanker";
 import { KlankerMark } from "./KlankerMark";
 import { wsSyncBadge, type WsBadge, type WsBadgeKind } from "../wsTree";
@@ -42,6 +42,8 @@ interface KlankerListProps {
   onWorkspaceSettings: (ws: string) => void;
   onNewPersona: (ws: string) => void;
   onDeletePersona: (ws: string, persona: string) => void;
+  /** Open the persona manifest editor (klanker#161 U06). */
+  onEditPersona?: (ws: string, persona: string) => void;
 }
 
 const badgeClass = (kind: WsBadgeKind): string => {
@@ -99,6 +101,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
   onWorkspaceSettings,
   onNewPersona,
   onDeletePersona,
+  onEditPersona,
 }) => {
   const [openWs, setOpenWs] = useState<ReadonlySet<string>>(() => new Set(selWs ? [selWs] : []));
   const [openPersona, setOpenPersona] = useState<ReadonlySet<string>>(
@@ -252,6 +255,17 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                             </span>
                           )}
                           <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center rounded bg-black/85 opacity-100 md:hidden md:group-hover/persona:flex md:group-focus-within/persona:flex">
+                            {onEditPersona && (
+                              <button
+                                type="button"
+                                onClick={() => onEditPersona(w.id, p.id)}
+                                title="Edit persona"
+                                aria-label={`Edit persona ${p.name || p.id}`}
+                                className="inline-flex h-8 w-8 items-center justify-center text-[#525252] hover:text-white transition-colors"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => onDeletePersona(w.id, p.id)}

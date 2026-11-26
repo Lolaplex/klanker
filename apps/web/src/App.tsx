@@ -14,7 +14,7 @@ import {
   ModelPick,
   ProviderRow,
 } from "./types/klanker";
-import { api, caps, notify } from "./services/api";
+import { api, caps, notifyWhenUnfocused } from "./services/api";
 import { dialogs } from "./services/dialogs";
 import { DialogHost } from "./components/DialogHost";
 import { createDeltaQueue } from "./chatPersist";
@@ -51,6 +51,7 @@ import { AuthGate } from "./components/AuthGate";
 import { PairModal } from "./components/PairModal";
 import { WorkspacePane } from "./components/WorkspacePane";
 import { WorkspaceModal, type WorkspaceTab } from "./components/WorkspaceModal";
+import { PersonaEditorModal } from "./components/PersonaEditorModal";
 import { useKeyboardViewport } from "./hooks/useKeyboardViewport";
 import { useInstances } from "./hooks/useInstances";
 import { usePersistChats } from "./hooks/usePersistChats";
@@ -114,6 +115,7 @@ export function App() {
     });
   }, []);
   const [wsModal, setWsModal] = useState<{ id: string; tab?: WorkspaceTab } | null>(null);
+  const [personaEditor, setPersonaEditor] = useState<{ ws: string; persona: string } | null>(null);
   const [pairOpen, setPairOpen] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
   const [storeSupported, setStoreSupported] = useState(false);
@@ -834,6 +836,7 @@ export function App() {
     });
     deltaFlush.current.add(deltas.flush);
 
+    let replyBuf = "";
     try {
       // Provider = raw host manifest name (acp.devin, lmstudio.local, …);
       // "" = host default. The relay resolves session pick > ws pick > env.
@@ -859,7 +862,6 @@ export function App() {
       // The relay pings every ~12s (surfaced as {type:"ping"}), so 45s of
       // total silence means the stream is dead, not a slow tool phase.
       const STREAM_IDLE_MS = 45_000;
-      let replyBuf = "";
       let lastEventAt = Date.now();
       const kicker = new Kicker();
       const onVisible = () => {
@@ -969,8 +971,9 @@ export function App() {
       );
       setTurnBusy(turnBusyRef.current);
       setStreamStatusFor(bk, null);
-      if (document.hidden || !document.hasFocus()) {
-        void notify("Klanker turn finished", inst0.name || inst0.id);
+      {
+        const preview = replyBuf.trim().replace(/\s+/g, " ").slice(0, 120);
+        void notifyWhenUnfocused("Klanker turn finished", preview || inst0.name || inst0.id);
       }
       // A dead client stream (iOS "Load failed", suspend, reload) does not
       // mean the turn failed: the server may still be writing the reply into
@@ -1082,6 +1085,7 @@ export function App() {
               .then((rows) => tree.setTreePersonas((prev) => ({ ...prev, [ws]: rows })))
               .catch((e) => setWsNote(`persona: ${e instanceof Error ? e.message : e}`));
           }}
+          onEditPersona={(ws, persona) => setPersonaEditor({ ws, persona })}
           onDeletePersona={async (ws, persona) => {
             const inst0 = activeInstance;
             if (!inst0 || !(await dialogs.confirm(`Archive persona "${persona}"?`, { danger: true }))) return;
@@ -1337,6 +1341,15 @@ export function App() {
             tree.refreshHosts(row.id);
           }}
           onClose={() => setWsModal(null)}
+        />
+      )}
+      {personaEditor && activeInstance && (
+        <PersonaEditorModal
+          instance={activeInstance}
+          workspace={personaEditor.ws}
+          persona={personaEditor.persona}
+          onSaved={() => tree.refreshPersonas(personaEditor.ws)}
+          onClose={() => setPersonaEditor(null)}
         />
       )}
       {pairOpen && activeInstance && (
