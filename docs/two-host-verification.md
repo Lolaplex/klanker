@@ -87,7 +87,12 @@ klanker serve                              # provisions alpha on next tick
 B registers as `role=ws_member` with `allowlist=[alpha]` — it can open
 the channel and sync `alpha` but cannot mint credentials, touch remotes,
 or widen policy keys. Owner check: only `execution.owner` mints invites;
-a non-owner device gets `403 not the workspace owner`.
+a non-owner device gets `403 not the workspace owner`. A ws created
+through the hub's own web/API surface carries no owner yet — the hub
+operator's first invite mint (cookie/admin caller) claims it as the host
+itself, the same owner `klanker workspace invite` stamps CLI-side.
+Device callers never claim an ownerless ws: over-wire ownership stays
+refuse-closed (klanker#146).
 
 ### 4. Turns + history
 

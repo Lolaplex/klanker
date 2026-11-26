@@ -114,6 +114,10 @@ async function fetchHealth(port: number, timeoutMs = 2500): Promise<{ host_id: s
  * set once the loopback bearer actually authenticates, so a foreign serve
  * can never seed the pin. No UI, no user step: silent self-heal. */
 export async function ensureLocalServePort(): Promise<number | null> {
+  // A browser never has a managed serve to discover: the web local instance
+  // is the serving relay itself (same origin). Probing loopback ports from
+  // a VPS-served page is pure connection-refused spam — refuse outright.
+  if (!caps.spawn) return null;
   const pinned = pinnedHostId();
   const secret = secretCache.get("relay.local") || "";
 
@@ -266,6 +270,47 @@ async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void
   } catch {}
 }
 
+/** Fired when a same-origin call answers 401 in a browser context: the
+ *  session cookie is dead and the UI must drop back to the AuthGate.
+ *  Registered by useInstances; desktop never uses it (bearer secrets, not
+ *  cookies). */
+let authExpiredHandler: (() => void) | null = null;
+export function setAuthExpiredHandler(fn: (() => void) | null): void {
+  authExpiredHandler = fn;
+}
+
+/** A 401 means the web session died only when it comes from the serving
+ *  relay itself — never from a credential-minting endpoint (a wrong token
+ *  is not an expired session) and never from the remote proxy (that is the
+ *  remote relay's secret, not our cookie). */
+function noteAuthResponse(url: string, status: number): void {
+  if (status !== 401 || caps.spawn || !authExpiredHandler) return;
+  if (/\/v1\/auth\/login\b/.test(url)) return;
+  if (/\/v1\/pair\/redeem\b/.test(url)) return;
+  if (url.includes("/v1/remote/")) return;
+  authExpiredHandler();
+}
+
+/** Render an HTTP error body as a clean one-line message. stdlib send_error
+ *  renders HTML — unwrap its detail, never the tags; a raw HTML 401 is the
+ *  dead-session shape, so say so instead of echoing markup. */
+export function httpErrorMessage(status: number, body: string): string {
+  let msg = body;
+  try {
+    const parsed = JSON.parse(body) as { error?: string; detail?: string };
+    msg = parsed.error || parsed.detail || body;
+  } catch {}
+  if (/^\s*</.test(msg)) {
+    if (status === 401) return "401: session expired — sign in again";
+    const m =
+      /<p>Message:\s*([^<]+)<\/p>/i.exec(msg) ||
+      /<p>([^<]+)<\/p>/i.exec(msg) ||
+      /<title>([^<]+)<\/title>/i.exec(msg);
+    msg = m ? m[1] : msg.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  }
+  return `${status}${msg ? `: ${String(msg).slice(0, 300)}` : ""}`;
+}
+
 /** fetch with Bearer hydration: resolve the keyring secret when missing,
  *  and retry once after a forced refresh on 401 (spawn token rotation). */
 async function authedFetch(
@@ -284,6 +329,7 @@ async function authedFetch(
       res = await fetch(url, init);
     }
   }
+  noteAuthResponse(url, res.status);
   return res;
 }
 
@@ -295,16 +341,7 @@ async function req<T = unknown>(
   const res = await authedFetch(inst, base(inst) + path, { ...init });
   const body = await res.text().catch(() => "");
   if (!res.ok) {
-    let msg = body;
-    try {
-      msg = JSON.parse(body).error || JSON.parse(body).detail || body;
-    } catch {}
-    if (/^\s*</.test(msg)) {
-      // stdlib send_error renders HTML — keep its <p> detail, not the tags.
-      const m = /<p>([^<]+)<\/p>/i.exec(msg) || /<title>([^<]+)<\/title>/i.exec(msg);
-      msg = m ? m[1] : msg.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-    }
-    throw new Error(`${res.status}${msg ? `: ${String(msg).slice(0, 300)}` : ""}`);
+    throw new Error(httpErrorMessage(res.status, body));
   }
   try {
     return JSON.parse(body) as T;
@@ -470,9 +507,13 @@ export const api = {
         if (host && rendered.has(host)) continue;
         list.push({ ...i, kind: "remote", updated_at: now });
       }
-    } else if (list.length === 0) {
-      list = [localInstance()];
-      await registrySave(list[0]);
+    } else {
+      // Web/PWA: the serving relay IS the local instance — it is always in
+      // the herd, no matter how many remotes are mounted on it. Without it
+      // herd["local"] stays undefined, the header reads "offline" and the
+      // sidebar tree never loads. The synthetic entry is never persisted
+      // (registrySave refuses id "local"); a stray persisted row is dropped.
+      list = [localInstance(), ...list.filter((i) => i.id !== "local" && i.kind !== "local")];
     }
     if (caps.keyring) {
       for (const inst of list) await hydrateSecret(inst);
@@ -1156,7 +1197,7 @@ export const api = {
     });
     if (!res.ok || !res.body) {
       const msg = await res.text().catch(() => "");
-      throw new Error(`${res.status}${msg ? `: ${msg.slice(0, 300)}` : ""}`);
+      throw new Error(httpErrorMessage(res.status, msg));
     }
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -1203,7 +1244,7 @@ export const api = {
     });
     if (!res.ok || !res.body) {
       const msg = await res.text().catch(() => "");
-      throw new Error(`${res.status}${msg ? `: ${msg.slice(0, 200)}` : ""}`);
+      throw new Error(httpErrorMessage(res.status, msg));
     }
     const reader = res.body.getReader();
     const dec = new TextDecoder();
@@ -1817,6 +1858,7 @@ export const api = {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      noteAuthResponse(path, res.status);
     }
     const text = await res.text().catch(() => "");
     let data: SessionHostSwitch = {};
@@ -1969,6 +2011,7 @@ async function registryList(): Promise<KlankerInstance[]> {
 async function relayRemotes(): Promise<KlankerInstance[] | null> {
   try {
     const r = await fetch("/v1/remotes");
+    noteAuthResponse("/v1/remotes", r.status);
     if (!r.ok) return null;
     const data = await r.json();
     const now = new Date().toISOString();
@@ -2061,6 +2104,7 @@ async function localRelayJson<T>(
       headers: body ? { "Content-Type": "application/json" } : {},
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
+    noteAuthResponse(path, res.status);
   }
   const text = await res.text().catch(() => "");
   if (!res.ok) {
@@ -2070,7 +2114,11 @@ async function localRelayJson<T>(
       payload = JSON.parse(text);
       msg = (payload as { error?: string }).error || text;
     } catch {}
-    const err = new Error(`${res.status}${msg ? `: ${String(msg).slice(0, 200)}` : ""}`);
+    const err = new Error(
+      /^\s*</.test(msg)
+        ? httpErrorMessage(res.status, msg)
+        : `${res.status}${msg ? `: ${String(msg).slice(0, 200)}` : ""}`
+    );
     (err as Error & { status?: number; payload?: unknown }).status = res.status;
     (err as Error & { payload?: unknown }).payload = payload;
     throw err;

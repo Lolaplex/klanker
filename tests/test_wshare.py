@@ -139,6 +139,56 @@ def test_invite_auth_owner_only(host):
     assert not ws_invite_auth("dev-b", "w1")
 
 
+def test_invite_auth_admin_claims_ownerless_ws(host):
+    """Web/API-created workspaces carry no execution.owner — nothing on
+    the create path stamps it. The hub operator's first invite mint IS
+    the explicit local share act (the klanker#146 hijack guard only
+    closes OVER-WIRE claims), so the admin caller claims the ownerless
+    ws as the host itself and mints; a device caller is still refused.
+    Mirrors `klanker workspace invite` CLI semantics + the host_id
+    owner `ws_grant_apply` records for `__admin__` invites."""
+    from klanker.wssync import ws_invite_auth
+
+    host.create("w1")
+    # over the wire an ownerless ws is never claimable (klanker#146)
+    assert not ws_invite_auth("dev-x", "w1")
+    assert (host.workspace("w1").execution or {}).get("owner") in ("", None)
+    # the hub operator (cookie/master-secret caller -> __admin__) claims
+    assert ws_invite_auth("__admin__", "w1")
+    assert (host.workspace("w1").execution or {}).get("owner") \
+        == str(host.host_id())
+    # claimed: foreign devices stay refused, the operator keeps minting
+    assert not ws_invite_auth("dev-x", "w1")
+    assert ws_invite_auth("__admin__", "w1")
+
+
+def test_invite_auth_admin_ownerless_claim_preserves_execution(host):
+    """The claim merge must not drop sibling execution keys."""
+    from klanker.wssync import ws_invite_auth
+
+    host.create("w1")
+    host.update_workspace(
+        "w1", execution={"failover": "standby", "lease_sec": 60})
+    assert ws_invite_auth("__admin__", "w1")
+    ex = host.workspace("w1").execution or {}
+    assert ex.get("owner") == str(host.host_id())
+    assert ex.get("failover") == "standby"
+    assert ex.get("lease_sec") == 60
+
+
+def test_invite_auth_admin_never_claims_foreign_owned(host):
+    """An owner recorded for a device/peer is never displaced — and the
+    admin is not the owner of a spoke-owned ws."""
+    from klanker.wssync import ws_invite_auth
+
+    host.create("w1")
+    host.update_workspace(
+        "w1", execution={"owner": "dev-spoke", "failover": "none"})
+    assert not ws_invite_auth("__admin__", "w1")
+    assert ws_invite_auth("dev-spoke", "w1")
+    assert (host.workspace("w1").execution or {}).get("owner") == "dev-spoke"
+
+
 def test_grant_apply_provisions_and_members(host):
     from klanker.wssync import ws_grant_apply
 
