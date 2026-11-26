@@ -1214,20 +1214,40 @@ def _execution_lease_sec(ws_id: str) -> float:
 def ws_invite_auth(device_id: str, ws_id: str) -> bool:
     """`/v1/ws/invite` gate (klanker#145): only the ws owner may mint
     invites. Owner is recorded in workspace.json execution.owner by
-    `workspace share|invite` or an accepted ws:announce."""
+    `workspace share|invite` or an accepted ws:announce.
+
+    A workspace created through the hub's own web/API surface carries no
+    owner yet — nothing on the create path stamps one. The operator's
+    first invite mint IS the explicit local share act (the klanker#146
+    hijack guard closes only OVER-WIRE claims), so an admin/cookie
+    caller claims the ownerless ws as the host itself — the same
+    host_id owner `ws_grant_apply` records when an `__admin__` invite
+    redeems, and the same claim `klanker workspace invite` performs
+    CLI-side. Device callers never claim: ownership crossing the wire
+    stays refuse-closed."""
     try:
         from agents_workspace import Host
 
-        ws = Host.from_env().workspace(ws_id)
+        host = Host.from_env()
+        ws = host.workspace(ws_id)
         owner = str(
             (getattr(ws, "execution", None) or {}).get("owner") or "")
-        if not owner:
-            return False
         if device_id == "__admin__":
             # admin/cookie callers carry no device id — their identity
             # is the host itself (klanker#155)
-            return owner in ("__admin__", Host.from_env().host_id())
-        return owner == device_id
+            if owner:
+                return owner in ("__admin__", host.host_id())
+            claim = str(host.host_id() or "")
+        else:
+            if owner:
+                return owner == device_id
+            return False  # over-wire claims stay closed (klanker#146)
+        if not claim:
+            return False
+        ex = dict(getattr(ws, "execution", None) or {})
+        ex["owner"] = claim
+        host.update_workspace(ws_id, execution=ex)
+        return True
     except Exception:  # noqa: BLE001
         return False
 

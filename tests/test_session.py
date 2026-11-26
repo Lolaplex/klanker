@@ -161,7 +161,80 @@ def test_checkpoint_unreachable_remote_flags_unpushed(repo, tmp_path):
     assert res["unpushed"] is True and res["pushed"] is False
 
 
-def test_switch_host_full_flow(conn, repo):
+def test_ensure_worktree_seeds_from_fetched_remote_tip(repo, tmp_path):
+    """Host switch must land on the WIP the old host pushed: a fresh
+    session worktree branches off the fetched remote tip, never off
+    local main (which never heard of the session branch)."""
+    bare = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(bare))
+    _git(repo, "remote", "add", "origin", str(bare))
+    wt_a = ensure_worktree(repo, "swt0001")
+    (wt_a / "wip.txt").write_text("half-done", encoding="utf-8")
+    res = checkpoint(repo, "swt0001", "dev-a")
+    assert res["pushed"] is True
+    branch = session_branch("swt0001")
+
+    # the new host: its own clone knows main only, then the prepare
+    # fetch lands refs/remotes/origin/klanker/s-swt0001
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", str(bare), str(clone))
+    _git(clone, "config", "user.email", "t@t")
+    _git(clone, "config", "user.name", "t")
+    _git(clone, "fetch", "origin", branch)
+    assert not (clone / "wip.txt").exists()
+    assert not _branch_exists(clone, branch)
+
+    wt_b = ensure_worktree(clone, "swt0001")
+    assert (wt_b / "wip.txt").read_text(encoding="utf-8") == "half-done"
+    assert _head(wt_b) == branch
+
+
+def test_ensure_worktree_fastforwards_stale_local_branch(repo, tmp_path):
+    """Round trip A->B->A: the orphaned local branch survives the
+    switch-away cleanup while the remote tip advances on the other
+    host. Re-materializing must fast-forward to the fetched tip or the
+    next checkpoint push is a non-fast-forward and WIP strands."""
+    bare = tmp_path / "remote.git"
+    _git(tmp_path, "init", "--bare", str(bare))
+    _git(repo, "remote", "add", "origin", str(bare))
+    wt_a = ensure_worktree(repo, "swt0002")
+    (wt_a / "wip.txt").write_text("half-done", encoding="utf-8")
+    assert checkpoint(repo, "swt0002", "dev-a")["pushed"] is True
+    branch = session_branch("swt0002")
+    # switch-away cleanup drops the worktree, keeps the local branch
+    res = remove_worktree(repo, "swt0002")
+    assert res["removed"] and not res["branch_deleted"]
+    assert _branch_exists(repo, branch)
+    # the other host adds WIP on top and pushes
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", str(bare), str(clone))
+    _git(clone, "config", "user.email", "t@t")
+    _git(clone, "config", "user.name", "t")
+    _git(clone, "fetch", "origin", branch)
+    wt_b = ensure_worktree(clone, "swt0002")
+    (wt_b / "more.txt").write_text("wip2", encoding="utf-8")
+    assert checkpoint(clone, "swt0002", "dev-b")["pushed"] is True
+    # back on A: fetch, then re-materialize — the worktree must carry
+    # BOTH wip files, not the stale local tip
+    _git(repo, "fetch", "origin", branch)
+    wt_a2 = ensure_worktree(repo, "swt0002")
+    assert (wt_a2 / "wip.txt").read_text(encoding="utf-8") == "half-done"
+    assert (wt_a2 / "more.txt").read_text(encoding="utf-8") == "wip2"
+
+
+def test_ensure_worktree_without_remote_tip_branches_off_head(repo):
+    """No remote / no fetched session branch: unchanged legacy shape —
+    the worktree branches off the checkout's HEAD."""
+    wt = ensure_worktree(repo, "swt0003")
+    assert (wt / "f.txt").read_text(encoding="utf-8") == "v1"
+    assert _head(wt) == session_branch("swt0003")
+
+
+def test_switch_host_full_flow(conn, repo, monkeypatch):
+    # dev-a is "us" here — the bound host must be one of the host's own
+    # device ids for the local-checkpoint path to apply (a foreign binding
+    # is served by the remote-checkpoint RPC instead).
+    monkeypatch.setattr(session_mod, "_own_device_ids_host", lambda: {"dev-a"})
     bind_session(conn, "s4cccccc", "dev-a", node="hostA")
     wt = ensure_worktree(repo, "s4cccccc")
     (wt / "wip.txt").write_text("half-done", encoding="utf-8")
@@ -180,6 +253,64 @@ def test_switch_host_pure_chat_without_worktree(conn, repo):
     res = switch_host(conn, "chat0000", "dev-b", repo=repo, node="hostA")
     assert res["bound"] is True
     assert session_view(conn, "chat0000")["host"] == "dev-b"
+
+
+def test_switch_host_remote_old_host_never_checkpoints_locally(
+        conn, repo, tmp_path, monkeypatch):
+    """Regression: the old host is a remote channel device — its
+    checkpoint rides the hub RPC plane. Running the LOCAL checkpoint
+    afterwards on the hub crashed the switch with 409 "refusing to
+    checkpoint a session worktree outside the worktree root" whenever
+    the hub's host_paths overlapped the same checkout: the worktree is
+    local to the old host, a hub-side repo path can never reach it."""
+    monkeypatch.setattr(
+        "klanker.session._lease_holder_for", lambda ws, s: "")
+    monkeypatch.setattr(
+        "klanker.session._own_device_ids_host", lambda: {"dev-hub"})
+    ops = []
+
+    def fake_remote_op(device_id, ws_id, session_id, op, **kw):
+        ops.append(op)
+        if op == "checkpoint":
+            return {"ok": True, "unpushed": False, "pushed": True}
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "klanker.session._remote_session_op", fake_remote_op)
+    # the overlapping checkout: the session branch IS checked out on the
+    # hub's repo path, but outside the hub's worktree root — exactly the
+    # shape that 409ed the switch before
+    elsewhere = tmp_path / "elsewhere"
+    _git(repo, "worktree", "add", "-b", "klanker/s-swr0001", str(elsewhere))
+    bind_session(conn, "swr0001", "dev-spoke",
+                 branch="klanker/s-swr0001", repo="repo")
+    res = switch_host(conn, "swr0001", "dev-hub", repo=repo, ws_id="w1")
+    assert res["bound"] is True, res
+    assert not res.get("checkpoint")  # local checkpoint never ran
+    assert ops == ["checkpoint", "cleanup"]
+    assert session_view(conn, "swr0001")["wip_unpushed"] is False
+
+
+def test_switch_host_remote_unpushed_force_keeps_wip_flag(
+        conn, repo, monkeypatch):
+    """Force-switching past unpushed remote work must not clear the
+    wip_unpushed flag — the work still never left the old device."""
+    monkeypatch.setattr(
+        "klanker.session._lease_holder_for", lambda ws, s: "")
+    monkeypatch.setattr(
+        "klanker.session._own_device_ids_host", lambda: {"dev-hub"})
+    monkeypatch.setattr(
+        "klanker.session._remote_session_op",
+        lambda *a, **k: {"ok": True, "unpushed": True, "pushed": False})
+    bind_session(conn, "swr0002", "dev-spoke",
+                 branch="klanker/s-swr0002", repo="repo")
+    res = switch_host(conn, "swr0002", "dev-hub", repo=repo, ws_id="w1")
+    assert res["bound"] is False
+    assert res["error"] == "wip_unpushed"
+    res = switch_host(conn, "swr0002", "dev-hub", repo=repo, ws_id="w1",
+                      force=True)
+    assert res["bound"] is True, res
+    assert session_view(conn, "swr0002")["wip_unpushed"] is True
 
 
 def test_bind_actor_host_scoped_and_seq_monotonic(conn):

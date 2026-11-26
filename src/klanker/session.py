@@ -247,12 +247,33 @@ def find_worktree(repo: str | Path, branch: str) -> Path | None:
     return None
 
 
+def _remote_branch_tip(repo: Path, branch: str) -> str:
+    """``<remote>/<branch>`` when a fetched remote-tracking ref exists
+    for the session branch (origin preferred), else ""."""
+    try:
+        remotes = _git(repo, "remote").stdout.split()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return ""
+    for remote in sorted(remotes, key=lambda r: (r != "origin", r)):
+        if _git_ok(repo, "rev-parse", "--verify", "--quiet",
+                   f"refs/remotes/{remote}/{branch}"):
+            return f"{remote}/{branch}"
+    return ""
+
+
 def ensure_worktree(repo: str | Path, session_id: str, *,
                     root: str | Path | None = None) -> Path:
     """Idempotent session worktree on branch klanker/s-<session-id>,
     outside the repo. Re-uses the worktree already holding the branch
     only if it lies inside the worktree root; a checkout of the session
-    branch anywhere else is refused (InvalidSessionId), never returned."""
+    branch anywhere else is refused (InvalidSessionId), never returned.
+
+    Host-switch correctness: a NEW branch is seeded from the fetched
+    remote tip when one exists — branching off local main strands the
+    WIP the old host pushed (the remote tip IS the session's canonical
+    history; branch names are session-unique). A surviving local branch
+    (orphan cleanup keeps it) is fast-forwarded to the fetched tip when
+    it is strictly behind -- never rewritten when diverged."""
     repo = Path(repo)
     branch = session_branch(session_id)  # validates session_id
     base = _resolved_root(root)
@@ -268,11 +289,19 @@ def ensure_worktree(repo: str | Path, session_id: str, *,
     wt.parent.mkdir(parents=True, exist_ok=True)
     # re-check after mkdir: a link planted in between is still refused
     _check_contained(wt, base)
+    tip = _remote_branch_tip(repo, branch)
     if not _git_ok(repo, "rev-parse", "--verify", "--quiet",
                    f"refs/heads/{branch}"):
-        _git(repo, "worktree", "add", "-b", branch, str(wt))
+        if tip:
+            _git(repo, "worktree", "add", "-b", branch, str(wt), tip)
+        else:
+            _git(repo, "worktree", "add", "-b", branch, str(wt))
     else:
         _git(repo, "worktree", "add", str(wt), branch)
+        if tip:
+            # strictly-behind fast-forward only: a diverged local branch
+            # keeps its own tip (never rewrite unpushed local WIP)
+            _git_ok(wt, "merge", "--ff-only", tip)
     # re-check after git created it: if a component was swapped for a
     # link meanwhile, drop the fresh checkout and refuse
     try:
@@ -485,7 +514,8 @@ def switch_host(conn, session_id: str, new_host: str, *,
         result["status"] = 409
         return result
     old = old_host or str(view.get("host") or "")
-    if old and old not in _own_device_ids_host():
+    old_is_remote = bool(old) and old not in _own_device_ids_host()
+    if old_is_remote:
         remote = _remote_session_op(old, ws_id, session_id, "checkpoint")
         result["remote_checkpoint"] = remote
         if remote and remote.get("unpushed") and not force:
@@ -493,7 +523,12 @@ def switch_host(conn, session_id: str, new_host: str, *,
             result["error"] = "wip_unpushed"
             result["status"] = 409
             return result
-    if repo is not None:
+    if repo is not None and not old_is_remote:
+        # Local checkpoint only for genuinely local sessions: a remote
+        # old host's worktree lives on THAT host and already rode the
+        # RPC plane above — a hub-side repo path either finds nothing or,
+        # worse, overlaps the same checkout and 409s the switch on the
+        # worktree-root guard.
         cp = checkpoint(repo, session_id, old, root=root)
         result["checkpoint"] = cp
         if cp["error"] and not cp["committed"] \
@@ -504,8 +539,18 @@ def switch_host(conn, session_id: str, new_host: str, *,
     bind_session(conn, session_id, new_host,
                  branch=view["branch"], repo=view["repo"], node=node)
     if repo is not None:
-        set_wip_unpushed(conn, session_id,
-                         bool(result["checkpoint"]["unpushed"]), node=node)
+        if old_is_remote:
+            # the wip truth is the REMOTE checkpoint's — force-switching
+            # past unpushed work keeps the flag set (it still never left
+            # the old device); an unanswered RPC leaves it untouched
+            remote = result.get("remote_checkpoint")
+            if remote is not None:
+                set_wip_unpushed(conn, session_id,
+                                 bool(remote.get("unpushed")), node=node)
+        else:
+            set_wip_unpushed(conn, session_id,
+                             bool(result["checkpoint"]["unpushed"]),
+                             node=node)
     result["bound"] = True
     _notify_sync(ws_id)
     if new_host and new_host not in _own_device_ids_host():
