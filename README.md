@@ -261,4 +261,4 @@ see [AGENTS.md](AGENTS.md). `docs/ROADMAP.md` is the direction doc.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Bundled third-party library licenses and UI/UX acknowledgments (cmdr-chara/synara, anywhere-labs/Agents-Anywhere, deepseek-ai/chat-demo, agent0ai/tuxee) live in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

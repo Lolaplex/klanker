@@ -1,8 +1,5 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-// OpenUI base css loads BEFORE tailwind utilities so utility classes win
-// specificity-free (klanker#170 U16).
-import "@openuidev/react-ui/index.css";
 import App from "./App";
 import { kbDebugEnabled } from "./kbDebug";
 import { migrateLegacyStorage } from "./chatBuckets";

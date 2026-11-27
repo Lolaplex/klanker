@@ -4,8 +4,8 @@ import { describe, it } from "node:test";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
-import { readFileSync, readdirSync } from "node:fs";
-import { useTheme } from "@openuidev/react-ui";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { ThemeRoot } from "./ThemeRoot.tsx";
 import { useThemeMode, setThemePreference, readThemePreference, applyResolvedMode } from "./theme.ts";
 import { Dialog } from "./components/ui/Dialog.tsx";
@@ -32,13 +32,12 @@ async function renderInDom(el: React.ReactElement): Promise<{ html: () => string
 
 function ThemeProbe({ onMode }: { onMode: (m: string) => void }) {
   const { resolvedMode } = useThemeMode();
-  const openUi = useTheme() as { mode?: string } | null;
-  onMode(`${resolvedMode}|${openUi?.mode ?? "none"}`);
+  onMode(resolvedMode);
   return null;
 }
 
 describe("theme switching propagates", () => {
-  it("toggling dark ↔ light updates dataset.theme, meta theme-color and the OpenUI provider mode", async () => {
+  it("toggling dark ↔ light updates dataset.theme, meta theme-color and the resolved mode", async () => {
     const modes: string[] = [];
     const r = await renderInDom(
       React.createElement(ThemeRoot, null, React.createElement(ThemeProbe, { onMode: (m) => modes.push(m) }))
@@ -55,8 +54,8 @@ describe("theme switching propagates", () => {
       });
       assert.equal(document.documentElement.dataset.theme, "light");
       assert.equal((document.querySelector('meta[name="theme-color"]') as HTMLMetaElement)?.content, "#ffffff");
-      assert.ok(modes.some((m) => m === "light|light"), `OpenUI provider never saw light mode: ${modes.join(",")}`);
-      assert.ok(modes.some((m) => m === "dark|dark"), `OpenUI provider never saw dark mode: ${modes.join(",")}`);
+      assert.ok(modes.includes("light"), `theme root never saw light mode: ${modes.join(",")}`);
+      assert.ok(modes.includes("dark"), `theme root never saw dark mode: ${modes.join(",")}`);
 
       await act(async () => {
         setThemePreference("dark");
@@ -188,5 +187,31 @@ describe("44px touch rule removal", () => {
     const body = block![0];
     assert.ok(!/button,?\s*\n?\s*\[role="button"\]/.test(body), "global button/input targeting still present");
     assert.ok(body.includes(".touch-target"), "explicit .touch-target utility missing");
+  });
+});
+
+describe("no OpenUI runtime coupling", () => {
+  it("package.json carries zero @openuidev/ dependencies", () => {
+    const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
+    const deps = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+    const offenders = deps.filter((d) => d.startsWith("@openuidev/"));
+    assert.deepEqual(offenders, [], `openuidev packages remain: ${offenders.join(",")}`);
+  });
+
+  it("zero @openuidev/ imports anywhere under src/", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const p = join(dir, entry);
+        if (statSync(p).isDirectory()) {
+          walk(p);
+        } else if (/\.tsx?$/.test(entry)) {
+          const src = readFileSync(p, "utf-8");
+          if (/from\s+["']@openuidev\/|import\s+["']@openuidev\//.test(src)) offenders.push(p);
+        }
+      }
+    };
+    walk("src");
+    assert.deepEqual(offenders, [], `openuidev imports remain:\n${offenders.join("\n")}`);
   });
 });
