@@ -410,9 +410,31 @@ export const caps = {
   updates: isTauri(),
 } as const;
 
-/** OS notification — works on desktop webview and (with permission) in browsers. */
+/** OS notification — desktop uses the native Tauri notification plugin
+ *  (the webview's browser Notification API is a no-op on several platforms);
+ *  plain browsers fall back to the Notification API with permission ask.
+ *  Never throws — notifications are best-effort by nature (klanker#59 U06). */
 export async function notify(title: string, body = ""): Promise<void> {
   try {
+    if (caps.spawn) {
+      const tauri = (window as unknown as { __TAURI__?: { core?: { invoke: (c: string, a?: Record<string, unknown>) => Promise<unknown> } } }).__TAURI__;
+      if (tauri?.core?.invoke) {
+        try {
+          let granted = (await tauri.core.invoke("plugin:notification|is_permission_granted")) === true;
+          if (!granted) {
+            const perm = await tauri.core.invoke("plugin:notification|request_permission");
+            granted = perm === "granted" || perm === "Granted";
+          }
+          if (granted) {
+            await tauri.core.invoke("plugin:notification|notify", { options: { title, body } });
+            return;
+          }
+        } catch {
+          // fall through to the browser path — a plugin mismatch must
+          // never eat the notification silently in a browser context.
+        }
+      }
+    }
     if (typeof Notification === "undefined") return;
     if (Notification.permission === "granted") {
       new Notification(title, { body });
@@ -421,6 +443,32 @@ export async function notify(title: string, body = ""): Promise<void> {
         new Notification(title, { body });
       }
     }
+  } catch {}
+}
+
+/** Focus gate for OS notifications (klanker#59 U06): only while the
+ *  window is unfocused/minimized — a foreground app must never spam its
+ *  own operator. No document (node test, worker) counts as focused. */
+export function unfocusedNow(): boolean {
+  try {
+    if (typeof document === "undefined") return false;
+    return document.hidden || !document.hasFocus();
+  } catch {
+    return false;
+  }
+}
+
+/** Notify only when unfocused — the single gate every trigger goes
+ *  through. `deliver` is injectable so tests can observe without an OS.
+ *  Never throws, including in a bare web/node context. */
+export async function notifyWhenUnfocused(
+  title: string,
+  body = "",
+  deliver: (t: string, b: string) => Promise<void> = notify
+): Promise<void> {
+  try {
+    if (!unfocusedNow()) return;
+    await deliver(title, body);
   } catch {}
 }
 
@@ -875,7 +923,7 @@ export const api = {
   async listPersonas(
     inst: KlankerInstance,
     workspace: string
-  ): Promise<{ id: string; name?: string; role?: string }[]> {
+  ): Promise<{ id: string; name?: string; role?: string; system_append?: string }[]> {
     const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
     const r = await req<{ personas?: (WireRow | string)[] }>(inst, `/v1/personas${q}`, { headers: headers(inst) });
     return (r.personas || []).map((p) => {
@@ -885,8 +933,39 @@ export const api = {
         id: wstr(o.id) || fallback,
         name: wstr(o.name) || wstr(o.id) || fallback,
         role: wstr(o.role),
+        system_append: wstr(o.system_append),
       };
     });
+  },
+
+  /** POST /v1/workspaces/<ws>/personas — upsert the persona manifest
+   *  (name/role/system_append; wire field for the system prompt fragment
+   *  is `system_append`). Verify-after-write: relays that predate manifest
+   *  updates silently no-op on existing personas — the re-read must show
+   *  the saved fields or this throws loudly (klanker#161 U06). */
+  async savePersona(
+    inst: KlankerInstance,
+    workspace: string,
+    id: string,
+    fields: { name?: string; role?: string; system_append?: string }
+  ): Promise<{ id: string; name?: string; role?: string; system_append?: string }> {
+    await jsonReq(inst, `/v1/workspaces/${encodeURIComponent(workspace)}/personas`, {
+      id,
+      name: fields.name || "",
+      role: fields.role || "",
+      system_append: fields.system_append || "",
+    });
+    const rows = await this.listPersonas(inst, workspace);
+    const row = rows.find((r) => r.id === id);
+    // row.name falls back to the id server-side when the manifest name is
+    // empty — the expected read-back mirrors that exactly.
+    const expectedName = fields.name || id;
+    const nameOk = !!row && (row.name || row.id) === expectedName;
+    const roleOk = !!row && (row.role || "") === (fields.role || "");
+    if (!row || !nameOk || !roleOk) {
+      throw new Error("relay did not persist the persona update — it needs a newer agents-relay (update endpoint)");
+    }
+    return { id, ...fields };
   },
 
   /** GET /v1/workspaces/<ws>/inbox — per-persona handoff/unread counts +

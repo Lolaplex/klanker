@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import type { KlankerInstance, PendingApproval, ProcessStatus } from "../types/klanker";
-import { api, notify } from "../services/api";
+import { api, notifyWhenUnfocused } from "../services/api";
 
 /**
  * Pending-approval poll (3s) for the active instance + the decide path.
@@ -59,13 +59,10 @@ export function useApprovals(args: {
           device: deviceRef?.current || "",
         });
         if (!stop && mine === pollSeq.current) {
-          if (
-            next &&
-            next.id !== lastNotifiedApprovalRef.current &&
-            (document.hidden || !document.hasFocus())
-          ) {
+          if (next && next.id !== lastNotifiedApprovalRef.current) {
             lastNotifiedApprovalRef.current = next.id;
-            void notify("Klanker needs approval", next.summary || next.tool || "Pending tool approval");
+            const tool = next.summary || next.tool || "Pending tool approval";
+            void notifyWhenUnfocused("Klanker needs approval", `${workspaceId ? `${workspaceId} — ` : ""}${tool}`);
           }
           setPending(next);
         }
