@@ -685,10 +685,9 @@ export const api = {
       if (saved === null) {
         throw new Error("local relay unreachable — remote not saved");
       }
+      const merged = mergeCanonicalRemote(next, saved.remote);
       return {
-        ...stripSecrets(next),
-        via: "relay",
-        has_secret: !!(next.secret || next.endpoint?.secret) || !!next.has_secret,
+        ...stripSecrets(merged),
         secret: inst.secret || inst.endpoint?.secret,
       };
     }
@@ -2303,6 +2302,50 @@ async function relayRemotes(): Promise<KlankerInstance[] | null> {
   }
 }
 
+type RelayRemoteRow = {
+  id: string;
+  base_url: string;
+  label: string;
+  via?: string;
+  device_id?: string;
+  has_secret?: boolean;
+};
+
+function mapRelayRemoteRow(raw: unknown): RelayRemoteRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const id = wstr(row.id);
+  if (!id) return null;
+  return {
+    id,
+    base_url: wstr(row.base_url) || "",
+    label: wstr(row.label) || "",
+    via: wstr(row.via),
+    device_id: wstr(row.device_id),
+    has_secret: typeof row.has_secret === "boolean" ? row.has_secret : undefined,
+  };
+}
+
+/** Adopt the relay's canonical upsert row after host dedupe (#144): the
+ *  pre-dedupe client id must never survive when the server reused an
+ *  existing mount. */
+function mergeCanonicalRemote(inst: KlankerInstance, remote: RelayRemoteRow | undefined): KlankerInstance {
+  if (!remote?.id) return inst;
+  const baseUrl = remote.base_url || inst.endpoint?.base_url || inst.base_url || "";
+  const out: KlankerInstance = {
+    ...inst,
+    id: remote.id,
+    slug: remote.id,
+    name: remote.label || inst.name || remote.id,
+    via: remote.via === "channel" ? "channel" : "relay",
+    device_id: remote.device_id || undefined,
+    has_secret: remote.has_secret ?? (!!(inst.secret || inst.endpoint?.secret) || !!inst.has_secret),
+  };
+  if (baseUrl) out.endpoint = { ...(out.endpoint || {}), base_url: baseUrl };
+  if (out.base_url !== undefined) out.base_url = baseUrl;
+  return out;
+}
+
 /** Endpoint host — the dedupe key between the desktop file registry and
  *  the relay-side remotes.json (same key as keyring accounts). */
 function hostKey(inst: { endpoint?: { base_url?: string }; base_url?: string }): string {
@@ -2393,7 +2436,8 @@ async function localRelayRemotes(
   body?: Record<string, unknown>,
   id?: string
 ): Promise<{
-  remotes?: { id: string; base_url: string; label: string; via?: string; device_id?: string; has_secret: boolean }[];
+  remotes?: RelayRemoteRow[];
+  remote?: RelayRemoteRow;
 } | null> {
   const res = await localRelayFetch(`/v1/remotes${id ? `/${encodeURIComponent(id)}` : ""}`, method, body);
   if (res === null) return null;
@@ -2401,14 +2445,20 @@ async function localRelayRemotes(
     const detail = await res.text().catch(() => "");
     throw new Error(`local relay /v1/remotes ${method} failed: ${res.status} ${detail.slice(0, 200)}`);
   }
-  return method === "GET" ? await res.json() : {};
+  const data = (await res.json().catch(() => ({}))) as { remotes?: unknown; remote?: unknown };
+  return {
+    remotes: Array.isArray(data.remotes)
+      ? data.remotes.map(mapRelayRemoteRow).filter((r): r is RelayRemoteRow => !!r)
+      : undefined,
+    remote: mapRelayRemoteRow(data.remote) || undefined,
+  };
 }
 
 /** POST /v1/remotes on the same-origin relay (PWA path). false = relay
  *  unreachable (offline fallback is legitimate); an HTTP error throws —
  *  a refused write must never fall back to localStorage silently
  *  (klanker#144). */
-async function remoteSave(inst: KlankerInstance): Promise<boolean> {
+async function remoteSave(inst: KlankerInstance): Promise<true | RelayRemoteRow | false> {
   let r: Response;
   try {
     r = await fetch("/v1/remotes", {
@@ -2428,7 +2478,8 @@ async function remoteSave(inst: KlankerInstance): Promise<boolean> {
     const detail = await r.text().catch(() => "");
     throw new Error(`remote save refused: ${r.status} ${detail.slice(0, 200)}`);
   }
-  return true;
+  const data = (await r.json().catch(() => ({}))) as { remote?: unknown };
+  return mapRelayRemoteRow(data.remote) || true;
 }
 
 /** Persist an instance; returns the stored form (secrets stripped). */
@@ -2443,8 +2494,10 @@ async function registrySave(inst: KlankerInstance): Promise<KlankerInstance> {
     lsWrite(inst);
     return inst;
   }
-  if (await remoteSave(inst)) {
-    return { ...stripSecrets(inst), via: "relay", has_secret: inst.has_secret || !!(inst.secret || inst.endpoint?.secret) };
+  const remote = await remoteSave(inst);
+  if (remote) {
+    const merged = mergeCanonicalRemote(inst, typeof remote === "object" ? remote : undefined);
+    return { ...stripSecrets(merged), via: "relay", has_secret: merged.has_secret || !!(inst.secret || inst.endpoint?.secret) };
   }
   lsWrite(inst);
   return inst;

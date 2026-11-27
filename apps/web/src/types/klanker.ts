@@ -237,6 +237,11 @@ export interface PairCreateResult {
   expires_in: number;
   expires_at: number;
   host_id: string;
+  /** Relay-advertised reachable base plus loopback substitution metadata
+   *  (agents-relay#139); absent on older relays. */
+  advertised_url?: string;
+  loopback_substituted?: boolean;
+  loopback_warning?: boolean;
 }
 
 export interface StoreItem {
@@ -328,6 +333,11 @@ export interface WsInvite {
   host_id: string;
   ws?: string;
   granted_by?: string;
+  /** Relay-advertised reachable base plus loopback substitution metadata
+   *  (agents-relay#139); absent on older relays. */
+  advertised_url?: string;
+  loopback_substituted?: boolean;
+  loopback_warning?: boolean;
 }
 
 /** Ownership/share keys of PATCH /v1/workspaces/<id> (admin-only). */

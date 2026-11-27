@@ -33,6 +33,16 @@ export type TurnEvent = {
 
 export const TURN_EVENT_NAME = "klanker:turn-event";
 
+export type SteerTurnEvent = TurnEvent & { type: "steer"; text: string };
+
+/** Narrow the relay's typed mid-turn steer frame. Unknown/malformed frames
+ *  stay invisible instead of painting empty confirmation chrome. */
+export function asSteerEvent(ev: TurnEvent): SteerTurnEvent | null {
+  return ev.type === "steer" && typeof ev.text === "string" && ev.text.trim()
+    ? (ev as SteerTurnEvent)
+    : null;
+}
+
 /** Side-channel for UI-only trace affordances. App.tsx stays backward
  * compatible while ChatConsole can observe the typed U13 frames passing
  * through the resumable transport. */

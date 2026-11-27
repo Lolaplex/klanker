@@ -57,11 +57,12 @@ export function PowerComposer(props: {
   usage?: UsageStats;
   providers?: ProviderRow[];
   pickProvider?: string;
+  providersDisabled?: boolean;
 }) {
   const {
     instance, input, onInput, onSubmit, onKeyDown, onPaste, onPickFiles, onDrop,
     files, setFiles, textareaRef, fileRef, isLoading, sendHold, displaySpeaker,
-    session, workspace, usage, providers = [], pickProvider, onSteer, steerNote, acpMode = "",
+    session, workspace, usage, providers = [], pickProvider, onSteer, steerNote, acpMode = "", providersDisabled = false,
   } = props;
   const [dragOver, setDragOver] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
@@ -279,7 +280,7 @@ export function PowerComposer(props: {
             <Volume2 className="h-3.5 w-3.5" />
           </button>
           {usage && (usage.tokensIn || usage.tokensOut) ? <span>{usage.tokensIn + usage.tokensOut} tok{usage.costUsd ? ` · $${usage.costUsd.toFixed(6)}` : ""}</span> : null}
-          <button type="button" onClick={() => void refreshProviders(instance).catch(() => setNote("provider refresh failed"))} className="rounded p-1 hover:bg-hover hover:text-ink-primary" aria-label="Refresh providers" title="Refresh providers"><RefreshCw className="h-3.5 w-3.5" /></button>
+          <button type="button" disabled={providersDisabled} onClick={() => void refreshProviders(instance).catch(() => setNote("provider refresh failed"))} className="rounded p-1 hover:bg-hover hover:text-ink-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-muted" aria-label="Refresh providers" title={providersDisabled ? "Host offline — provider refresh unavailable" : "Refresh providers"}><RefreshCw className="h-3.5 w-3.5" /></button>
           {modes.length ? (
             <select aria-label="ACP mode" value={acpMode || modes[0] || ""} className="bg-transparent text-ink-secondary outline-none" onChange={(e) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode: e.target.value, provider: pickProvider } }))}>
               {modes.map((m) => <option key={m} value={m}>{m}</option>)}

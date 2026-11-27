@@ -10,7 +10,7 @@ import { MarkdownMessage } from "./MarkdownMessage";
 import type { HostBinding, HostRow } from "../hostPicker";
 import { api } from "../services/api";
 import { injectSteer } from "../services/streamExtrasApi";
-import { TURN_EVENT_NAME, type TurnEvent } from "../turnStream";
+import { asSteerEvent, TURN_EVENT_NAME, type TurnEvent } from "../turnStream";
 import { PowerComposer } from "./PowerComposer";
 import { applyLiveTurnEvent, stepsFromSessionEvents, ToolTimeline, usageFromTurnEvent, type TimelineStep, type UsageStats } from "./ToolTimeline";
 
@@ -101,6 +101,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   providers = [],
   pick,
   acpMode = "",
+  providersDisabled = false,
   remoteApprovalLabel = null,
   pending,
   deciding,
@@ -119,9 +120,12 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const [usage, setUsage] = useState<UsageStats>({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
   const [liveThought, setLiveThought] = useState("");
   const [steerNote, setSteerNote] = useState("");
+  const [steerEvents, setSteerEvents] = useState<{ id: string; text: string }[]>([]);
   const [showJump, setShowJump] = useState(false);
   const liveQueueRef = useRef<TurnEvent[]>([]);
   const liveRafRef = useRef(0);
+  const steerSeenRef = useRef(new Set<string>());
+  const activeSessionRef = useRef("");
 
   const scrollToBottom = () => {
     const el = listRef.current;
@@ -151,6 +155,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   }, []);
 
   const activeSession = sessionLabel && sessionLabel !== "new" ? sessionLabel : "";
+  activeSessionRef.current = activeSession;
   const titleParts = (title || instance.name).split(" · ");
   const wsId = workspace || titleParts[0]?.trim() || "default";
   const personaId = persona || titleParts[1]?.trim() || "default";
@@ -159,6 +164,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     setTimelineSteps([]);
     setUsage({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
     setLiveThought("");
+    setSteerEvents([]);
+    steerSeenRef.current.clear();
   }, [activeSession, workspace, persona, instance.id]);
 
   useEffect(() => {
@@ -166,6 +173,20 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       liveRafRef.current = 0;
       const batch = liveQueueRef.current.splice(0);
       for (const ev of batch) {
+        const steerEv = asSteerEvent(ev);
+        if (steerEv) {
+          const evSession = String(steerEv.session || "");
+          const currentSession = activeSessionRef.current;
+          if (!evSession || !currentSession || evSession === currentSession) {
+            const key = `${evSession}\n${steerEv.text.trim()}`;
+            if (!steerSeenRef.current.has(key)) {
+              steerSeenRef.current.add(key);
+              const text = steerEv.text.trim();
+              const id = `steer-${steerSeenRef.current.size}`;
+              setSteerEvents((cur) => [...cur.slice(-5), { id, text }]);
+            }
+          }
+        }
         setTimelineSteps((cur) => applyLiveTurnEvent(cur, ev));
         setUsage((cur) => usageFromTurnEvent(cur, ev));
         if (ev.type === "thought" && ev.text) setLiveThought((cur) => `${cur}${cur ? "\n" : ""}${ev.text}`);
@@ -221,7 +242,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     const text = input.trim();
     if (!text || !activeSession) return;
     try {
-      await injectSteer(instance, { session: activeSession, text, workspace: wsId, persona: personaId, user: instance.user_id });
+      await injectSteer(instance, { session: activeSession, text, workspace: wsId });
       onInput("");
       setSteerNote("steered");
     } catch (e) {
@@ -369,6 +390,16 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         className="flex-1 overflow-y-auto overscroll-y-contain p-4 space-y-4 select-text"
       >
         <div className="mx-auto w-full max-w-3xl space-y-4">
+        {steerEvents.length ? (
+          <div className="flex flex-col gap-1" data-testid="steer-events">
+            {steerEvents.map((s) => (
+              <div key={s.id} className="flex items-start gap-2 rounded-md border border-subtle bg-surface px-2.5 py-1.5 text-[11px] text-ink-secondary">
+                <span className="shrink-0 pt-px text-[9px] uppercase tracking-wider text-ink-muted">steer</span>
+                <span className="min-w-0 whitespace-pre-wrap break-words">{s.text}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <ToolTimeline steps={timelineSteps} usage={usage} />
         {messages.length === 0 && emptyState ? (
           emptyState
@@ -446,6 +477,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         providers={providers}
         pickProvider={pick?.provider}
         acpMode={acpMode}
+        providersDisabled={providersDisabled}
       />
     </div>
   );
