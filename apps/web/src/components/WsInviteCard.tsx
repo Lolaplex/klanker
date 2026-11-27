@@ -87,6 +87,9 @@ export const WsInviteCard: React.FC<WsInviteCardProps> = ({ ws, ttlSec = 60 }) =
 
   const totalTtl = Math.max(1, invite?.expires_in || ttlSec);
   const pct = Math.max(0, Math.min(100, Math.round((secondsLeft / totalTtl) * 100)));
+  const showLoopbackWarning = Boolean(
+    invite && view?.link && (invite.loopback_warning === true || (invite.loopback_warning === undefined && view.loopback))
+  );
 
   return (
     <div className="flex flex-col gap-3" data-ws-invite={ws}>
@@ -137,8 +140,13 @@ export const WsInviteCard: React.FC<WsInviteCardProps> = ({ ws, ttlSec = 60 }) =
               </button>
             </div>
           )}
-          {view.link && view.loopback && (
-            <p className="text-[10px] text-amber-500">
+          {view.link && invite.loopback_substituted === true && (
+            <p className="text-[10px] text-ink-muted" data-testid="loopback-substituted-note">
+              Reachable network address selected automatically
+            </p>
+          )}
+          {showLoopbackWarning && (
+            <p className="text-[10px] text-ink-secondary" data-testid="loopback-warning">
               invite link resolves to 127.0.0.1 — only this device can reach it. Enable hub mode (LAN bind) or share a
               tailnet/LAN URL so the other device can redeem it.
             </p>

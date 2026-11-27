@@ -51,6 +51,9 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
   }, [pair, secondsLeft, linkUrl]);
 
   const pct = Math.max(0, Math.min(100, Math.round((secondsLeft / Math.max(1, totalTtl)) * 100)));
+  const showLoopbackWarning = Boolean(
+    linkUrl && (pair.loopback_warning === true || (pair.loopback_warning === undefined && linkLoopback))
+  );
 
   return (
     <>
@@ -97,8 +100,13 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
           </button>
         </div>
       )}
-      {linkUrl && linkLoopback && (
-        <p className="text-[10px] text-amber-500">
+      {linkUrl && pair.loopback_substituted === true && (
+        <p className="text-[10px] text-ink-muted" data-testid="loopback-substituted-note">
+          Reachable network address selected automatically
+        </p>
+      )}
+      {showLoopbackWarning && (
+        <p className="text-[10px] text-ink-secondary" data-testid="loopback-warning">
           link points at this device — pairing another device needs a reachable URL (tailnet/LAN), not loopback.
         </p>
       )}

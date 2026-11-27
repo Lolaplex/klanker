@@ -40,21 +40,29 @@ export async function speakVoice(inst: KlankerInstance, text: string): Promise<B
   return res.blob();
 }
 
-/** POST /v1/inject's measured relay contract: numeric ``chat_id`` plus
- * ``text``. Session/workspace keys are not sent — current relays ignore them
- * for routing and concatenate unknown keys into the injected prompt. */
+/** POST /v1/inject's web-session steer contract (agents-relay#78):
+ *  ``{session_id, session, text, workspace}`` routes straight onto the active
+ *  browser run — web user ids are opaque strings, never numeric chat ids. */
 export async function injectSteer(
   inst: KlankerInstance,
-  body: { session: string; text: string; workspace?: string; persona?: string; user?: string }
+  body: { session: string; text: string; workspace?: string }
 ): Promise<unknown> {
-  const chatId = String(body.user || "").trim();
-  if (!/^\d+$/.test(chatId)) {
-    throw new Error("steer unavailable: /v1/inject requires a numeric chat_id");
+  const session = String(body.session || "").trim();
+  const text = String(body.text || "").trim();
+  if (!session) throw new Error("steer unavailable: session is required");
+  if (!text) throw new Error("steer unavailable: text is required");
+  try {
+    return await apiJson(inst, "/v1/inject", {
+      session_id: session,
+      session,
+      text,
+      workspace: body.workspace || "",
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/^409\b/.test(msg)) throw new Error(`steer refused — ${msg}`);
+    throw new Error(`steer failed — ${msg}`);
   }
-  return apiJson(inst, "/v1/inject", {
-    chat_id: Number(chatId),
-    text: body.text,
-  });
 }
 
 export async function forkSession(

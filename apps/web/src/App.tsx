@@ -1177,6 +1177,22 @@ export function App() {
       if (ws) newChat(ws, String(d.persona || selPersonaRef.current || "default"));
     };
     const providers = () => refreshProviders();
+    const openSession = (event: Event) => {
+      const d = detailOf(event);
+      const ws = String(d.workspace || selWsRef.current || "").trim();
+      if (!ws) return;
+      const persona = String(d.persona || selPersonaRef.current || "default").trim() || "default";
+      const session = String(d.session || "").trim();
+      tree.refreshWorkspaces();
+      tree.refreshPersonas(ws);
+      if (session) {
+        tree.refreshSessions(ws, persona);
+        selectChat(ws, persona, session);
+      } else {
+        newChat(ws, persona);
+      }
+      window.setTimeout(() => window.dispatchEvent(new Event("klanker:focus-composer")), 0);
+    };
     const acpMode = (event: Event) => {
       const d = detailOf(event);
       const mode = String(d.mode || "").trim();
@@ -1192,6 +1208,7 @@ export function App() {
       ["klanker:clear", clear],
       ["klanker:providers-refreshed", providers],
       ["klanker:refresh-providers", providers],
+      ["klanker:open-session", openSession],
       ["klanker:acp-mode", acpMode],
     ];
     for (const [name, fn] of listeners) window.addEventListener(name, fn);

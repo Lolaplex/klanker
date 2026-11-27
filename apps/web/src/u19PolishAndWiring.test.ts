@@ -109,21 +109,31 @@ describe("U19 workbench clipping and resize persistence", () => {
 });
 
 describe("U19 Enter-to-steer and exact /v1/inject wire", () => {
-  it("posts only the measured relay contract: numeric chat_id plus text", async () => {
+  it("posts the web session contract and surfaces a 409 refusal loudly", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
+    let status = 200;
     const orig = globalThis.fetch;
     (globalThis as { fetch: unknown }).fetch = async (input: unknown, init?: RequestInit) => {
       calls.push({ url: String(input), init });
-      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+      const body = status === 409 ? { error: "no active run for session", session: "ses_1", active: false } : { ok: true, steered: true, active: true };
+      return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
     };
     try {
-      await injectSteer(inst, { session: "ses_1", text: "steer left", workspace: "alpha", persona: "default", user: "4242" });
+      await injectSteer(inst, { session: "ses_1", text: "steer left", workspace: "alpha" });
       assert.equal(calls.length, 1);
       assert.ok(calls[0].url.endsWith("/v1/inject"), calls[0].url);
-      assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { chat_id: 4242, text: "steer left" });
-      calls.length = 0;
-      await assert.rejects(() => injectSteer({ ...inst, user_id: "web" } as KlankerInstance, { session: "ses_1", text: "x", user: "web" }));
-      assert.equal(calls.length, 0, "non-numeric web users must fail before the wire");
+      assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
+        session_id: "ses_1",
+        session: "ses_1",
+        text: "steer left",
+        workspace: "alpha",
+      });
+      status = 409;
+      await assert.rejects(
+        () => injectSteer({ ...inst, user_id: "web-user" } as KlankerInstance, { session: "ses_1", text: "x", workspace: "alpha" }),
+        /steer refused — 409: no active run for session/
+      );
+      assert.equal(calls.length, 2, "non-numeric web user ids must not be refused client-side");
     } finally {
       (globalThis as { fetch: unknown }).fetch = orig;
     }
@@ -168,7 +178,7 @@ describe("U19 Enter-to-steer and exact /v1/inject wire", () => {
       });
       await act(async () => new Promise((res) => setTimeout(res, 30)));
       assert.equal(calls.length, 1, "Enter did not reach /v1/inject");
-      assert.deepEqual(JSON.parse(calls[0]), { chat_id: 4242, text: "steer left" });
+      assert.deepEqual(JSON.parse(calls[0]), { session_id: "ses_1", session: "ses_1", text: "steer left", workspace: "alpha" });
       assert.ok(cleared, "input was not cleared after successful steer");
       assert.equal(sent, false, "a duplicate normal turn was started");
     } finally {
