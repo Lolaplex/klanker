@@ -962,7 +962,8 @@ export const api = {
     const expectedName = fields.name || id;
     const nameOk = !!row && (row.name || row.id) === expectedName;
     const roleOk = !!row && (row.role || "") === (fields.role || "");
-    if (!row || !nameOk || !roleOk) {
+    const appendOk = !!row && (row.system_append || "") === (fields.system_append || "");
+    if (!row || !nameOk || !roleOk || !appendOk) {
       throw new Error("relay did not persist the persona update — it needs a newer agents-relay (update endpoint)");
     }
     return { id, ...fields };
@@ -1821,7 +1822,7 @@ export const api = {
   /** PATCH /v1/host — rename this host; the friendly label is what every
    *  device row, host picker and session pill displays. */
   async setHostLabel(label: string): Promise<HostInfo> {
-    return localRelayJson<HostInfo>("/v1/host", "PATCH", { host_label: label });
+    return localRelayJson<HostInfo>("/v1/host", "PATCH", { label });
   },
 
   /** POST /v1/providers/secret — write a provider key into the host secret

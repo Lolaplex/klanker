@@ -79,6 +79,22 @@ describe("api.savePersona", () => {
       stub.restore();
     }
   });
+
+  it("throws loudly when name/role match but system_append is dropped on read-back", async () => {
+    const stub = stubFetch((url) => {
+      if (url.includes("/workspaces/alpha/personas")) return jsonRes({ ok: true, persona: { id: "nova" } }, 201);
+      return jsonRes({ ok: true, personas: [{ id: "nova", name: "Nova", role: "reviewer", system_append: "old" }] });
+    });
+    try {
+      await assert.rejects(
+        api.savePersona(inst, "alpha", "nova", { name: "Nova", role: "reviewer", system_append: "new prompt" }),
+        /did not persist/,
+        "dropped system_append must surface as a loud error"
+      );
+    } finally {
+      stub.restore();
+    }
+  });
 });
 
 describe("notifyWhenUnfocused gate", () => {
