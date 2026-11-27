@@ -924,7 +924,7 @@ export const api = {
   async listPersonas(
     inst: KlankerInstance,
     workspace: string
-  ): Promise<{ id: string; name?: string; role?: string; system_append?: string }[]> {
+  ): Promise<{ id: string; name?: string; role?: string; system_append?: string; notes?: string; accepts_messages?: boolean; allow_peers?: boolean }[]> {
     const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
     const r = await req<{ personas?: (WireRow | string)[] }>(inst, `/v1/personas${q}`, { headers: headers(inst) });
     return (r.personas || []).map((p) => {
@@ -935,6 +935,9 @@ export const api = {
         name: wstr(o.name) || wstr(o.id) || fallback,
         role: wstr(o.role),
         system_append: wstr(o.system_append),
+        notes: wstr(o.notes),
+        accepts_messages: o.accepts_messages === undefined ? undefined : wbool(o.accepts_messages),
+        allow_peers: o.allow_peers === undefined ? undefined : wbool(o.allow_peers),
       };
     });
   },
@@ -948,13 +951,23 @@ export const api = {
     inst: KlankerInstance,
     workspace: string,
     id: string,
-    fields: { name?: string; role?: string; system_append?: string }
+    fields: {
+      name?: string;
+      role?: string;
+      system_append?: string;
+      notes?: string;
+      accepts_messages?: boolean;
+      allow_peers?: boolean;
+    }
   ): Promise<{ id: string; name?: string; role?: string; system_append?: string }> {
     await jsonReq(inst, `/v1/workspaces/${encodeURIComponent(workspace)}/personas`, {
       id,
       name: fields.name || "",
       role: fields.role || "",
       system_append: fields.system_append || "",
+      notes: fields.notes || "",
+      accepts_messages: fields.accepts_messages !== false,
+      allow_peers: fields.allow_peers !== false,
     });
     const rows = await this.listPersonas(inst, workspace);
     const row = rows.find((r) => r.id === id);
@@ -1028,6 +1041,24 @@ export const api = {
     return { id: wstr(t.id) || "", title: fields.title, note: fields.note, status: wstr(t.status) || "open" };
   },
 
+  /** POST /v1/workspaces/<ws>/personas/<p>/inbox/<task>/handoff — pass the
+   *  task to a peer persona; wake=1 spawns its turn immediately
+   *  (klanker#169 U15). */
+  async handoffInboxTask(
+    inst: KlankerInstance,
+    workspace: string,
+    persona: string,
+    task: string,
+    fields: { to: string; note?: string; wake?: boolean }
+  ): Promise<void> {
+    const wake = fields.wake ? "?wake=1" : "";
+    await jsonReq(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/inbox/${encodeURIComponent(task)}/handoff${wake}`,
+      { to: fields.to, note: fields.note || "" }
+    );
+  },
+
   /** Server-side sessions for (workspace, persona). */
   async listSessions(
     inst: KlankerInstance,
@@ -1089,6 +1120,17 @@ export const api = {
           configurable: wbool(p.configurable),
           command: wstr(p.command),
           error: wstr(p.error),
+          // Auth/endpoint metadata (klanker#169 U15): ProvidersPanel needs
+          // these for key badges, ACP login hints and the Edit prefill —
+          // stripping them here made every provider look keyless.
+          url: wstr(p.url),
+          url_env: wstr(p.url_env),
+          key_env: wstr(p.key_env),
+          key_configured: wbool(p.key_configured),
+          auth_methods: Array.isArray(p.auth_methods)
+            ? p.auth_methods.filter((m): m is string => typeof m === "string")
+            : undefined,
+          auth_required: wbool(p.auth_required),
         }))
         .filter((p) => p.name);
       try {
@@ -1141,6 +1183,17 @@ export const api = {
           configurable: wbool(p.configurable),
           command: wstr(p.command),
           error: wstr(p.error),
+          // Auth/endpoint metadata (klanker#169 U15): ProvidersPanel needs
+          // these for key badges, ACP login hints and the Edit prefill —
+          // stripping them here made every provider look keyless.
+          url: wstr(p.url),
+          url_env: wstr(p.url_env),
+          key_env: wstr(p.key_env),
+          key_configured: wbool(p.key_configured),
+          auth_methods: Array.isArray(p.auth_methods)
+            ? p.auth_methods.filter((m): m is string => typeof m === "string")
+            : undefined,
+          auth_required: wbool(p.auth_required),
         }))
         .filter((p) => p.name);
       try {

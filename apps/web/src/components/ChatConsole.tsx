@@ -33,7 +33,11 @@ interface ChatConsoleProps {
   messages: ChatMessage[];
   input: string;
   onInput: (v: string) => void;
-  onSendMessage: (msg: string, attachments?: OutAttachment[]) => void;
+  onSendMessage: (
+    msg: string,
+    attachments?: OutAttachment[],
+    opts?: { command?: boolean; reuseAssistant?: boolean }
+  ) => void;
   onStop: () => void;
   isLoading: boolean;
   /** A turn on another device/channel is still running for this session. */
@@ -149,13 +153,21 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
   useEffect(resizeComposer, [input]);
 
+  const SLASH_COMMAND = /^\/(retry|undo|compress)(\s+\d+)?$/;
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if ((!input.trim() && files.length === 0) || isLoading || sendHold) return;
     stickRef.current = true;
     scrollToBottom();
+    const typed = input.trim();
+    // Trace commands never become user bubbles (klanker#169 U15).
+    if (files.length === 0 && SLASH_COMMAND.test(typed)) {
+      onSendMessage(typed, undefined, { command: true, reuseAssistant: typed === "/retry" });
+      onInput("");
+      return;
+    }
     // Relay requires non-empty text; attach-only sends carry a marker.
-    onSendMessage(input.trim() || `attached ${files.length} file${files.length === 1 ? "" : "s"}`, files.length ? files : undefined);
+    onSendMessage(typed || `attached ${files.length} file${files.length === 1 ? "" : "s"}`, files.length ? files : undefined);
     onInput("");
     setFiles([]);
   };
@@ -235,13 +247,11 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       break;
     }
   }
+  // /retry rewinds the trace server-side and re-completes — no duplicate
+  // user bubble, the answer streams into the existing bubble
+  // (klanker#169 U15; the old path resent the user text as a new turn).
   const regenerate = () => {
-    for (let i = lastAssistantIdx - 1; i >= 0; i--) {
-      if (messages[i].role === "user" && messages[i].content) {
-        onSendMessage(messages[i].content);
-        return;
-      }
-    }
+    onSendMessage("/retry", undefined, { command: true, reuseAssistant: true });
   };
   const [exportOpen, setExportOpen] = useState(false);
   const streamingBubble = isLoading && last?.role === "klanker";
@@ -368,6 +378,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               name={displaySpeaker}
               thinking={streamingBubble && m.id === last?.id && !m.content}
               streaming={streamingBubble && m.id === last?.id}
+              streamStatus={streamingBubble && m.id === last?.id ? streamStatus : undefined}
               onRegenerate={i === lastAssistantIdx && !isLoading ? regenerate : undefined}
             />
           ))
@@ -477,6 +488,7 @@ const MessageBubble = React.memo(function MessageBubble({
   name,
   thinking,
   streaming = false,
+  streamStatus = null,
   onRegenerate,
 }: {
   message: ChatMessage;
@@ -484,6 +496,11 @@ const MessageBubble = React.memo(function MessageBubble({
   thinking: boolean;
   /** This bubble is the live-streaming one — think timer keeps ticking. */
   streaming?: boolean;
+  /** Live turn status ("searching…", tool names) — rendered inside the
+   *  streaming bubble itself: as the indicator while content is empty,
+   *  as a subtle activity line under streaming markdown (klanker#169
+   *  U15 — the empty-bubble gate used to hide this entirely). */
+  streamStatus?: string | null;
   /** Latest assistant answer only: hover control resends the preceding
    *  user message (klanker#163 U08). */
   onRegenerate?: () => void;
@@ -564,9 +581,15 @@ const MessageBubble = React.memo(function MessageBubble({
             )
           ) : (
             <div className="whitespace-pre-wrap break-words">
-              {message.content || (thinking ? "thinking..." : "")}
+              {message.content || (thinking ? streamStatus || "thinking..." : "")}
             </div>
           )}
+          {streaming && message.content && streamStatus ? (
+            <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[#525252] animate-pulse">
+              <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping shrink-0" />
+              <span className="truncate">{streamStatus}</span>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

@@ -24,6 +24,12 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [systemAppend, setSystemAppend] = useState("");
+  // Team-mesh flags (klanker#169 U15): whether peers/user can hand tasks
+  // to this persona and free-text operator notes — already honored by the
+  // relay manifest contract, never exposed in the UI before.
+  const [notes, setNotes] = useState("");
+  const [acceptsMessages, setAcceptsMessages] = useState(true);
+  const [allowPeers, setAllowPeers] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -45,6 +51,9 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
           setName(row.name && row.name !== row.id ? row.name : "");
           setRole(row.role || "");
           setSystemAppend(row.system_append || "");
+          setNotes(row.notes || "");
+          if (row.accepts_messages !== undefined) setAcceptsMessages(row.accepts_messages);
+          if (row.allow_peers !== undefined) setAllowPeers(row.allow_peers);
         }
         setLoaded(true);
       })
@@ -60,6 +69,9 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
         name: name.trim(),
         role: role.trim(),
         system_append: systemAppend.trim(),
+        notes: notes.trim(),
+        accepts_messages: acceptsMessages,
+        allow_peers: allowPeers,
       });
       onSaved();
       onClose();
@@ -111,6 +123,34 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
               onChange={(e) => setSystemAppend(e.target.value)}
               placeholder="appended to the system prompt for every turn of this persona"
               aria-label="persona system prompt"
+            />
+          </label>
+          <div className="flex gap-3">
+            <label className="inline-flex items-center gap-2 text-[11px] text-[#a3a3a3] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={acceptsMessages}
+                onChange={(e) => setAcceptsMessages(e.target.checked)}
+              />
+              accepts messages
+            </label>
+            <label className="inline-flex items-center gap-2 text-[11px] text-[#a3a3a3] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={allowPeers}
+                onChange={(e) => setAllowPeers(e.target.checked)}
+              />
+              allow peer handoffs
+            </label>
+          </div>
+          <label className="flex flex-col gap-1">
+            <span className={labelClass}>notes</span>
+            <textarea
+              className={`${inputClass} resize-y min-h-14`}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="operator notes — not part of the prompt"
+              aria-label="persona notes"
             />
           </label>
           {note && <div className="text-red-500 break-words">{note}</div>}

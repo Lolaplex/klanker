@@ -175,13 +175,14 @@ describe("ChatConsole regenerate + composer", () => {
     }
   });
 
-  it("regenerate click resends the preceding user message", async () => {
-    const sent: string[] = [];
+  it("regenerate click dispatches the /retry trace command (klanker#169 U15)", async () => {
+    const calls: Array<{ m: string; opts?: { command?: boolean; reuseAssistant?: boolean } }> = [];
     const r = await renderInDom(
       React.createElement(ChatConsole, {
         ...baseProps,
         messages: msgs,
-        onSendMessage: (m: string) => sent.push(m),
+        onSendMessage: (m: string, _a?: unknown, opts?: { command?: boolean; reuseAssistant?: boolean }) =>
+          calls.push({ m, opts }),
       } as never)
     );
     try {
@@ -190,7 +191,11 @@ describe("ChatConsole regenerate + composer", () => {
       await act(async () => {
         btn.click();
       });
-      assert.deepEqual(sent, ["second question"], "must resend the user message before the latest answer");
+      assert.deepEqual(
+        calls,
+        [{ m: "/retry", opts: { command: true, reuseAssistant: true } }],
+        "regenerate must rewind server-side via /retry, never resend the user text"
+      );
     } finally {
       r.unmount();
     }

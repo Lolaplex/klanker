@@ -11,10 +11,16 @@ export function useRelayEvents(args: {
   activeInstance: KlankerInstance | null;
   status: ProcessStatus | null;
   onEvent: (event: RelayEvent) => void;
+  /** Stream health signal (klanker#169 U15): true once events flow, false
+   *  while backing off/reconnecting — consumers throttle their focus
+   *  polling while the push channel is alive. */
+  onHealth?: (healthy: boolean) => void;
 }): void {
-  const { activeInstance, status, onEvent } = args;
+  const { activeInstance, status, onEvent, onHealth } = args;
   const cbRef = useRef(onEvent);
   cbRef.current = onEvent;
+  const healthRef = useRef(onHealth);
+  healthRef.current = onHealth;
   const instId = activeInstance?.id;
 
   useEffect(() => {
@@ -34,6 +40,7 @@ export function useRelayEvents(args: {
           ctrl.signal,
           (ev) => {
             attempt = 0;
+            healthRef.current?.(true);
             cbRef.current(ev);
           },
           ""
@@ -42,6 +49,7 @@ export function useRelayEvents(args: {
         // Closed by abort or transient drop; backoff below handles reconnect.
       }
       if (stop) return;
+      healthRef.current?.(false);
       attempt += 1;
       const baseMs = Math.min(30_000, 1_000 * Math.pow(2, Math.min(attempt, 5)));
       const jitterMs = Math.floor(Math.random() * 600);

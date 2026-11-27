@@ -49,6 +49,11 @@ export function WsInboxTab({
   const [handoffTitle, setHandoffTitle] = useState("");
   const [handoffNote, setHandoffNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // Per-row wake-handoff mini-form (klanker#169 U15): task id being
+  // handed off, target peer, optional note.
+  const [handoffTask, setHandoffTask] = useState<string | null>(null);
+  const [handoffPeer, setHandoffPeer] = useState("");
+  const [handoffTaskNote, setHandoffTaskNote] = useState("");
 
   const personaName = useCallback(
     (id: string) => personas.find((p) => p.id === id)?.name || id,
@@ -99,6 +104,28 @@ export function WsInboxTab({
       setHandoffTitle("");
       setHandoffNote("");
       setComposeOpen(false);
+      await load();
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const wakeHandoff = async (taskId: string, fromPersona: string) => {
+    const to = handoffPeer;
+    if (!to || busy) return;
+    setBusy(true);
+    setNote(null);
+    try {
+      await api.handoffInboxTask(instance, workspace, fromPersona, taskId, {
+        to,
+        note: handoffTaskNote.trim(),
+        wake: true,
+      });
+      setHandoffTask(null);
+      setHandoffPeer("");
+      setHandoffTaskNote("");
       await load();
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e));
@@ -236,7 +263,55 @@ export function WsInboxTab({
                     open chat
                   </button>
                 )}
+                {row.task && personas.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHandoffTask(handoffTask === row.task ? null : (row.task ?? null));
+                      setHandoffPeer(personas.find((p) => p.id !== target)?.id || "");
+                      setHandoffTaskNote("");
+                    }}
+                    className="px-2 py-1 border border-[#262626] rounded text-[10px] text-[#a3a3a3] hover:text-white hover:bg-[#141414]"
+                    aria-label={`Handoff task ${row.title || row.task} to a peer`}
+                  >
+                    handoff &amp; wake
+                  </button>
+                )}
               </div>
+              {handoffTask === row.task && row.task && (
+                <div className="flex items-end gap-1.5 border-t border-[#1f1f1f] pt-1.5">
+                  <label className="flex flex-col gap-1 w-36 shrink-0">
+                    <span className={labelClass}>to peer</span>
+                    <Select
+                      value={handoffPeer}
+                      onChange={setHandoffPeer}
+                      ariaLabel="handoff peer"
+                      options={personas
+                        .filter((p) => p.id !== target)
+                        .map((p) => ({ value: p.id, label: p.name || p.id }))}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 flex-1 min-w-0">
+                    <span className={labelClass}>note</span>
+                    <input
+                      className={inputClass}
+                      value={handoffTaskNote}
+                      onChange={(e) => setHandoffTaskNote(e.target.value)}
+                      placeholder="context for the peer"
+                      aria-label="handoff note"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    disabled={busy || !handoffPeer}
+                    onClick={() => void wakeHandoff(row.task as string, target || row.from || "")}
+                    className="shrink-0 px-2.5 py-1.5 border border-white rounded bg-white text-black hover:bg-[#e5e5e5] disabled:opacity-50 text-[10px]"
+                    aria-label="Send handoff and wake the peer"
+                  >
+                    {busy ? "waking…" : "wake"}
+                  </button>
+                </div>
+              )}
             </div>
           );
         })}
