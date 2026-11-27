@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { Select } from "./ui/Select";
 import { Pause, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { JobRow, KlankerInstance, RoutineRow } from "../types/klanker";
 import { api } from "../services/api";
@@ -338,19 +339,16 @@ export const WsJobsTracesTab: React.FC<{
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div>
           <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Persona</label>
-          <select
+          <Select
             value={jobPersonaEff}
-            onChange={(e) => setJobPersona(e.target.value)}
-            style={{ colorScheme: "dark" }}
-            className={inputClass}
-          >
-            {!jobPersonaEff && <option value="">(pick)</option>}
-            {personas.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name || p.id}
-              </option>
-            ))}
-          </select>
+            onChange={setJobPersona}
+            ariaLabel="job persona"
+            placeholder="(pick)"
+            options={[
+              ...(!jobPersonaEff ? [{ value: "", label: "(pick)" }] : []),
+              ...personas.map((p) => ({ value: p.id, label: p.name || p.id })),
+            ]}
+          />
         </div>
         {personas.length === 0 && workspace && (
           <div className="flex gap-2 items-end">

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Group, Star } from "lucide-react";
 import type { ModelPick, ProviderRow } from "../types/klanker";
 import { groupRows, isStarred, parseFreeId, pickerRows, picksEqual } from "../providerPicker";
+import { Popover } from "./ui/Popover";
 
 /**
  * The one provider/model picker — flat favorites + all host models.
@@ -31,17 +32,8 @@ export function ProviderModelPicker({
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [grouped, setGrouped] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [open]);
   useEffect(() => {
     if (open) {
       setFilter("");
@@ -106,25 +98,31 @@ export function ProviderModelPicker({
   };
 
   return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        title={disabled ? "host offline — cached provider list" : "Model for this chat"}
-        className={`bg-[#0a0a0a] border hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[190px] truncate ${
-          disabled
-            ? "border-[#262626] text-[#525252] cursor-not-allowed"
-            : active
-              ? "border-[#525252] text-white cursor-pointer"
-              : "border-[#262626] text-[#a3a3a3] hover:text-white cursor-pointer"
-        }`}
-      >
-        {stale && <span className="text-[#737373]">⟳ </span>}
-        {label}
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-80 border border-[#262626] bg-[#0a0a0a] rounded-md shadow-lg font-mono text-xs">
+    <Popover
+      open={open}
+      onOpenChange={(v) => {
+        if (disabled && v) return;
+        setOpen(v);
+      }}
+      widthClass="w-80"
+      trigger={
+        <button
+          type="button"
+          disabled={disabled}
+          title={disabled ? "host offline — cached provider list" : "Model for this chat"}
+          className={`bg-[#0a0a0a] border hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[190px] truncate ${
+            disabled
+              ? "border-[#262626] text-[#525252] cursor-not-allowed"
+              : active
+                ? "border-[#525252] text-white cursor-pointer"
+                : "border-[#262626] text-[#a3a3a3] hover:text-white cursor-pointer"
+          }`}
+        >
+          {stale && <span className="text-[#737373]">⟳ </span>}
+          {label}
+        </button>
+      }
+    >
           <div className="flex items-center gap-1 p-2 border-b border-[#1f1f1f]">
             <input
               ref={inputRef}
@@ -208,8 +206,6 @@ export function ProviderModelPicker({
               </div>
             )}
           </div>
-        </div>
-      )}
-    </div>
+    </Popover>
   );
 }

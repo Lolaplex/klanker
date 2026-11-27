@@ -9,11 +9,12 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "test": "node --import ./src/testing/register-tsx.mjs --experimental-strip-types --test src/chatUi.test.ts src/markdownSafety.test.ts src/chatPersist.test.ts src/chatExport.test.ts src/push.test.ts src/kbDebug.test.ts src/relayCompat.test.ts src/serveState.test.ts src/wave5.test.ts src/pairLink.test.ts src/providerPicker.test.ts src/turnStream.test.ts src/api.test.ts src/wsShare.test.ts src/wsTree.test.ts src/hostPicker.test.ts src/chatBuckets.test.ts src/u03Shell.test.ts src/u04Pairing.test.ts src/u05Consolidation.test.ts src/u06PersonaNotify.test.ts",
+    "test": "node --import ./src/testing/register-tsx.mjs --experimental-strip-types --test src/chatUi.test.ts src/markdownSafety.test.ts src/chatPersist.test.ts src/chatExport.test.ts src/push.test.ts src/kbDebug.test.ts src/relayCompat.test.ts src/serveState.test.ts src/wave5.test.ts src/pairLink.test.ts src/providerPicker.test.ts src/turnStream.test.ts src/api.test.ts src/wsShare.test.ts src/wsTree.test.ts src/hostPicker.test.ts src/chatBuckets.test.ts src/u03Shell.test.ts src/u04Pairing.test.ts src/u05Consolidation.test.ts src/u06PersonaNotify.test.ts src/u07Primitives.test.ts",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@base-ui/react": "^1.9.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
     "react": "^19.0.0",
@@ -24,10 +25,12 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",
+    "@types/jsdom": "^30.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
+    "jsdom": "^31.0.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3",
