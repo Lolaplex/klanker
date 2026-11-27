@@ -1055,7 +1055,7 @@ export function App() {
               bottom: "auto",
             }
       }
-      className="app-shell fixed left-0 right-0 flex bg-[#000000] text-white overflow-hidden font-sans"
+      className="app-shell fixed left-0 right-0 flex bg-main text-ink-primary overflow-hidden font-sans"
     >
       {navOpen && (
         <div
@@ -1162,20 +1162,20 @@ export function App() {
           {activeInstance ? (
             <>
               {wsNote && (
-                <div className="shrink-0 flex items-center gap-2 px-3 py-1 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-red-500">
+                <div className="shrink-0 flex items-center gap-2 px-3 py-1 border-b border-strong bg-surface font-mono text-[11px] text-red-500">
                   <span className="flex-1 min-w-0 truncate">{wsNote}</span>
                   <button
                     type="button"
                     onClick={() => setWsNote(null)}
                     aria-label="Dismiss"
-                    className="shrink-0 inline-flex h-5 w-5 items-center justify-center text-[#737373] hover:text-white"
+                    className="shrink-0 inline-flex h-5 w-5 items-center justify-center text-ink-muted hover:text-ink-primary"
                   >
                     <X className="w-3 h-3" />
                   </button>
                 </div>
               )}
               {relayCompat.note && (
-                <div className="shrink-0 px-3 py-1 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-amber-500 truncate">
+                <div className="shrink-0 px-3 py-1 border-b border-strong bg-surface font-mono text-[11px] text-amber-500 truncate">
                   {relayCompat.note.compat.kind === "stale-local" && (
                     <>
                       relay {relayCompat.note.compat.version} &lt; required {MIN_RELAY} —{" "}
@@ -1297,7 +1297,7 @@ export function App() {
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-[#525252] font-mono text-xs">
+            <div className="flex-1 flex items-center justify-center text-ink-dim font-mono text-xs">
               Add a relay to get started.
             </div>
           )}

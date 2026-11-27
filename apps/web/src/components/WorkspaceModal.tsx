@@ -7,10 +7,11 @@ import { Select } from "./ui/Select";
 import { WsInviteCard } from "./WsInviteCard";
 import { WsSkillsRoutinesTab, WsMemoryTab, WsJobsTracesTab } from "./WsManageTabs";
 import { WsInboxTab } from "./WsInboxTab";
+import { inputClass, labelClass } from "./ui/inputClass";
+import { Dialog } from "./ui/Dialog";
+import { Tabs } from "./ui/Tabs";
+import { Switch } from "./ui/Switch";
 
-const inputClass =
-  "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
-const labelClass = "text-[10px] uppercase tracking-wider text-[#525252]";
 
 export type WorkspaceTab = "general" | "sharing" | "skills" | "memory" | "jobs" | "inbox";
 
@@ -95,14 +96,6 @@ export const WorkspaceModal: React.FC<Props> = ({
   const freezeWarning = wasSynced && syncPolicy === "local";
   const policyDirty = useRef(false);
   const pathsLoaded = useRef(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   useEffect(() => {
     api.getRecall(instance, workspace.id).then(setRecallOn).catch(() => setRecallOn(null));
@@ -237,32 +230,13 @@ export const WorkspaceModal: React.FC<Props> = ({
   const dirtyTab = tab === "general" || tab === "sharing";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-lg bg-[#0a0a0a] border border-[#262626] rounded-lg font-mono text-xs flex flex-col max-h-[90vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#262626] shrink-0">
-          <div className="text-white tracking-wider uppercase truncate">workspace · {workspace.label || workspace.id}</div>
-          <button type="button" onClick={onClose} className="text-[#525252] hover:text-white shrink-0">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="shrink-0 px-4 pt-3 flex items-center gap-1.5 flex-wrap">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`px-2.5 py-1 border rounded ${
-                tab === t.id ? "border-white text-white" : "border-[#262626] text-[#737373] hover:text-white"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+    <Dialog open onClose={onClose} title={<>workspace · {workspace.label || workspace.id}</>} wide>
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as typeof tab)}
+          ariaLabel="workspace sections"
+          tabs={TABS.map((t) => ({ value: t.id, label: t.label }))}
+        />
 
         <div className="p-4 flex flex-col gap-3 overflow-y-auto overscroll-y-contain">
           {tab === "general" && (
@@ -281,7 +255,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                       title="Browse…"
                       aria-label="Browse for workdir"
                       onClick={() => void pickWorkdir()}
-                      className="shrink-0 inline-flex h-8 w-8 items-center justify-center border border-[#262626] rounded text-[#a3a3a3] hover:text-white hover:bg-[#141414]"
+                      className="shrink-0 inline-flex h-8 w-8 items-center justify-center border border-strong rounded-md text-ink-secondary hover:text-ink-primary hover:bg-elevated"
                     >
                       <FolderOpen className="w-3.5 h-3.5" />
                     </button>
@@ -289,7 +263,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                 </span>
               </label>
               <label className="flex items-center gap-2">
-                <input type="checkbox" checked={workdirLock} onChange={(e) => setWorkdirLock(e.target.checked)} className="accent-white" />
+<Switch checked={workdirLock} onCheckedChange={setWorkdirLock} ariaLabel="workdir lock" />
                 <span className={labelClass}>workdir lock — turns stay pinned to this directory</span>
               </label>
               <label className="flex flex-col gap-1">
@@ -311,16 +285,15 @@ export const WorkspaceModal: React.FC<Props> = ({
                 />
               </label>
               <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
+                <Switch
                   checked={!!recallOn}
                   disabled={recallOn === null}
-                  onChange={(e) => toggleRecall(e.target.checked)}
-                  className="accent-white"
+                  onCheckedChange={toggleRecall}
+                  ariaLabel="auto-recall memory"
                 />
                 <span className={labelClass}>Auto-recall memory + repo before each turn</span>
               </label>
-              {recallNote && <p className="text-[10px] text-[#525252]">{recallNote}</p>}
+              {recallNote && <p className="text-[10px] text-ink-dim">{recallNote}</p>}
               {onOpenStoreInspector && (
                 <button
                   type="button"
@@ -328,7 +301,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                     onClose();
                     onOpenStoreInspector();
                   }}
-                  className="self-start text-[10px] text-[#525252] hover:text-[#a3a3a3] underline underline-offset-2"
+                  className="self-start text-[10px] text-ink-dim hover:text-ink-secondary underline underline-offset-2"
                 >
                   Advanced: Raw Data Inspector
                 </button>
@@ -355,7 +328,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                 />
               </label>
               {syncPolicy === "local" && !freezeWarning && (
-                <p className="text-[10px] text-[#525252]">
+                <p className="text-[10px] text-ink-dim">
                   Local workspace — data stays on this device only. Switch to Synced to share with paired devices.
                 </p>
               )}
@@ -374,13 +347,13 @@ export const WorkspaceModal: React.FC<Props> = ({
                     <span className={labelClass}>Shared devices</span>
                     {hostsNote && <p className="text-[10px] text-red-500">{hostsNote}</p>}
                     {deviceRows.length === 0 && !hostsNote && (
-                      <p className="text-[10px] text-[#525252]">no paired devices — pair one from the Devices panel first.</p>
+                      <p className="text-[10px] text-ink-dim">no paired devices — pair one from the Devices panel first.</p>
                     )}
                     <div className="flex flex-col gap-1">
                       {deviceRows.map((d) => (
                         <label
                           key={d.device_id}
-                          className="flex items-center gap-2 px-2 py-1.5 border border-[#1a1a1a] rounded hover:border-[#262626]"
+                          className="flex items-center gap-2 px-2 py-1.5 border border-subtle rounded-md hover:border-strong"
                         >
                           <input
                             type="checkbox"
@@ -390,18 +363,18 @@ export const WorkspaceModal: React.FC<Props> = ({
                             onChange={() => toggleHost(d.device_id)}
                             aria-label={`sync member ${d.label}`}
                           />
-                          <span className="text-white truncate">{d.label || shortId(d.device_id)}</span>
+                          <span className="text-ink-primary truncate">{d.label || shortId(d.device_id)}</span>
                           {d.label && d.label !== d.device_id && (
-                            <span className="text-[#525252] truncate text-[10px]">{shortId(d.device_id)}</span>
+                            <span className="text-ink-dim truncate text-[10px]">{shortId(d.device_id)}</span>
                           )}
                           <span
                             className={`ml-auto shrink-0 px-1.5 py-0.5 rounded-full border text-[9px] uppercase tracking-wider ${
-                              d.online ? "border-white text-white" : "border-[#262626] text-[#737373]"
+                              d.online ? "border-accent text-ink-primary" : "border-strong text-ink-muted"
                             }`}
                           >
                             {d.online ? "online" : "offline"}
                           </span>
-                          <span className="shrink-0 px-1.5 py-0.5 rounded-full border border-[#262626] text-[9px] uppercase tracking-wider text-[#737373]">
+                          <span className="shrink-0 px-1.5 py-0.5 rounded-full border border-strong text-[9px] uppercase tracking-wider text-ink-muted">
                             {deviceRoleBadge(d.role)}
                           </span>
                         </label>
@@ -447,7 +420,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                       // input is controlled. Keying on `r.slug` remounted the card
                       // the moment the first slug character was typed, stealing
                       // focus mid-keystroke.
-                      <div key={i} className="flex flex-col gap-1 border border-[#1a1a1a] rounded p-2">
+                      <div key={i} className="flex flex-col gap-1 border border-subtle rounded-md p-2">
                         <div className="flex gap-1">
                           <input
                             className={inputClass}
@@ -469,7 +442,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                           <button
                             type="button"
                             onClick={() => setRepos((prev) => prev.filter((_, j) => j !== i))}
-                            className="shrink-0 px-2 text-[#525252] hover:text-white"
+                            className="shrink-0 px-2 text-ink-dim hover:text-ink-primary"
                             aria-label={`remove repo ${i + 1}`}
                           >
                             <X className="w-3.5 h-3.5" />
@@ -494,11 +467,11 @@ export const WorkspaceModal: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => setRepos((prev) => [...prev, blankRepo()])}
-                      className="inline-flex items-center gap-1 self-start px-2 py-1 border border-dashed border-[#262626] rounded text-[#737373] hover:text-white hover:border-[#525252]"
+                      className="inline-flex items-center gap-1 self-start px-2 py-1 border border-dashed border-strong rounded-md text-ink-muted hover:text-ink-primary hover:border-strong"
                     >
                       <Plus className="w-3 h-3" /> add repo
                     </button>
-                    <p className="text-[10px] text-[#525252]">
+                    <p className="text-[10px] text-ink-dim">
                       slug + git url + checkout mode sync to members. Checkout path stays local to this device only.
                     </p>
                   </div>
@@ -507,7 +480,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => setInviteOpen((v) => !v)}
-                      className="inline-flex items-center gap-1.5 self-start px-3 py-1.5 border border-[#262626] rounded bg-[#141414] text-white hover:bg-[#1f1f1f]"
+                      className="inline-flex items-center gap-1.5 self-start px-3 py-1.5 border border-strong rounded-md bg-elevated text-ink-primary hover:bg-hover"
                     >
                       <QrCode className="w-3.5 h-3.5" />
                       {inviteOpen ? "hide guest invite" : "+ Invite guest to this workspace only (QR / code)"}
@@ -520,7 +493,7 @@ export const WorkspaceModal: React.FC<Props> = ({
           )}
 
           {tab === "sharing" && !showSharing && (
-            <p className="text-[10px] text-[#525252]">
+            <p className="text-[10px] text-ink-dim">
               sharing is edited on the host that owns this workspace — open the workspace modal on that host.
             </p>
           )}
@@ -546,7 +519,7 @@ export const WorkspaceModal: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3 py-1.5 border border-[#262626] rounded text-[#a3a3a3] hover:text-white hover:bg-[#141414]"
+                className="px-3 py-1.5 border border-strong rounded-md text-ink-secondary hover:text-ink-primary hover:bg-elevated"
               >
                 cancel
               </button>
@@ -554,14 +527,13 @@ export const WorkspaceModal: React.FC<Props> = ({
                 type="button"
                 onClick={() => void save()}
                 disabled={busy}
-                className="px-3 py-1.5 border border-white rounded bg-white text-black hover:bg-[#e5e5e5] disabled:opacity-50"
+                className="px-3 py-1.5 border border-accent rounded-md bg-accent text-accent-ink hover:bg-accent-hover disabled:opacity-50"
               >
                 {busy ? "saving…" : "save"}
               </button>
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

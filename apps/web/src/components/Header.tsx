@@ -1,6 +1,7 @@
 import React from "react";
 import { Globe, Menu, Minus, Settings, SlidersHorizontal, Square, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
+import { ThemeSwitcher } from "./ui/ThemeSwitcher";
 
 interface HeaderProps {
   activeInstance: KlankerInstance | null;
@@ -38,13 +39,13 @@ function statusMeta(status: ProcessStatus | null | undefined): { label: string; 
   switch (status?.state) {
     case "running":
     case "not_owned":
-      return { label: "online", dot: "bg-white animate-pulse" };
+      return { label: "online", dot: "bg-accent animate-pulse" };
     case "starting":
-      return { label: "starting", dot: "bg-white animate-pulse" };
+      return { label: "starting", dot: "bg-accent animate-pulse" };
     case "port_busy":
-      return { label: "port busy", dot: "bg-[#a3a3a3]" };
+      return { label: "port busy", dot: "bg-ink-secondary" };
     default:
-      return { label: status?.state === "lost" ? "lost" : "offline", dot: "bg-[#525252]" };
+      return { label: status?.state === "lost" ? "lost" : "offline", dot: "bg-ink-dim" };
   }
 }
 
@@ -70,28 +71,28 @@ export const Header: React.FC<HeaderProps> = ({
   const pill = statusMeta(status);
 
   return (
-    <header data-tauri-drag-region className="min-h-12 shrink-0 bg-[#000000] border-b border-[#262626] flex items-center justify-between px-3 select-none z-30 touch-none">
+    <header data-tauri-drag-region className="min-h-12 shrink-0 bg-main border-b border-strong flex items-center justify-between px-3 select-none z-30 touch-none">
       <div className="flex items-center min-w-0 space-x-3 text-xs font-mono" data-tauri-drag-region>
         <button
           onClick={onOpenNav}
-          className="md:hidden -ml-1 inline-flex h-11 w-11 items-center justify-center text-[#a3a3a3] hover:text-white"
+          className="md:hidden -ml-1 inline-flex h-11 w-11 items-center justify-center text-ink-secondary hover:text-ink-primary"
           aria-label="Open navigation"
         >
           <Menu className="w-4 h-4" />
         </button>
         {activeInstance && (
           <div className="flex items-center space-x-1 min-w-0 text-[11px]">
-            <Globe className="w-3 h-3 text-[#525252] shrink-0 hidden md:inline" />
-            <span className="font-semibold text-white truncate" title={url.replace(/^https?:\/\//, "")}>
+            <Globe className="w-3 h-3 text-ink-dim shrink-0 hidden md:inline" />
+            <span className="font-semibold text-ink-primary truncate" title={url.replace(/^https?:\/\//, "")}>
               {workspaceLabel || selWs || activeInstance.name}
             </span>
             {selPersona && (
               <>
-                <span className="text-[#525252] shrink-0">&gt;</span>
-                <span className="text-[#a3a3a3] truncate">{personaLabel || selPersona}</span>
+                <span className="text-ink-dim shrink-0">&gt;</span>
+                <span className="text-ink-secondary truncate">{personaLabel || selPersona}</span>
               </>
             )}
-            {chatTitle && <span className="hidden md:inline text-[#525252] truncate">· {chatTitle}</span>}
+            {chatTitle && <span className="hidden md:inline text-ink-dim truncate">· {chatTitle}</span>}
           </div>
         )}
       </div>
@@ -103,7 +104,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onOpenDevices}
             aria-label="Devices"
             title="Devices &amp; presence"
-            className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1.5 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
+            className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1.5 px-3 bg-surface hover:bg-elevated border border-strong rounded-md text-xs font-mono text-ink-secondary hover:text-ink-primary transition-colors"
           >
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pill.dot}`} />
             <span className="hidden md:inline">Devices · {pill.label}</span>
@@ -113,13 +114,13 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenWorkspace}
             aria-label="Workspace"
-            className="relative inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
+            className="relative inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-surface hover:bg-elevated border border-strong rounded-md text-xs font-mono text-ink-secondary hover:text-ink-primary transition-colors"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
             <span className="hidden md:inline">Workspace</span>
             {workspaceUnread > 0 && (
               <span
-                className="absolute -top-1.5 -right-1.5 min-w-4 px-1 rounded-full bg-white text-black text-[9px] font-mono text-center"
+                className="absolute -top-1.5 -right-1.5 min-w-4 px-1 rounded-full bg-accent text-accent-ink text-[9px] font-mono text-center"
                 title={`${workspaceUnread} open handoff${workspaceUnread === 1 ? "" : "s"}`}
                 aria-label={`${workspaceUnread} open handoffs`}
               >
@@ -128,10 +129,13 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
         )}
+        <div className="hidden sm:block">
+          <ThemeSwitcher compact />
+        </div>
         <button
           onClick={onOpenSettings}
           aria-label="Settings"
-          className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
+          className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-surface hover:bg-elevated border border-strong rounded-md text-xs font-mono text-ink-secondary hover:text-ink-primary transition-colors"
         >
           <Settings className="w-3.5 h-3.5" />
           <span className="hidden md:inline">Settings</span>
@@ -139,25 +143,25 @@ export const Header: React.FC<HeaderProps> = ({
 
         {win && (
           <div className="hidden md:flex items-center">
-            <div className="h-4 w-[1px] bg-[#262626] mx-1" />
+            <div className="h-4 w-[1px] bg-hover mx-1" />
             <button
               onClick={run((w) => w.minimize())}
               aria-label="Minimize"
-              className="w-7 h-7 flex items-center justify-center text-[#737373] hover:text-white hover:bg-[#141414] rounded transition-colors"
+              className="w-7 h-7 flex items-center justify-center text-ink-muted hover:text-ink-primary hover:bg-elevated rounded-md transition-colors"
             >
               <Minus className="w-3 h-3" />
             </button>
             <button
               onClick={run((w) => w.toggleMaximize())}
               aria-label="Maximize"
-              className="w-7 h-7 flex items-center justify-center text-[#737373] hover:text-white hover:bg-[#141414] rounded transition-colors"
+              className="w-7 h-7 flex items-center justify-center text-ink-muted hover:text-ink-primary hover:bg-elevated rounded-md transition-colors"
             >
               <Square className="w-2.5 h-2.5" />
             </button>
             <button
               onClick={run((w) => w.close())}
               aria-label="Close"
-              className="w-7 h-7 flex items-center justify-center text-[#737373] hover:text-white hover:bg-[#262626] rounded transition-colors"
+              className="w-7 h-7 flex items-center justify-center text-ink-muted hover:text-ink-primary hover:bg-hover rounded-md transition-colors"
             >
               <X className="w-3 h-3" />
             </button>

@@ -95,7 +95,7 @@ describe("ChatConsole cleanup", () => {
     const html = renderConsole();
     // The app Header owns the breadcrumb; the console toolbar must not
     // repeat `alpha · default · ses` on its left side.
-    const toolbar = html.match(/border-b border-\[#262626\] flex items-center justify-end[^>]*>/) || [];
+    const toolbar = html.match(/border-b border-strong flex items-center justify-end[^>]*>/) || [];
     assert.ok(toolbar.length, "toolbar renders right-aligned (justify-end)");
     const leftBreadcrumb = html.includes("tracking-wider uppercase truncate");
     assert.ok(!leftBreadcrumb, "duplicate uppercase breadcrumb headline still rendered");

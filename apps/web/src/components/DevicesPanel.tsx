@@ -29,7 +29,7 @@ interface DevicesPanelProps {
 
 const badgeClass = (on: boolean) =>
   `shrink-0 px-1.5 py-0.5 rounded-full border text-[9px] uppercase tracking-wider ${
-    on ? "border-white text-white" : "border-[#262626] text-[#737373]"
+    on ? "border-accent text-ink-primary" : "border-strong text-ink-muted"
   }`;
 
 /** Devices & presence panel (klanker#151): the operator view of THIS
@@ -133,22 +133,22 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
   return (
     <div className="fixed inset-0 z-[55] flex items-end md:items-stretch md:justify-end">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="sheet-card relative w-full md:w-[420px] md:max-h-none bg-[#0a0a0a] rounded-t-2xl md:rounded-none border-t md:border-t-0 md:border-l border-[#262626] flex flex-col font-mono text-xs shadow-2xl">
+      <div className="sheet-card relative w-full md:w-[420px] md:max-h-none bg-surface rounded-t-2xl md:rounded-none border-t md:border-t-0 md:border-l border-strong flex flex-col font-mono text-xs shadow-2xl">
         <div className="md:hidden shrink-0 pt-2 pb-1 flex justify-center">
-          <span className="w-10 h-1 rounded-full bg-[#2e2e2e]" />
+          <span className="w-10 h-1 rounded-full bg-hover" />
         </div>
-        <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
-          <span className="text-white font-semibold tracking-wider truncate">Devices</span>
+        <div className="shrink-0 px-4 py-3 border-b border-strong flex items-center justify-between">
+          <span className="text-ink-primary font-semibold tracking-wider truncate">Devices</span>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={() => void load()}
-              className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors"
+              className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-ink-muted hover:text-ink-primary transition-colors"
               aria-label="Refresh devices"
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </button>
-            <button type="button" onClick={onClose} className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors">
+            <button type="button" onClick={onClose} className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-ink-muted hover:text-ink-primary transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -157,18 +157,18 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
         {/* Layer-1 pairing lives here exactly once: pair a device to this
             host, or connect this host to a hub. Workspace access is never
             implied — that is layer 2 in workspace settings (klanker#159). */}
-        <div className="shrink-0 px-4 py-2.5 border-b border-[#262626] flex items-center gap-2">
+        <div className="shrink-0 px-4 py-2.5 border-b border-strong flex items-center gap-2">
           <button
             type="button"
             onClick={onPair}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-9 px-3 py-1.5 bg-white hover:bg-[#e5e5e5] text-black font-semibold rounded transition-colors"
+            className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-9 px-3 py-1.5 bg-accent hover:bg-accent-hover text-accent-ink font-semibold rounded-md transition-colors"
           >
             + Pair device
           </button>
           <button
             type="button"
             onClick={onConnect}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-9 px-3 py-1.5 border border-[#262626] rounded bg-[#141414] hover:bg-[#1f1f1f] text-white transition-colors"
+            className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-9 px-3 py-1.5 border border-strong rounded-md bg-elevated hover:bg-hover text-ink-primary transition-colors"
           >
             Connect to hub
           </button>
@@ -178,12 +178,12 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
           {note && <div className="text-[11px] text-red-500 break-words">{note}</div>}
 
           <section className="space-y-2">
-            <div className="text-[10px] uppercase tracking-wider text-[#737373]">this host</div>
-            <div className="border border-[#1a1a1a] rounded p-2.5 space-y-1.5">
+            <div className="text-[10px] uppercase tracking-wider text-ink-muted">this host</div>
+            <div className="border border-subtle rounded-md p-2.5 space-y-1.5">
               {/* The friendly label is the identity peers see — prominent,
                   editable; the raw host id stays muted underneath. */}
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[#737373]">name</span>
+                <span className="text-ink-muted">name</span>
                 {labelEdit !== null ? (
                   <span className="flex items-center gap-1 min-w-0">
                     <input
@@ -194,27 +194,27 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
                         if (e.key === "Enter") void saveLabel();
                         if (e.key === "Escape") setLabelEdit(null);
                       }}
-                      className="w-36 bg-[#121212] border border-[#262626] focus:border-white rounded px-1.5 py-0.5 text-white outline-none text-right"
+                      className="w-36 bg-elevated border border-strong focus:border-accent rounded-md px-1.5 py-0.5 text-ink-primary outline-none text-right"
                     />
                     <button
                       type="button"
                       disabled={labelBusy}
                       onClick={() => void saveLabel()}
                       aria-label="Save host name"
-                      className="inline-flex h-6 w-6 items-center justify-center text-[#a3a3a3] hover:text-white"
+                      className="inline-flex h-6 w-6 items-center justify-center text-ink-secondary hover:text-ink-primary"
                     >
                       <Check className="w-3 h-3" />
                     </button>
                   </span>
                 ) : (
                   <span className="flex items-center gap-1.5 min-w-0">
-                    <span className="text-white truncate">{hostLabel || friendlyHostName(hostId) || instance.name}</span>
+                    <span className="text-ink-primary truncate">{hostLabel || friendlyHostName(hostId) || instance.name}</span>
                     <button
                       type="button"
                       onClick={() => setLabelEdit(hostLabel)}
                       aria-label="Rename this host"
                       title="Rename this host"
-                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-[#525252] hover:text-white"
+                      className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-ink-dim hover:text-ink-primary"
                     >
                       <Pencil className="w-3 h-3" />
                     </button>
@@ -223,45 +223,45 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
               </div>
               {hostId && (
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[#737373]">id</span>
-                  <span className="text-[#525252] truncate text-[10px]">{friendlyHostName(hostId)}</span>
+                  <span className="text-ink-muted">id</span>
+                  <span className="text-ink-dim truncate text-[10px]">{friendlyHostName(hostId)}</span>
                 </div>
               )}
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[#737373]">serve</span>
-                <span className={running ? "text-white" : "text-[#737373]"}>
+                <span className="text-ink-muted">serve</span>
+                <span className={running ? "text-ink-primary" : "text-ink-muted"}>
                   {status?.state || "unknown"}
                   {status?.port ? ` · :${status.port}` : ""}
                   {serveHost ? ` · ${serveHost}` : ""}
                 </span>
               </div>
-              <div className="text-[#525252] text-[10px] truncate">{serveUrl}</div>
+              <div className="text-ink-dim text-[10px] truncate">{serveUrl}</div>
             </div>
           </section>
 
           <section className="space-y-2">
-            <div className="text-[10px] uppercase tracking-wider text-[#737373]">paired hub links</div>
-            {links === null && <div className="text-[#525252] text-[11px]">…</div>}
+            <div className="text-[10px] uppercase tracking-wider text-ink-muted">paired hub links</div>
+            {links === null && <div className="text-ink-dim text-[11px]">…</div>}
             {links?.length === 0 && (
-              <div className="text-[#525252] text-[11px]">
+              <div className="text-ink-dim text-[11px]">
                 not connected to any hub — use 'Connect to hub' above to join one.
               </div>
             )}
             {links?.map((link) => (
-              <div key={link.hub_id} className="border border-[#1a1a1a] rounded p-2.5 space-y-1">
+              <div key={link.hub_id} className="border border-subtle rounded-md p-2.5 space-y-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-white truncate">{link.label || link.hub_id}</span>
+                  <span className="text-ink-primary truncate">{link.label || link.hub_id}</span>
                   <span className={badgeClass(linkBadge(link) === "connected")}>{linkBadge(link)}</span>
                   <button
                     type="button"
                     onClick={() => void disconnect(link)}
-                    className="ml-auto shrink-0 px-2 py-0.5 border border-[#262626] rounded text-[10px] text-[#a3a3a3] hover:text-white"
+                    className="ml-auto shrink-0 px-2 py-0.5 border border-strong rounded-md text-[10px] text-ink-secondary hover:text-ink-primary"
                     aria-label={`disconnect ${link.label || link.hub_id}`}
                   >
                     disconnect
                   </button>
                 </div>
-                <div className="text-[#525252] text-[10px] truncate">
+                <div className="text-ink-dim text-[10px] truncate">
                   {link.hub_url} · as {link.device_id || "—"}
                 </div>
               </div>
@@ -269,10 +269,10 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
           </section>
 
           <section className="space-y-2">
-            <div className="text-[10px] uppercase tracking-wider text-[#737373]">connected &amp; paired devices</div>
-            {devices === null && <div className="text-[#525252] text-[11px]">…</div>}
+            <div className="text-[10px] uppercase tracking-wider text-ink-muted">connected &amp; paired devices</div>
+            {devices === null && <div className="text-ink-dim text-[11px]">…</div>}
             {devices?.length === 0 && (
-              <div className="text-[#525252] text-[11px]">
+              <div className="text-ink-dim text-[11px]">
                 No devices paired yet — click '+ Pair device' above to link another machine.
               </div>
             )}
@@ -280,34 +280,34 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
               const pills = deviceWsPills(d, leases || []);
               const held = deviceLeases(d, leases || []);
               return (
-                <div key={d.id} className="border border-[#1a1a1a] rounded p-2.5 space-y-1.5">
+                <div key={d.id} className="border border-subtle rounded-md p-2.5 space-y-1.5">
                   <div className="flex items-center gap-2">
-                    <span className="text-white truncate">{d.label || d.id}</span>
+                    <span className="text-ink-primary truncate">{d.label || d.id}</span>
                     <span className={badgeClass(deviceBadge(d) === "online")}>{deviceBadge(d)}</span>
-                    <span className="shrink-0 px-1.5 py-0.5 rounded-full border border-[#262626] text-[9px] uppercase tracking-wider text-[#737373]">
+                    <span className="shrink-0 px-1.5 py-0.5 rounded-full border border-strong text-[9px] uppercase tracking-wider text-ink-muted">
                       {deviceRoleBadge(d.role)}
                     </span>
                     <button
                       type="button"
                       onClick={() => void revoke(d)}
-                      className="ml-auto shrink-0 px-2 py-0.5 border border-[#262626] rounded text-[10px] text-red-400 hover:text-white"
+                      className="ml-auto shrink-0 px-2 py-0.5 border border-strong rounded-md text-[10px] text-red-400 hover:text-ink-primary"
                       aria-label={`revoke ${d.label || d.id}`}
                     >
                       revoke
                     </button>
                   </div>
-                  <div className="text-[#525252] text-[10px] truncate">{d.id}{d.host_id ? ` · ${d.host_id}` : ""}</div>
+                  <div className="text-ink-dim text-[10px] truncate">{d.id}{d.host_id ? ` · ${d.host_id}` : ""}</div>
                   {pills.length > 0 && (
                     <div className="flex flex-wrap gap-1">
                       {pills.map((ws) => (
-                        <span key={ws} className="px-1.5 py-0.5 rounded-full bg-[#171717] border border-[#262626] text-[9px] text-[#a3a3a3]">
+                        <span key={ws} className="px-1.5 py-0.5 rounded-full bg-hover border border-strong text-[9px] text-ink-secondary">
                           {ws}
                         </span>
                       ))}
                     </div>
                   )}
                   {held.map((l) => (
-                    <div key={`${l.ws}:${l.session}`} className="text-[10px] text-[#737373] truncate">
+                    <div key={`${l.ws}:${l.session}`} className="text-[10px] text-ink-muted truncate">
                       lease {l.ws}:{l.session} · run {l.run_id || "—"} · {Math.max(0, Math.round(l.expires_in))}s
                     </div>
                   ))}
@@ -316,35 +316,35 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
             })}
           </section>
 
-          <section className="space-y-2 border-t border-[#1a1a1a] pt-3">
+          <section className="space-y-2 border-t border-subtle pt-3">
             <button
               type="button"
               onClick={() => setAdvancedOpen((v) => !v)}
-              className="text-[10px] text-[#525252] hover:text-[#a3a3a3] uppercase tracking-wider"
+              className="text-[10px] text-ink-dim hover:text-ink-secondary uppercase tracking-wider"
             >
               {advancedOpen ? "− hide advanced / ops remotes" : "+ advanced / ops remotes"}
             </button>
             {advancedOpen && (
               <div className="space-y-1">
-                <p className="text-[10px] text-[#525252]">
+                <p className="text-[10px] text-ink-dim">
                   legacy direct remote mounts (via relay proxy) — kept for relays without hub channel support.
                 </p>
                 <button
                   type="button"
                   onClick={() => onEditInstance(instance)}
-                  className="w-full text-left min-h-9 px-2 py-1.5 rounded border border-[#262626] text-[#a3a3a3] hover:bg-[#141414] hover:text-white"
+                  className="w-full text-left min-h-9 px-2 py-1.5 rounded-md border border-strong text-ink-secondary hover:bg-elevated hover:text-ink-primary"
                 >
-                  {instance.name} <span className="text-[#525252]">local instance settings</span>
+                  {instance.name} <span className="text-ink-dim">local instance settings</span>
                 </button>
                 {opsRemotes.map((i) => (
                   <button
                     key={i.id}
                     type="button"
                     onClick={() => onEditInstance(i)}
-                    className="w-full text-left min-h-9 px-2 py-1.5 rounded border border-[#262626] text-[#a3a3a3] hover:bg-[#141414] hover:text-white"
+                    className="w-full text-left min-h-9 px-2 py-1.5 rounded-md border border-strong text-ink-secondary hover:bg-elevated hover:text-ink-primary"
                   >
                     {i.name}
-                    <span className="text-[#525252]"> {(i.endpoint?.base_url || "").replace(/^https?:\/\//, "")}</span>
+                    <span className="text-ink-dim"> {(i.endpoint?.base_url || "").replace(/^https?:\/\//, "")}</span>
                   </button>
                 ))}
               </div>

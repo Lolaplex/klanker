@@ -47,17 +47,17 @@ export function HostPicker({
             title={locked ? `${text} — switch after the run ends` : `chat host — ${text}`}
             aria-label={`Chat host — ${text}`}
             aria-busy={switching}
-            className={`bg-[#0a0a0a] border rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[170px] truncate inline-flex items-center gap-1.5 ${
+            className={`bg-surface border rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[170px] truncate inline-flex items-center gap-1.5 ${
               locked
-                ? "border-[#262626] text-[#525252] cursor-not-allowed"
+                ? "border-strong text-ink-dim cursor-not-allowed"
                 : binding.kind === "bound"
-                  ? "border-[#525252] text-white hover:border-white cursor-pointer"
-                  : "border-[#262626] text-[#a3a3a3] hover:text-white hover:border-[#525252] cursor-pointer"
+                  ? "border-strong text-ink-primary hover:border-accent cursor-pointer"
+                  : "border-strong text-ink-secondary hover:text-ink-primary hover:border-strong cursor-pointer"
             }`}
           >
             <span
               className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                binding.online ? "bg-white" : "bg-[#404040]"
+                binding.online ? "bg-accent" : "bg-hover"
               }`}
               aria-hidden="true"
             />
@@ -68,7 +68,7 @@ export function HostPicker({
           </button>
         }
       >
-        <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[#737373]">
+        <div className="px-2 pt-2 pb-1 text-[10px] uppercase tracking-wider text-ink-muted">
           chat host · {text}
         </div>
         <div className="max-h-64 overflow-y-auto pb-1">
@@ -86,8 +86,8 @@ export function HostPicker({
                 aria-label={`Switch host to ${r.label}`}
                 className={`w-full flex items-center gap-2 min-h-9 px-2 py-1.5 text-left ${
                   selected
-                    ? "bg-[#141414] text-white"
-                    : "text-[#a3a3a3] hover:bg-[#181818] hover:text-white disabled:opacity-60"
+                    ? "bg-elevated text-ink-primary"
+                    : "text-ink-secondary hover:bg-hover hover:text-ink-primary disabled:opacity-60"
                 }`}
               >
                 <span className="w-4 shrink-0 text-center">
@@ -95,12 +95,12 @@ export function HostPicker({
                 </span>
                 <span
                   className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    r.online ? "bg-white" : "bg-[#404040]"
+                    r.online ? "bg-accent" : "bg-hover"
                   }`}
                   aria-hidden="true"
                 />
                 <span className="truncate flex-1">{r.label}</span>
-                <span className="shrink-0 text-[9px] uppercase tracking-wider text-[#525252]">
+                <span className="shrink-0 text-[9px] uppercase tracking-wider text-ink-dim">
                   {r.self ? "self" : r.online ? r.role : "offline"}
                   {r.leased ? " · run" : ""}
                 </span>
@@ -108,11 +108,11 @@ export function HostPicker({
             );
           })}
           {rows.length === 0 && (
-            <div className="px-2 py-3 text-[#525252]">no member hosts</div>
+            <div className="px-2 py-3 text-ink-dim">no member hosts</div>
           )}
         </div>
         {note && (
-          <div className="px-2 py-1.5 border-t border-[#1f1f1f] text-[10px] text-[#737373] break-words">
+          <div className="px-2 py-1.5 border-t border-subtle text-[10px] text-ink-muted break-words">
             {note}
           </div>
         )}
@@ -120,7 +120,7 @@ export function HostPicker({
       {/* Checkpoint progress / switch result — visible with the dropdown
           closed too (dropdown shows the same line inside its footer). */}
       {!open && note && (
-        <div className="absolute right-0 top-full z-40 mt-1 w-64 px-2 py-1.5 border border-[#262626] bg-[#0a0a0a] rounded-md shadow-lg font-mono text-[10px] text-[#a3a3a3] break-words">
+        <div className="absolute right-0 top-full z-40 mt-1 w-64 px-2 py-1.5 border border-strong bg-surface rounded-md shadow-lg font-mono text-[10px] text-ink-secondary break-words">
           {note}
         </div>
       )}

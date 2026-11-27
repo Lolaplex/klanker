@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/klanker.svg" />
@@ -10,6 +10,16 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <script>
+      // Anti-flash theme bootstrap (klanker#170 U16): apply the persisted
+      // preference before css paints. theme.ts re-applies authoritatively.
+      try {
+        var p = localStorage.getItem("klanker.theme") || "dark";
+        var m = p === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : p;
+        document.documentElement.dataset.theme = m;
+        document.documentElement.classList.add(m);
+      } catch (e) { document.documentElement.dataset.theme = "dark"; document.documentElement.classList.add("dark"); }
+    </script>
     <title>Klanker</title>
   </head>
   <body>

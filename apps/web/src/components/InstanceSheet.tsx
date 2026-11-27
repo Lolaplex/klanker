@@ -4,6 +4,7 @@ import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { SecretField } from "./SecretField";
 import { api } from "../services/api";
 import { dialogs } from "../services/dialogs";
+import { inputClass } from "./ui/inputClass";
 
 interface InstanceSheetProps {
   instance: KlankerInstance;
@@ -13,8 +14,6 @@ interface InstanceSheetProps {
   onClose: () => void;
 }
 
-const inputClass =
-  "w-full bg-[#121212] border border-[#262626] focus:border-[#525252] rounded-xl px-3 py-3 md:py-2.5 text-white outline-none text-base md:text-sm";
 
 export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   instance,
@@ -111,12 +110,12 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
   return (
     <div className="fixed inset-0 z-[55] flex items-end md:items-stretch md:justify-end">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="sheet-card relative w-full md:w-[420px] md:max-h-none bg-[#0a0a0a] rounded-t-2xl md:rounded-none border-t md:border-t-0 md:border-l border-[#262626] flex flex-col font-mono text-xs shadow-2xl">
+      <div className="sheet-card relative w-full md:w-[420px] md:max-h-none bg-surface rounded-t-2xl md:rounded-none border-t md:border-t-0 md:border-l border-strong flex flex-col font-mono text-xs shadow-2xl">
         <div className="md:hidden shrink-0 pt-2 pb-1 flex justify-center">
-          <span className="w-10 h-1 rounded-full bg-[#2e2e2e]" />
+          <span className="w-10 h-1 rounded-full bg-hover" />
         </div>
-        <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
-          <span className="text-white font-semibold tracking-wider truncate">
+        <div className="shrink-0 px-4 py-3 border-b border-strong flex items-center justify-between">
+          <span className="text-ink-primary font-semibold tracking-wider truncate">
             {instance.name || "instance"}
           </span>
           <div className="flex items-center gap-2">
@@ -128,27 +127,27 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                     if (await dialogs.confirm(`Remove ${instance.name || instance.id}?`, { danger: true })) onDelete(instance.id);
                   })();
                 }}
-                className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors"
+                className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-ink-muted hover:text-ink-primary transition-colors"
                 title="Remove this instance"
               >
                 <Trash2 className="w-4 h-4" />
               </button>
             )}
-            <button type="button" onClick={onClose} className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-[#737373] hover:text-white transition-colors">
+            <button type="button" onClick={onClose} className="inline-flex h-11 w-11 md:h-9 md:w-9 items-center justify-center text-ink-muted hover:text-ink-primary transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        <div className="shrink-0 px-4 py-2 border-b border-[#262626] flex items-center justify-between text-[11px]">
-          <span className="text-[#737373]">
+        <div className="shrink-0 px-4 py-2 border-b border-strong flex items-center justify-between text-[11px]">
+          <span className="text-ink-muted">
             {status?.state === "running" ? "up" : "down"}
             {!local && !desktop && authed !== null && <span className="ml-2">{authed ? "· authed" : "· not authed"}</span>}
           </span>
 
         </div>
         {saveNote && (
-          <div className="shrink-0 px-4 py-1 border-b border-[#262626] text-[10px] text-[#737373] truncate">
+          <div className="shrink-0 px-4 py-1 border-b border-strong text-[10px] text-ink-muted truncate">
             {saveNote}
           </div>
         )}
@@ -157,7 +156,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
           <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div>
-                <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Name</label>
+                <label className="text-[10px] text-ink-muted uppercase tracking-wider block mb-1">Name</label>
                 <input
                   type="text"
                   value={formData.name}
@@ -168,7 +167,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
               </div>
               {!local && (
                 <div>
-                  <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Instance URL</label>
+                  <label className="text-[10px] text-ink-muted uppercase tracking-wider block mb-1">Instance URL</label>
                   <input
                     type="text"
                     value={formData.endpoint?.base_url || ""}
@@ -198,10 +197,10 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
 
             {!local && !desktop && (
             <div>
-              <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
+              <label className="text-[10px] text-ink-muted uppercase tracking-wider block mb-1">
                 Browser dashboard login (optional)
               </label>
-              <p className="text-[10px] text-[#525252] mb-1.5">
+              <p className="text-[10px] text-ink-dim mb-1.5">
                 RELAY_WEB_TOKEN cookie — only for the web UI served by the relay itself. This app uses the instance secret above; you can skip this.
               </p>
               <div className="flex items-center gap-1">
@@ -216,7 +215,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                   type="button"
                   onClick={() => void doLogin()}
                   disabled={loginBusy || !loginToken.trim()}
-                  className="shrink-0 flex items-center gap-1 px-3 py-3 md:py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white disabled:opacity-40"
+                  className="shrink-0 flex items-center gap-1 px-3 py-3 md:py-1.5 bg-surface hover:bg-elevated border border-strong rounded-md text-ink-secondary hover:text-ink-primary disabled:opacity-40"
                 >
                   <LogIn className="w-3.5 h-3.5" />
                   <span>login</span>
@@ -225,18 +224,18 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                   type="button"
                   onClick={() => void doLogout()}
                   disabled={loginBusy || !authed}
-                  className="shrink-0 flex items-center gap-1 px-3 py-3 md:py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white disabled:opacity-40"
+                  className="shrink-0 flex items-center gap-1 px-3 py-3 md:py-1.5 bg-surface hover:bg-elevated border border-strong rounded-md text-ink-secondary hover:text-ink-primary disabled:opacity-40"
                 >
                   <LogOut className="w-3.5 h-3.5" />
                 </button>
               </div>
-              {loginNote && <p className="mt-1 text-[11px] text-[#737373]">{loginNote}</p>}
+              {loginNote && <p className="mt-1 text-[11px] text-ink-muted">{loginNote}</p>}
             </div>
             )}
 
             {local && (
               <div>
-                <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">
+                <label className="text-[10px] text-ink-muted uppercase tracking-wider block mb-1">
                   Workdir
                 </label>
                 <div className="flex items-center gap-1">
@@ -253,7 +252,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
                       type="button"
                       title="Browse…"
                       onClick={() => void pickWorkdir()}
-                      className="shrink-0 p-2 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white"
+                      className="shrink-0 p-2 bg-surface hover:bg-elevated border border-strong rounded-md text-ink-secondary hover:text-ink-primary"
                     >
                       <FolderOpen className="w-3.5 h-3.5" />
                     </button>
@@ -265,7 +264,7 @@ export const InstanceSheet: React.FC<InstanceSheetProps> = ({
             <button
               type="button"
               onClick={() => save()}
-              className="w-full px-4 py-3 md:py-2.5 bg-white hover:bg-[#e5e5e5] text-black rounded-xl text-[11px] transition-colors"
+              className="w-full px-4 py-3 md:py-2.5 bg-accent hover:bg-accent-hover text-accent-ink rounded-xl text-[11px] transition-colors"
             >
               Save
             </button>

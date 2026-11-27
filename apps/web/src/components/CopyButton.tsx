@@ -58,11 +58,11 @@ export function CopyButton({
       onClick={() => {
         void writeClipboard(text).then((ok) => setState(ok ? "copied" : "failed"));
       }}
-      className={`inline-flex shrink-0 items-center justify-center rounded transition-all ${
+      className={`inline-flex shrink-0 items-center justify-center rounded-md transition-all ${
         borderless
-          ? "h-7 w-7 min-h-0 min-w-0 text-[#737373] hover:bg-white/10 hover:text-white"
-          : "h-11 w-11 border border-[#262626] text-[#a3a3a3] hover:border-white hover:text-white"
-      } ${state !== "idle" ? "!opacity-100 text-white" : ""} ${className}`}
+          ? "h-7 w-7 min-h-0 min-w-0 text-ink-muted hover:bg-hover hover:text-ink-primary"
+          : "h-11 w-11 border border-strong text-ink-secondary hover:border-accent hover:text-ink-primary"
+      } ${state !== "idle" ? "!opacity-100 text-ink-primary" : ""} ${className}`}
     >
       {state === "copied" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
     </button>

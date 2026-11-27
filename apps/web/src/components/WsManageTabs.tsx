@@ -5,11 +5,11 @@ import type { JobRow, KlankerInstance, RoutineRow } from "../types/klanker";
 import { api } from "../services/api";
 import { dialogs } from "../services/dialogs";
 import { TracesPanel } from "./TracesPanel";
+import { inputClass } from "./ui/inputClass";
+import { Switch } from "./ui/Switch";
 
-const inputClass =
-  "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
 const btnClass =
-  "inline-flex items-center gap-1 px-2 py-1 border border-[#262626] rounded text-[#a3a3a3] hover:text-white hover:bg-[#141414] transition-colors";
+  "inline-flex items-center gap-1 px-2 py-1 border border-strong rounded-md text-ink-secondary hover:text-ink-primary hover:bg-elevated transition-colors";
 
 /** Default scope filter: the active workspace only — routines bound
  *  elsewhere hide behind the explicit show-all toggle (klanker#160 U05).
@@ -112,13 +112,13 @@ export const WsSkillsRoutinesTab: React.FC<{ instance: KlankerInstance; workspac
       <WsManageNotes error={errorNote} status={statusNote} />
 
       <div className="flex flex-col gap-1">
-        <span className="text-[10px] uppercase tracking-wider text-[#525252]">skills</span>
+        <span className="text-[10px] uppercase tracking-wider text-ink-dim">skills</span>
         <ul className="space-y-1.5">
-          {skills.length === 0 && <li className="text-[#525252]">no skills in this workspace</li>}
+          {skills.length === 0 && <li className="text-ink-dim">no skills in this workspace</li>}
           {skills.map((s) => (
-            <li key={s.name} className="flex items-center justify-between gap-2 border border-[#1a1a1a] rounded px-2.5 py-1.5">
-              <span className="text-white truncate">{s.name}</span>
-              <span className="shrink-0 flex items-center gap-2 text-[#737373]">
+            <li key={s.name} className="flex items-center justify-between gap-2 border border-subtle rounded-md px-2.5 py-1.5">
+              <span className="text-ink-primary truncate">{s.name}</span>
+              <span className="shrink-0 flex items-center gap-2 text-ink-muted">
                 {s.files}f · {(s.bytes / 1024).toFixed(1)}k
                 <button onClick={() => void delSkill(s.name)} className={btnClass} aria-label={`delete ${s.name}`}>
                   <Trash2 className="w-3 h-3" />
@@ -129,29 +129,24 @@ export const WsSkillsRoutinesTab: React.FC<{ instance: KlankerInstance; workspac
         </ul>
       </div>
 
-      <div className="flex flex-col gap-1 border-t border-[#1a1a1a] pt-3">
+      <div className="flex flex-col gap-1 border-t border-subtle pt-3">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wider text-[#525252]">routines</span>
-          <label className="flex items-center gap-1.5 text-[10px] text-[#737373]">
-            <input
-              type="checkbox"
-              className="accent-white"
-              checked={showAllWs}
-              onChange={(e) => setShowAllWs(e.target.checked)}
-            />
+          <span className="text-[10px] uppercase tracking-wider text-ink-dim">routines</span>
+          <label className="flex items-center gap-1.5 text-[10px] text-ink-muted">
+            <Switch checked={showAllWs} onCheckedChange={setShowAllWs} ariaLabel="show all workspaces" />
             Show all workspaces
           </label>
         </div>
         <ul className="space-y-1.5">
           {shownRoutines.length === 0 && (
-            <li className="text-[#525252]">
+            <li className="text-ink-dim">
               {routines.length === 0 ? "no routines" : "no routines in this workspace — toggle 'Show all workspaces' to see others"}
             </li>
           )}
           {shownRoutines.map((r) => (
-            <li key={`${r.workspace}:${r.name}`} className="border border-[#1a1a1a] rounded px-2.5 py-1.5">
+            <li key={`${r.workspace}:${r.name}`} className="border border-subtle rounded-md px-2.5 py-1.5">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-white truncate">
+                <span className="text-ink-primary truncate">
                   {r.name}
                   {r.paused ? " (paused)" : ""}
                 </span>
@@ -167,15 +162,15 @@ export const WsSkillsRoutinesTab: React.FC<{ instance: KlankerInstance; workspac
                   </button>
                 </span>
               </div>
-              <div className="text-[#737373] truncate mt-0.5">
+              <div className="text-ink-muted truncate mt-0.5">
                 {r.at ? `at ${r.at}` : `cron ${r.cron || "?"}`}
                 {showAllWs && r.workspace ? ` · ${r.workspace}` : ""}
               </div>
-              <div className="text-[#525252] truncate">{r.prompt}</div>
+              <div className="text-ink-dim truncate">{r.prompt}</div>
             </li>
           ))}
         </ul>
-        <form onSubmit={addRoutine} className="space-y-2 border-t border-[#1a1a1a] pt-3">
+        <form onSubmit={addRoutine} className="space-y-2 border-t border-subtle pt-3">
           <input className={inputClass} placeholder="name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           <input className={inputClass} placeholder="prompt" value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} required />
           <div className="flex gap-2">
@@ -238,13 +233,13 @@ export const WsMemoryTab: React.FC<{ instance: KlankerInstance; workspace: strin
         <>
           <input className={inputClass} placeholder="filter…" value={memQuery} onChange={(e) => setMemQuery(e.target.value)} />
           <ul className="space-y-1.5">
-            {memFiles.length === 0 && <li className="text-[#525252]">no memory files</li>}
+            {memFiles.length === 0 && <li className="text-ink-dim">no memory files</li>}
             {memFiles.map((f) => (
-              <li key={f.path} className="flex items-center justify-between gap-2 border border-[#1a1a1a] rounded px-2.5 py-1.5">
-                <button onClick={() => void openMem(f.path)} className="text-white truncate text-left hover:underline">
+              <li key={f.path} className="flex items-center justify-between gap-2 border border-subtle rounded-md px-2.5 py-1.5">
+                <button onClick={() => void openMem(f.path)} className="text-ink-primary truncate text-left hover:underline">
                   {f.path}
                 </button>
-                <span className="shrink-0 flex items-center gap-2 text-[#737373]">
+                <span className="shrink-0 flex items-center gap-2 text-ink-muted">
                   {(f.bytes / 1024).toFixed(1)}k
                   <button onClick={() => void delMem(f.path)} className={btnClass} aria-label={`delete ${f.path}`}>
                     <Trash2 className="w-3 h-3" />
@@ -257,12 +252,12 @@ export const WsMemoryTab: React.FC<{ instance: KlankerInstance; workspace: strin
       ) : (
         <>
           <div className="flex items-center justify-between gap-2">
-            <span className="text-white truncate">{memOpen.path}</span>
+            <span className="text-ink-primary truncate">{memOpen.path}</span>
             <button onClick={() => setMemOpen(null)} className={btnClass}>
               back
             </button>
           </div>
-          <pre className="whitespace-pre-wrap break-words text-[#a3a3a3] border border-[#1a1a1a] rounded p-2.5 max-h-80 overflow-y-auto">
+          <pre className="whitespace-pre-wrap break-words text-ink-secondary border border-subtle rounded-md p-2.5 max-h-80 overflow-y-auto">
             {memOpen.content}
           </pre>
         </>
@@ -338,7 +333,7 @@ export const WsJobsTracesTab: React.FC<{
     <div className="flex flex-col gap-3">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div>
-          <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Persona</label>
+          <label className="text-[10px] text-ink-muted uppercase tracking-wider block mb-1">Persona</label>
           <Select
             value={jobPersonaEff}
             onChange={setJobPersona}
@@ -372,7 +367,7 @@ export const WsJobsTracesTab: React.FC<{
                   })
                   .catch((e) => setJobNote(e instanceof Error ? e.message : String(e)));
               }}
-              className="px-3 py-1.5 bg-white text-black rounded text-[11px] shrink-0"
+              className="px-3 py-1.5 bg-accent text-accent-ink rounded-md text-[11px] shrink-0"
             >
               create
             </button>
@@ -380,7 +375,7 @@ export const WsJobsTracesTab: React.FC<{
         )}
       </div>
       <div>
-        <label className="text-[10px] text-[#737373] uppercase tracking-wider block mb-1">Goal</label>
+        <label className="text-[10px] text-ink-muted uppercase tracking-wider block mb-1">Goal</label>
         <textarea
           rows={3}
           value={jobGoal}
@@ -392,15 +387,15 @@ export const WsJobsTracesTab: React.FC<{
           type="button"
           onClick={() => void submitJob()}
           disabled={jobBusy || !jobGoal.trim() || !workspace || !jobPersonaEff}
-          className="mt-2 px-4 py-1.5 bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded text-[11px] transition-colors"
+          className="mt-2 px-4 py-1.5 bg-accent hover:bg-accent-hover disabled:bg-hover disabled:text-ink-dim text-accent-ink rounded-md text-[11px] transition-colors"
         >
           {jobBusy ? "queueing…" : "Run job"}
         </button>
-        {jobNote && <p className="mt-1 text-[11px] text-[#737373]">{jobNote}</p>}
+        {jobNote && <p className="mt-1 text-[11px] text-ink-muted">{jobNote}</p>}
       </div>
-      <div className="border-t border-[#1a1a1a] pt-3 space-y-2">
+      <div className="border-t border-subtle pt-3 space-y-2">
         {jobList.length === 0 ? (
-          <p className="text-[#525252]">no jobs in this workspace</p>
+          <p className="text-ink-dim">no jobs in this workspace</p>
         ) : (
           jobList.map((j) => (
             <button
@@ -408,42 +403,42 @@ export const WsJobsTracesTab: React.FC<{
               type="button"
               onClick={() => onOpenSession?.(workspace, jobPersonaEff, j.id)}
               title={onOpenSession ? "Open the job's chat" : undefined}
-              className={`w-full text-left border border-[#262626] bg-[#101010] rounded-xl p-3 ${
-                onOpenSession ? "hover:border-[#525252] cursor-pointer" : ""
+              className={`w-full text-left border border-strong bg-surface rounded-xl p-3 ${
+                onOpenSession ? "hover:border-strong cursor-pointer" : ""
               }`}
             >
               <div className="flex items-start justify-between gap-2">
-                <span className="text-white text-[11px] leading-snug break-words min-w-0">{j.goal || j.id}</span>
+                <span className="text-ink-primary text-[11px] leading-snug break-words min-w-0">{j.goal || j.id}</span>
                 <span
                   className={`shrink-0 px-2 py-0.5 rounded-full border text-[10px] ${
                     j.status === "done"
-                      ? "border-white text-white"
+                      ? "border-accent text-ink-primary"
                       : j.status === "failed" || j.status === "stopped"
-                        ? "border-[#525252] text-[#a3a3a3] line-through"
-                        : "border-[#262626] text-[#a3a3a3] animate-pulse"
+                        ? "border-strong text-ink-secondary line-through"
+                        : "border-strong text-ink-secondary animate-pulse"
                   }`}
                 >
                   {j.status || "?"}
                 </span>
               </div>
-              {j.result && <div className="mt-1.5 text-[11px] text-[#737373] line-clamp-3">{j.result}</div>}
-              <div className="mt-1.5 text-[10px] text-[#3f3f3f] truncate">{j.id}</div>
+              {j.result && <div className="mt-1.5 text-[11px] text-ink-muted line-clamp-3">{j.result}</div>}
+              <div className="mt-1.5 text-[10px] text-ink-dim truncate">{j.id}</div>
             </button>
           ))
         )}
       </div>
 
-      <div className="border-t border-[#1a1a1a] pt-3">
+      <div className="border-t border-subtle pt-3">
         <button
           type="button"
           onClick={() => setTracesOpen((v) => !v)}
-          className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-[#525252] hover:text-[#a3a3a3]"
+          className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-ink-dim hover:text-ink-secondary"
         >
           <RefreshCw className="w-3 h-3" />
           {tracesOpen ? "− hide traces" : "+ traces"}
         </button>
         {tracesOpen && (
-          <div className="mt-2 h-64 overflow-y-auto border border-[#1a1a1a] rounded">
+          <div className="mt-2 h-64 overflow-y-auto border border-subtle rounded-md">
             <TracesPanel instance={instance} workspace={workspace} />
           </div>
         )}

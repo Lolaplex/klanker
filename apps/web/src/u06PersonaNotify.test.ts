@@ -1,7 +1,26 @@
+import "./testing/domSetup.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
+import { act } from "react";
+
+// ui/Dialog portals never render in static SSR markup (klanker#170 U16).
+async function renderInDom(el: React.ReactElement): Promise<{ html: () => string; unmount: () => void }> {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(el);
+  });
+  return {
+    html: () => document.body.innerHTML,
+    unmount: () => {
+      act(() => root.unmount());
+      host.remove();
+    },
+  };
+}
 import { api, notifyWhenUnfocused } from "./services/api.ts";
 import { PersonaEditorModal } from "./components/PersonaEditorModal.tsx";
 import type { KlankerInstance } from "./types/klanker.ts";
@@ -17,11 +36,6 @@ const inst: KlankerInstance = {
   workspace: "",
   endpoint: { base_url: "http://127.0.0.1:8787" },
 } as unknown as KlankerInstance;
-
-Object.defineProperty(globalThis, "window", {
-  value: { location: { hostname: "localhost", host: "localhost:8787", origin: "http://localhost:8787" } },
-  configurable: true,
-});
 
 const jsonRes = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -98,12 +112,14 @@ describe("api.savePersona", () => {
 });
 
 describe("notifyWhenUnfocused gate", () => {
+  // undefined restores the jsdom document — leaking a deleted document
+  // breaks every DOM-rendered test later in this file (klanker#170 U16).
+  const origDocument = globalThis.document;
   const setDoc = (doc: unknown) => {
-    if (doc === undefined) {
-      delete (globalThis as { document?: unknown }).document;
-    } else {
-      Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
-    }
+    Object.defineProperty(globalThis, "document", {
+      value: doc === undefined ? origDocument : doc,
+      configurable: true,
+    });
   };
 
   it("delivers when the window is hidden", async () => {
@@ -131,13 +147,14 @@ describe("notifyWhenUnfocused gate", () => {
   });
 
   it("never throws in a bare web/node context (no document, no Notification, no tauri)", async () => {
-    setDoc(undefined);
+    delete (globalThis as { document?: unknown }).document;
     // default deliver = notify — exercises the real web-context path
     await notifyWhenUnfocused("t", "b");
     // hidden state without document also counts as focused: no delivery
     const seen: string[] = [];
     await notifyWhenUnfocused("t", "b", async (t, b) => void seen.push(`${t}:${b}`));
     assert.deepEqual(seen, []);
+    setDoc(undefined);
   });
 
   it("swallows a failing deliver without throwing", async () => {
@@ -150,8 +167,8 @@ describe("notifyWhenUnfocused gate", () => {
 });
 
 describe("PersonaEditorModal structure", () => {
-  it("renders name, role and system prompt fields", () => {
-    const html = renderToStaticMarkup(
+  it("renders name, role and system prompt fields", async () => {
+    const r = await renderInDom(
       React.createElement(PersonaEditorModal, {
         instance: inst,
         workspace: "alpha",
@@ -160,8 +177,18 @@ describe("PersonaEditorModal structure", () => {
         onClose: () => {},
       } as never)
     );
-    assert.ok(html.includes("persona name"), "name field missing");
-    assert.ok(html.includes("persona role"), "role field missing");
-    assert.ok(html.includes("persona system prompt"), "system prompt field missing");
+    try {
+      // Let the manifest-load effect settle (fetch rejects in tests — the
+      // form fields render regardless).
+      await act(async () => {
+        await new Promise((res) => setTimeout(res, 20));
+      });
+      const html = r.html();
+      assert.ok(html.includes("persona name"), "name field missing");
+      assert.ok(html.includes("persona role"), "role field missing");
+      assert.ok(html.includes("persona system prompt"), "system prompt field missing");
+    } finally {
+      r.unmount();
+    }
   });
 });

@@ -1,7 +1,10 @@
+import "./testing/domSetup.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
+import { act } from "react";
 import { Header } from "./components/Header.tsx";
 import { SettingsPanel } from "./components/SettingsPanel.tsx";
 import { WorkspaceModal } from "./components/WorkspaceModal.tsx";
@@ -19,14 +22,6 @@ const inst: KlankerInstance = {
   workspace: "",
   endpoint: { base_url: "http://127.0.0.1:8787" },
 } as unknown as KlankerInstance;
-
-Object.defineProperty(globalThis, "window", {
-  value: {
-    location: { hostname: "localhost", host: "localhost:8787", origin: "http://localhost:8787" },
-    matchMedia: undefined,
-  },
-  configurable: true,
-});
 
 describe("Header topbar trim", () => {
   const html = renderToStaticMarkup(
@@ -81,47 +76,78 @@ describe("routines workspace filter + note split", () => {
   });
 });
 
+// ui/Dialog renders through a portal — static SSR markup stays empty, so
+// modal assertions mount into jsdom (klanker#170 U16 migration).
+async function renderInDom(el: React.ReactElement): Promise<{ html: () => string; unmount: () => void }> {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(el);
+  });
+  return {
+    html: () => document.body.innerHTML,
+    unmount: () => {
+      act(() => root.unmount());
+      host.remove();
+    },
+  };
+}
+
 describe("SettingsPanel consolidation", () => {
-  const html = renderToStaticMarkup(
-    React.createElement(SettingsPanel, {
-      settings: { workspace: "", autostart: false, hub_mode: false },
-      instance: inst,
-      workspace: "alpha",
-      persona: "default",
-      onClose: () => {},
-      onSave: () => {},
-    } as never)
-  );
-
-  it("contains no INSTANCES section", () => {
-    assert.ok(!html.includes(">Instances<"), "instances section must be removed");
-    assert.ok(!html.includes("import legacy instances"), "legacy import must be gone from settings");
-  });
-
-  it("exposes the three tabs with Providers & Agents first", () => {
-    assert.ok(html.includes("Providers &amp; Agents") || html.includes("Providers & Agents"), "providers tab missing");
-    assert.ok(html.includes("Host &amp; Desktop") || html.includes("Host & Desktop"), "host tab missing");
-    assert.ok(html.includes("Notifications"), "notifications tab missing");
-  });
-
-  it("mounts the providers panel as the default tab", () => {
-    assert.ok(html.includes("providers &amp; agents") || html.includes("no providers on this host"), "providers panel body missing");
-  });
-
-  it("offers browser read-aloud inside settings, not the topbar", () => {
-    const withVoice = renderToStaticMarkup(
+  const renderSettings = (extra: Record<string, unknown> = {}) =>
+    renderInDom(
       React.createElement(SettingsPanel, {
         settings: { workspace: "", autostart: false, hub_mode: false },
         instance: inst,
-        voiceEnabled: false,
-        onToggleVoice: () => {},
+        workspace: "alpha",
+        persona: "default",
         onClose: () => {},
         onSave: () => {},
+        ...extra,
       } as never)
     );
-    // Host tab is not default — assert the label exists nowhere in the
-    // providers default view but the wiring prop is accepted (no crash).
-    assert.ok(withVoice.length > 0);
+
+  it("contains no INSTANCES section", async () => {
+    const r = await renderSettings();
+    try {
+      const html = r.html();
+      assert.ok(!html.includes(">Instances<"), "instances section must be removed");
+      assert.ok(!html.includes("import legacy instances"), "legacy import must be gone from settings");
+    } finally {
+      r.unmount();
+    }
+  });
+
+  it("exposes the three tabs with Providers & Agents first", async () => {
+    const r = await renderSettings();
+    try {
+      const html = r.html();
+      assert.ok(html.includes("Providers &amp; Agents") || html.includes("Providers & Agents"), "providers tab missing");
+      assert.ok(html.includes("Host &amp; Desktop") || html.includes("Host & Desktop"), "host tab missing");
+      assert.ok(html.includes("Notifications"), "notifications tab missing");
+    } finally {
+      r.unmount();
+    }
+  });
+
+  it("mounts the providers panel as the default tab", async () => {
+    const r = await renderSettings();
+    try {
+      const html = r.html();
+      assert.ok(html.includes("providers &amp; agents") || html.includes("no providers on this host"), "providers panel body missing");
+    } finally {
+      r.unmount();
+    }
+  });
+
+  it("offers browser read-aloud inside settings, not the topbar", async () => {
+    const r = await renderSettings({ voiceEnabled: false, onToggleVoice: () => {} });
+    try {
+      assert.ok(r.html().length > 0);
+    } finally {
+      r.unmount();
+    }
   });
 });
 
@@ -171,8 +197,8 @@ describe("api.setProviderSecret", () => {
 describe("WorkspaceModal tab structure", () => {
   const ws = { id: "alpha", label: "alpha", sync_policy: "local", sync_hosts: [], repos: [] } as unknown as WorkspaceRow;
 
-  it("renders the five tabs", () => {
-    const html = renderToStaticMarkup(
+  it("renders the five tabs", async () => {
+    const r = await renderInDom(
       React.createElement(WorkspaceModal, {
         instance: inst,
         workspace: ws,
@@ -180,13 +206,18 @@ describe("WorkspaceModal tab structure", () => {
         onClose: () => {},
       } as never)
     );
-    for (const label of ["General", "Sharing", "Skills &amp; Routines", "Memory", "Jobs &amp; Traces"]) {
-      assert.ok(html.includes(label), `tab ${label} missing`);
+    try {
+      const html = r.html();
+      for (const label of ["General", "Sharing", "Skills &amp; Routines", "Memory", "Jobs &amp; Traces"]) {
+        assert.ok(html.includes(label), `tab ${label} missing`);
+      }
+    } finally {
+      r.unmount();
     }
   });
 
-  it("general tab carries the auto-recall workspace toggle", () => {
-    const html = renderToStaticMarkup(
+  it("general tab carries the auto-recall workspace toggle", async () => {
+    const r = await renderInDom(
       React.createElement(WorkspaceModal, {
         instance: inst,
         workspace: ws,
@@ -195,6 +226,10 @@ describe("WorkspaceModal tab structure", () => {
         onClose: () => {},
       } as never)
     );
-    assert.ok(html.includes("Auto-recall memory + repo before each turn"), "auto-recall missing from general");
+    try {
+      assert.ok(r.html().includes("Auto-recall memory + repo before each turn"), "auto-recall missing from general");
+    } finally {
+      r.unmount();
+    }
   });
 });

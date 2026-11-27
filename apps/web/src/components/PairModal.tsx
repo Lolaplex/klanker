@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { RefreshCw, X } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import type { KlankerInstance, PairCreateResult } from "../types/klanker";
 import { api } from "../services/api";
 import { encodeQrMatrix, qrSvgPath } from "../qr";
 import { pairLinkView } from "../pairLink";
+import { Dialog } from "./ui/Dialog";
 
 interface PairModalProps {
   instance: KlankerInstance;
@@ -54,7 +55,7 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
   return (
     <>
       {qrData && (
-        <div className="self-center p-2 bg-white rounded">
+        <div className="self-center p-2 bg-accent rounded-md">
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox={`0 0 ${qrData.total} ${qrData.total}`}
@@ -69,28 +70,28 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2 bg-[#121212] border border-[#262626] rounded px-3 py-2">
-        <span className="text-white tracking-widest text-sm">{pair.code}</span>
+      <div className="flex items-center justify-between gap-2 bg-elevated border border-strong rounded-md px-3 py-2">
+        <span className="text-ink-primary tracking-widest text-sm">{pair.code}</span>
         <button
           type="button"
           onClick={() => {
             void navigator.clipboard?.writeText(pair.code).then(() => setCopied(true)).catch(() => {});
           }}
-          className="px-2 py-1 border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white"
+          className="px-2 py-1 border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary"
         >
           {copied ? "copied" : "copy"}
         </button>
       </div>
 
       {linkUrl && (
-        <div className="flex items-center justify-between gap-2 bg-[#121212] border border-[#262626] rounded px-3 py-2">
-          <span className="text-[#737373] truncate text-[11px]">{linkUrl}</span>
+        <div className="flex items-center justify-between gap-2 bg-elevated border border-strong rounded-md px-3 py-2">
+          <span className="text-ink-muted truncate text-[11px]">{linkUrl}</span>
           <button
             type="button"
             onClick={() => {
               void navigator.clipboard?.writeText(linkUrl).then(() => setCopiedLink(true)).catch(() => {});
             }}
-            className="px-2 py-1 border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white shrink-0"
+            className="px-2 py-1 border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary shrink-0"
           >
             {copiedLink ? "copied" : "copy link"}
           </button>
@@ -102,18 +103,18 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
         </p>
       )}
       {linkUrl && mode === "remote" && (
-        <p className="text-[10px] text-[#525252] select-text">
+        <p className="text-[10px] text-ink-dim select-text">
           cli: klanker workspace join "{linkUrl}"
         </p>
       )}
 
       <div className="flex flex-col gap-1">
-        <div className="flex justify-between text-[11px] text-[#737373]">
+        <div className="flex justify-between text-[11px] text-ink-muted">
           <span>single-use pairing expires</span>
           <span>{secondsLeft}s</span>
         </div>
-        <div className="w-full h-1 bg-[#171717] rounded overflow-hidden">
-          <div className="h-full bg-white transition-all duration-1000" style={{ width: `${pct}%` }} />
+        <div className="w-full h-1 bg-hover rounded-md overflow-hidden">
+          <div className="h-full bg-accent transition-all duration-1000" style={{ width: `${pct}%` }} />
         </div>
       </div>
     </>
@@ -152,14 +153,6 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
   }, [mode, instance.id]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  useEffect(() => {
     if (!pair || secondsLeft <= 0) return;
     const t = window.setInterval(() => {
       setSecondsLeft((prev) => (prev <= 1 ? 0 : prev - 1));
@@ -195,27 +188,16 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
     <button
       type="button"
       onClick={() => setMode(m)}
-      className={`py-1.5 rounded transition-colors ${mode === m ? "bg-[#262626] text-white" : "text-[#737373] hover:text-white"}`}
+      className={`py-1.5 rounded-md transition-colors ${mode === m ? "bg-hover text-ink-primary" : "text-ink-muted hover:text-ink-primary"}`}
     >
       {label}
     </button>
   );
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-sm bg-[#0a0a0a] border border-[#262626] rounded-lg font-mono text-xs flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#262626]">
-          <span className="text-white tracking-wider uppercase">Pair device</span>
-          <button type="button" onClick={onClose} className="text-[#525252] hover:text-white" aria-label="Close">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <Dialog open onClose={onClose} title="Pair device">
         <div className="p-4 flex flex-col gap-3">
-          <div className="grid grid-cols-2 gap-1 p-1 bg-[#121212] border border-[#262626] rounded">
+          <div className="grid grid-cols-2 gap-1 p-1 bg-elevated border border-strong rounded-md">
             {modeBtn("remote", "Device / Desktop")}
             {modeBtn("web", "Browser / PWA")}
           </div>
@@ -232,7 +214,7 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
               mode={mode}
             />
           ) : (
-            <div className="py-6 text-center text-[#737373]">
+            <div className="py-6 text-center text-ink-muted">
               {busy ? "creating single-use code…" : pair ? "renewing…" : "pairing code expired"}
             </div>
           )}
@@ -241,13 +223,12 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
             type="button"
             disabled={busy}
             onClick={() => void mint(mode)}
-            className="inline-flex items-center justify-center gap-1.5 py-2 border border-[#262626] rounded bg-[#141414] hover:bg-[#1f1f1f] text-white disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-1.5 py-2 border border-strong rounded-md bg-elevated hover:bg-hover text-ink-primary disabled:opacity-50"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             new single-use code
           </button>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

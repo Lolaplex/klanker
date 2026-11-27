@@ -39,17 +39,17 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance, workspace = 
   }, [instance?.id, instance?.updated_at, workspace]);
 
   return (
-    <div className="h-full flex flex-col bg-[#0a0a0a] font-mono text-xs overflow-hidden">
+    <div className="h-full flex flex-col bg-surface font-mono text-xs overflow-hidden">
       {/* Header */}
-      <div className="p-4 border-b border-[#262626] flex items-center justify-between">
+      <div className="p-4 border-b border-strong flex items-center justify-between">
         <div>
-          <div className="font-semibold text-white tracking-wider uppercase">Live Traces & JSONL</div>
-          <div className="text-[10px] text-[#525252]">{note}</div>
+          <div className="font-semibold text-ink-primary tracking-wider uppercase">Live Traces & JSONL</div>
+          <div className="text-[10px] text-ink-dim">{note}</div>
         </div>
         <button
           onClick={() => instance && void loadTraces(instance)}
           disabled={loading || !instance}
-          className="flex min-h-9 items-center space-x-1 px-2.5 py-1 bg-[#141414] hover:bg-[#1f1f1f] border border-[#262626] rounded text-[#a3a3a3] hover:text-white transition-colors disabled:opacity-40"
+          className="flex min-h-9 items-center space-x-1 px-2.5 py-1 bg-elevated hover:bg-hover border border-strong rounded-md text-ink-secondary hover:text-ink-primary transition-colors disabled:opacity-40"
         >
           <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
           <span>Refresh</span>
@@ -59,8 +59,8 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance, workspace = 
       {/* Traces Stream */}
       <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 space-y-2">
         {traces.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-[#525252] text-center">
-            <Layers className="w-8 h-8 text-[#333333] mb-2" />
+          <div className="h-full flex flex-col items-center justify-center text-ink-dim text-center">
+            <Layers className="w-8 h-8 text-ink-dim mb-2" />
             <div>{note}</div>
           </div>
         ) : (
@@ -78,20 +78,20 @@ export const TracesPanel: React.FC<TracesPanelProps> = ({ instance, workspace = 
             return (
               <div
                 key={idx}
-                className="p-2.5 bg-[#121212] border border-[#262626] rounded hover:border-[#404040] transition-colors"
+                className="p-2.5 bg-elevated border border-strong rounded-md hover:border-strong transition-colors"
               >
                 {parsed ? (
                   <div>
-                    <div className="flex items-center justify-between text-[10px] text-[#737373] mb-1">
-                      <span className="font-semibold text-white uppercase">{String(parsed.type || parsed.event || "TRACE")}</span>
+                    <div className="flex items-center justify-between text-[10px] text-ink-muted mb-1">
+                      <span className="font-semibold text-ink-primary uppercase">{String(parsed.type || parsed.event || "TRACE")}</span>
                       <span>{String(parsed.timestamp || parsed.ts || "now")}</span>
                     </div>
-                    <pre className="text-[11px] text-[#a3a3a3] whitespace-pre-wrap overflow-x-auto">
+                    <pre className="text-[11px] text-ink-secondary whitespace-pre-wrap overflow-x-auto">
                       {JSON.stringify(parsed, null, 2)}
                     </pre>
                   </div>
                 ) : (
-                  <pre className="text-[11px] text-[#a3a3a3] whitespace-pre-wrap">{traceStr}</pre>
+                  <pre className="text-[11px] text-ink-secondary whitespace-pre-wrap">{traceStr}</pre>
                 )}
               </div>
             );

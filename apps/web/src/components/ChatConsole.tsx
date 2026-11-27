@@ -261,11 +261,11 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const exportSessionLabel = `${headlineTitle} · ${sessionText}`;
 
   return (
-    <div className="flex-1 flex flex-col bg-[#000000] overflow-hidden font-mono text-xs">
+    <div className="flex-1 flex flex-col bg-main overflow-hidden font-mono text-xs">
       {/* Console Top Toolbar — right-side controls only. The workspace >
           persona · chat breadcrumb already lives in the app Header; a
           second left-side copy here was pure duplication (klanker#158 U03). */}
-      <div className="min-h-11 bg-[#0a0a0a] border-b border-[#262626] flex items-center justify-end px-3 text-[#737373] select-none touch-none">
+      <div className="min-h-11 bg-surface border-b border-strong flex items-center justify-end px-3 text-ink-muted select-none touch-none">
         <div className="flex items-center space-x-2">
           {messages.length > 0 && (
             <Popover
@@ -276,7 +276,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
                 <button
                   type="button"
                   title="Export this chat"
-                  className="bg-[#0a0a0a] border border-[#262626] hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] text-[#d4d4d4] hover:text-white outline-none cursor-pointer"
+                  className="bg-surface border border-strong hover:border-strong rounded-md px-2 py-1.5 text-[11px] text-ink-primary hover:text-ink-primary outline-none cursor-pointer"
                 >
                   export
                 </button>
@@ -300,7 +300,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
                       else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
                     }}
                     aria-label={`Export as .${fmt}`}
-                    className="px-3 py-1.5 text-left text-[#a3a3a3] hover:bg-[#181818] hover:text-white"
+                    className="px-3 py-1.5 text-left text-ink-secondary hover:bg-hover hover:text-ink-primary"
                   >
                     .{fmt}
                   </button>
@@ -332,7 +332,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             <button
               onClick={onStop}
               title="Stop this run"
-              className="inline-flex items-center gap-1 px-2 py-1.5 border border-[#262626] rounded-md hover:border-white hover:text-white transition-colors"
+              className="inline-flex items-center gap-1 px-2 py-1.5 border border-strong rounded-md hover:border-accent hover:text-ink-primary transition-colors"
             >
               <Square className="w-3 h-3" />
               <span>stop</span>
@@ -361,12 +361,12 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         className="flex-1 overflow-y-auto overscroll-y-contain p-4 space-y-4 select-text"
       >
         {messages.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[#525252]">
-            <div className="w-12 h-12 border border-[#262626] rounded-full flex items-center justify-center mb-3">
-              <Bot className="w-6 h-6 text-[#737373]" />
+          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-ink-dim">
+            <div className="w-12 h-12 border border-strong rounded-full flex items-center justify-center mb-3">
+              <Bot className="w-6 h-6 text-ink-muted" />
             </div>
-            <div className="text-white font-medium mb-1">Klanker is standby.</div>
-            <p className="max-w-md text-[11px] text-[#737373]">
+            <div className="text-ink-primary font-medium mb-1">Klanker is standby.</div>
+            <p className="max-w-md text-[11px] text-ink-muted">
               Send a message. The reply streams back here.
             </p>
           </div>
@@ -386,14 +386,14 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
         {(isLoading || (remoteActive && last?.role === "user")) && !streamingBubble && (
           <div className="flex flex-col items-start">
-            <div className="flex items-center space-x-1.5 mb-1 text-[10px] text-[#525252] px-1">
-              <Bot className="w-3 h-3 text-white" />
-              <span className="text-white font-semibold">{displaySpeaker}</span>
+            <div className="flex items-center space-x-1.5 mb-1 text-[10px] text-ink-dim px-1">
+              <Bot className="w-3 h-3 text-ink-primary" />
+              <span className="text-ink-primary font-semibold">{displaySpeaker}</span>
               <span>•</span>
-              <span className="animate-pulse text-white">thinking...</span>
+              <span className="animate-pulse text-ink-primary">thinking...</span>
             </div>
-            <div className="bg-[#0a0a0a] border border-[#262626] rounded p-3 text-[#737373] flex items-center space-x-2">
-              <span className="w-2 h-2 bg-white rounded-full animate-ping"></span>
+            <div className="bg-surface border border-strong rounded-md p-3 text-ink-muted flex items-center space-x-2">
+              <span className="w-2 h-2 bg-accent rounded-full animate-ping"></span>
               <span>{streamStatus || "Working..."}</span>
             </div>
           </div>
@@ -402,7 +402,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {/* Input Area */}
-      <div className="composer touch-none px-3 pt-3 bg-[#000000] border-t border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
+      <div className="composer touch-none px-3 pt-3 bg-main border-t border-strong md:min-h-[73px] md:p-3 md:flex md:items-center">
         <form
           onSubmit={handleSubmit}
           onDragOver={(e) => {
@@ -415,8 +415,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
           }}
           onDrop={onDrop}
-          className={`w-full flex flex-col min-h-12 bg-[#121212] border focus-within:border-[#525252] rounded transition-colors ${
-            dragOver ? "border-white" : "border-[#262626]"
+          className={`w-full flex flex-col min-h-12 bg-elevated border focus-within:border-strong rounded-md transition-colors ${
+            dragOver ? "border-accent" : "border-strong"
           }`}
         >
           {files.length > 0 && (
@@ -424,14 +424,14 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               {files.map((f, i) => (
                 <span
                   key={`${f.name}-${i}`}
-                  className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 bg-[#1f1f1f] border border-[#2e2e2e] rounded text-[11px] text-[#a3a3a3]"
+                  className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 bg-hover border border-strong rounded-md text-[11px] text-ink-secondary"
                 >
                   <Paperclip className="w-3.5 h-3.5 shrink-0" />
                   <span className="max-w-[160px] truncate">{f.name || "file"}</span>
                   <button
                     type="button"
                     onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
-                    className="inline-flex h-5 w-5 min-h-0 min-w-0 items-center justify-center rounded hover:bg-white/10 hover:text-white"
+                    className="inline-flex h-5 w-5 min-h-0 min-w-0 items-center justify-center rounded-md hover:bg-hover hover:text-ink-primary"
                     aria-label={`Remove ${f.name || "attachment"}`}
                   >
                     <X className="w-3.5 h-3.5" />
@@ -453,7 +453,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               onClick={() => fileRef.current?.click()}
               title="Attach files"
               aria-label="Attach files"
-              className="inline-flex w-11 min-h-0 min-w-0 shrink-0 items-center justify-center text-[#737373] hover:text-white transition-colors"
+              className="inline-flex w-11 min-h-0 min-w-0 shrink-0 items-center justify-center text-ink-muted hover:text-ink-primary transition-colors"
             >
               <Paperclip className="w-4 h-4" />
             </button>
@@ -465,14 +465,14 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               onKeyDown={handleKeyDown}
               onPaste={onPaste}
               placeholder={`Message ${displaySpeaker}...`}
-              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-white outline-none resize-none overscroll-y-contain font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
+              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-ink-primary outline-none resize-none overscroll-y-contain font-mono text-base leading-snug placeholder-ink-dim md:text-sm"
             />
             <button
               type="submit"
               disabled={(!input.trim() && files.length === 0) || isLoading || sendHold}
               title="Send"
               aria-label="Send message"
-              className="self-center inline-flex h-11 w-11 md:h-9 md:w-9 shrink-0 items-center justify-center rounded bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black transition-colors"
+              className="self-center inline-flex h-11 w-11 md:h-9 md:w-9 shrink-0 items-center justify-center rounded-md bg-accent hover:bg-accent-hover disabled:bg-hover disabled:text-ink-dim text-accent-ink transition-colors"
             >
               <ArrowUp className="w-4 h-4" />
             </button>
@@ -512,7 +512,7 @@ const MessageBubble = React.memo(function MessageBubble({
   return (
     <div className={`group flex w-full ${mine ? "justify-end" : "justify-start"}`}>
       <div className={`flex min-w-0 max-w-[85%] flex-col ${mine ? "items-end" : "items-start"}`}>
-        <div className="mb-1 flex select-none items-center space-x-1.5 px-1 text-[10px] text-[#525252]">
+        <div className="mb-1 flex select-none items-center space-x-1.5 px-1 text-[10px] text-ink-dim">
           {mine ? (
             <>
               <span>USER</span>
@@ -520,8 +520,8 @@ const MessageBubble = React.memo(function MessageBubble({
             </>
           ) : (
             <>
-              <Bot className="h-3 w-3 text-white" />
-              <span className="font-semibold text-white">{name}</span>
+              <Bot className="h-3 w-3 text-ink-primary" />
+              <span className="font-semibold text-ink-primary">{name}</span>
             </>
           )}
           <span>•</span>
@@ -529,7 +529,7 @@ const MessageBubble = React.memo(function MessageBubble({
           {message.elapsed_ms ? (
             <>
               <span>•</span>
-              <span className="text-[#737373]">{message.elapsed_ms}ms</span>
+              <span className="text-ink-muted">{message.elapsed_ms}ms</span>
             </>
           ) : null}
           {message.content ? (
@@ -537,7 +537,7 @@ const MessageBubble = React.memo(function MessageBubble({
               text={message.content}
               label="Copy message"
               borderless
-              className="!h-5 !w-5 text-[#525252] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
+              className="!h-5 !w-5 text-ink-dim opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
             />
           ) : null}
           {onRegenerate ? (
@@ -546,17 +546,17 @@ const MessageBubble = React.memo(function MessageBubble({
               onClick={onRegenerate}
               title="Regenerate — resend the previous user message"
               aria-label="Regenerate response"
-              className="inline-flex !h-5 !w-5 items-center justify-center text-[#525252] hover:text-white opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
+              className="inline-flex !h-5 !w-5 items-center justify-center text-ink-dim hover:text-ink-primary opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
             >
               <RotateCcw className="w-3 h-3" />
             </button>
           ) : null}
         </div>
         <div
-          className={`min-w-0 max-w-full rounded border p-3 leading-relaxed select-text ${
+          className={`min-w-0 max-w-full rounded-md border p-3 leading-relaxed select-text ${
             mine
-              ? "border-[#333333] bg-[#141414] text-white"
-              : "border-[#262626] bg-[#0a0a0a] text-[#e5e5e5]"
+              ? "border-strong bg-elevated text-ink-primary"
+              : "border-strong bg-surface text-ink-primary"
           }`}
         >
           {message.attachments?.length ? (
@@ -564,7 +564,7 @@ const MessageBubble = React.memo(function MessageBubble({
               {message.attachments.map((name, i) => (
                 <span
                   key={`${name}-${i}`}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-[#1f1f1f] border border-[#2e2e2e] rounded text-[10px] text-[#a3a3a3]"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-hover border border-strong rounded-md text-[10px] text-ink-secondary"
                 >
                   <Paperclip className="w-3 h-3 shrink-0" />
                   <span className="max-w-[180px] truncate">{name}</span>
@@ -585,8 +585,8 @@ const MessageBubble = React.memo(function MessageBubble({
             </div>
           )}
           {streaming && message.content && streamStatus ? (
-            <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[#525252] animate-pulse">
-              <span className="w-1.5 h-1.5 bg-white rounded-full animate-ping shrink-0" />
+            <div className="mt-2 flex items-center gap-1.5 text-[10px] text-ink-dim animate-pulse">
+              <span className="w-1.5 h-1.5 bg-accent rounded-full animate-ping shrink-0" />
               <span className="truncate">{streamStatus}</span>
             </div>
           ) : null}
