@@ -233,7 +233,7 @@ export function secretAccount(inst: KlankerInstance): string {
 
 /** Pull a keyring secret into inst.secret. Called lazily — the local
  *  serve's token is only minted at spawn, after instances were loaded. */
-async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void> {
+export async function hydrateSecret(inst: KlankerInstance, force = false): Promise<void> {
   if (!caps.keyring) return;
   // Relay-mounted remotes need the local relay's own token on Desktop.
   if (isMounted(inst)) {
