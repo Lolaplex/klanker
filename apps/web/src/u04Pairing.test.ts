@@ -8,6 +8,7 @@ import { Header } from "./components/Header.tsx";
 import { WorkspaceModal } from "./components/WorkspaceModal.tsx";
 import { NewKlankerModal } from "./components/NewKlankerModal.tsx";
 import { fullInviteUrl, pairLinkView, relayMountError, deviceConnectLabel, parsePairInput } from "./pairLink.ts";
+import { api } from "./services/api.ts";
 import type { KlankerInstance, WorkspaceRow } from "./types/klanker.ts";
 
 // U04 two-layer pairing oracle (klanker#159): layer-1 device pairing in
@@ -226,6 +227,33 @@ describe("WorkspaceModal sharing tab layer-2 gating", () => {
       assert.ok(!html.includes("sync_hosts"), `sync_hosts jargon on ${policy}`);
       assert.ok(!html.includes("fail-closed"), `fail-closed jargon on ${policy}`);
       assert.ok(!html.includes("host_paths.json"), `host_paths.json jargon on ${policy}`);
+    }
+  });
+});
+
+describe("api.setHostLabel wire contract", () => {
+  it("PATCHes /v1/host with { label }, never { host_label }", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const orig = globalThis.fetch;
+    (globalThis as { fetch: unknown }).fetch = async (input: unknown, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as { url: string }).url;
+      calls.push({ url, init });
+      return new Response(JSON.stringify({ ok: true, host_id: "host_1", host_label: "felix-pc" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    };
+    try {
+      const res = await api.setHostLabel("felix-pc");
+      assert.equal(res.host_label, "felix-pc");
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, "/v1/host");
+      assert.equal(calls[0].init?.method, "PATCH");
+      const body = JSON.parse(String(calls[0].init?.body || "{}"));
+      assert.equal(body.label, "felix-pc");
+      assert.ok(!("host_label" in body), "must not send deprecated/rejected host_label field");
+    } finally {
+      (globalThis as { fetch: unknown }).fetch = orig;
     }
   });
 });

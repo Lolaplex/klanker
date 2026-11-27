@@ -245,7 +245,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
             />
             {pickedPeer && (
               <p className="text-[10px] text-[#525252]">
-                mint an invite on {pickedPeer.endpoint.replace(/^https?:\/\//, "")} (share sheet → invite device), then type it here.
+                mint an invite on {pickedPeer.endpoint.replace(/^https?:\/\//, "")} (Devices → + Pair device), then type it here.
               </p>
             )}
             {note && <p className="text-[11px] text-[#a3a3a3]">{note}</p>}
