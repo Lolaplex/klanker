@@ -65,10 +65,15 @@ describe("dedupeWorkspaces", () => {
 
 describe("wsSyncBadge", () => {
   it("reads local when policy is local or absent (fail-closed)", () => {
-    assert.deepEqual(wsSyncBadge({}, null), { kind: "local", label: "local" });
+    assert.deepEqual(wsSyncBadge({}, null), {
+      kind: "local",
+      count: 0,
+      tooltip: "local — never leaves this host",
+    });
     assert.deepEqual(wsSyncBadge({ sync_policy: "local" }, hosts({ sync_policy: "local" })), {
       kind: "local",
-      label: "local",
+      count: 0,
+      tooltip: "local — never leaves this host",
     });
   });
 
@@ -81,21 +86,44 @@ describe("wsSyncBadge", () => {
     });
     assert.deepEqual(wsSyncBadge({ sync_policy: "synced" }, h), {
       kind: "synced",
-      label: "synced 2 hosts",
+      count: 2,
+      tooltip: "synced · 2 hosts",
     });
     assert.deepEqual(wsSyncBadge({ sync_policy: "shared" }, hosts({ sync_policy: "shared" })), {
       kind: "hub",
-      label: "hub",
+      count: 0,
+      tooltip: "shared — open member join via hub",
     });
     // No hosts payload → the ws row's policy drives the badge.
-    assert.deepEqual(wsSyncBadge({ sync_policy: "shared" }, null), { kind: "hub", label: "hub" });
+    assert.deepEqual(wsSyncBadge({ sync_policy: "shared" }, null), {
+      kind: "hub",
+      count: 0,
+      tooltip: "shared — open member join via hub",
+    });
   });
 
   it("reads offline when the synced hub has no connected devices", () => {
     assert.deepEqual(
       wsSyncBadge({ sync_policy: "synced" }, hosts({ hub_offline: true })),
-      { kind: "offline", label: "offline" }
+      { kind: "offline", count: 0, tooltip: "offline — no connected devices on the hub" }
     );
+  });
+
+  it("never emits a multi-word badge label — count + tooltip only (klanker#158)", () => {
+    // The U03 regression: a `SYNCED 2 HOSTS` text pill crushed the ws title
+    // to 0px. The compact contract is numeric count + tooltip words.
+    const h = hosts({
+      hosts: [
+        { device_id: "d1", label: "a", role: "owner", self: true, online: true, via: "", last_seen: 0, status: "", leases: [] },
+        { device_id: "d2", label: "b", role: "member", self: false, online: true, via: "", last_seen: 0, status: "", leases: [] },
+      ],
+    });
+    for (const ws of [{}, { sync_policy: "local" }, { sync_policy: "synced" }, { sync_policy: "shared" }]) {
+      const badge = wsSyncBadge(ws, h);
+      assert.equal(typeof badge.count, "number");
+      assert.equal(typeof badge.tooltip, "string");
+      assert.ok(!("label" in badge), "badge must not carry a renderable text label");
+    }
   });
 });
 
@@ -128,6 +156,16 @@ describe("sessionHostPill", () => {
     });
     assert.equal(sessionHostPill(undefined, "ses_9", h), "GPU box");
     assert.equal(sessionHostPill(undefined, "ses_other", h), null);
+  });
+
+  it("never renders a raw 37-char host_ hex id — short friendly fallback (klanker#158)", () => {
+    const raw = "host_f3a9c1e7b2d40596813ef7a2c4b6d8e0";
+    assert.equal(raw.length, 37);
+    // No member row, no label: degrade to a stable short prefix.
+    const pill = sessionHostPill(raw, "ses_1", hosts());
+    assert.ok(pill, "pill still renders");
+    assert.ok(!pill!.includes("f3a9c1e7b2d40596813ef7a2c4b6d8e0"), `raw hex leaked: ${pill}`);
+    assert.ok(pill!.length <= 16, `pill too long: ${pill}`);
   });
 });
 

@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { X } from "lucide-react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole, type ChatPick } from "./components/ChatConsole";
@@ -41,6 +42,7 @@ import {
   hostEventEffect,
   hostLabelFor,
   hostPickerRows,
+  hostPickerVisible,
   providerScope,
   runHostSwitch,
 } from "./hostPicker";
@@ -1126,6 +1128,7 @@ export function App() {
         <Header
           activeInstance={activeInstance}
           selWs={selWs}
+          workspaceLabel={tree.workspaces.find((w) => w.id === selWs)?.label || undefined}
           selPersona={selPersona}
           personaLabel={
             tree.personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || undefined
@@ -1149,8 +1152,16 @@ export function App() {
           {activeInstance ? (
             <>
               {wsNote && (
-                <div className="shrink-0 px-3 py-1 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-red-500 truncate">
-                  {wsNote}
+                <div className="shrink-0 flex items-center gap-2 px-3 py-1 border-b border-[#262626] bg-[#0a0a0a] font-mono text-[11px] text-red-500">
+                  <span className="flex-1 min-w-0 truncate">{wsNote}</span>
+                  <button
+                    type="button"
+                    onClick={() => setWsNote(null)}
+                    aria-label="Dismiss"
+                    className="shrink-0 inline-flex h-5 w-5 items-center justify-center text-[#737373] hover:text-white"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
                 </div>
               )}
               {relayCompat.note && (
@@ -1203,11 +1214,6 @@ export function App() {
                       });
                     }}
                     onSendMessage={handleSendMessage}
-                    onClearMessages={() => {
-                      if (!openChat) return;
-                      const chatId = openChat.id;
-                      setChats((prev) => mapChat(prev, selKey, chatId, (item) => ({ ...item, messages: [] })));
-                    }}
                     onStop={handleStop}
                     isLoading={isLoadingTurn}
                     remoteActive={remoteActive}
@@ -1223,7 +1229,7 @@ export function App() {
                     providersStale={providersStale}
                     providersDisabled={providersDisabled}
                     host={
-                      wsHosts
+                      wsHosts && hostPickerVisible(wsHosts)
                         ? {
                             rows: hostPickerRows(wsHosts),
                             binding: chatHostBinding,

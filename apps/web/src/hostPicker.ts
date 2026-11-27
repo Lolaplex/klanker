@@ -37,6 +37,30 @@ export interface HostRow {
   leased: boolean;
 }
 
+/** Raw relay host ids (`host_` + 32 hex chars) are illegible in any UI
+ *  surface — never render them whole. A device with no paired label reads
+ *  as a short stable prefix instead. */
+export function friendlyHostName(id: string, label?: string | null): string {
+  const l = (label || "").trim();
+  if (l) return l;
+  const raw = (id || "").trim();
+  const m = raw.match(/^host_([0-9a-f]{6})[0-9a-f]*$/i);
+  if (m) return `host·${m[1].toLowerCase()}`;
+  if (raw.length > 24) return `${raw.slice(0, 12)}…`;
+  return raw;
+}
+
+/** The chat host picker only carries information when a choice exists:
+ *  a local-policy workspace with at most one member host has nothing to
+ *  switch to — the chip is pure noise there (klanker#158 U03). */
+export function hostPickerVisible(hosts: WorkspaceHosts | null | undefined): boolean {
+  if (!hosts) return false;
+  const count = (hosts.hosts || []).length;
+  const policy = String(hosts.sync_policy || "local").toLowerCase();
+  if (policy === "synced" || policy === "shared") return count > 0;
+  return count > 1;
+}
+
 /** Picker rows: strictly the payload's member set (self included).
  *  Display order: self, then online members, then offline — alphabetical
  *  inside each tier. */
@@ -44,7 +68,7 @@ export function hostPickerRows(payload: WorkspaceHosts | null | undefined): Host
   const hosts = payload?.hosts || [];
   const rows: HostRow[] = hosts.map((h: WorkspaceHost) => ({
     deviceId: h.device_id,
-    label: h.label || h.device_id,
+    label: friendlyHostName(h.device_id, h.label),
     online: !!h.online,
     self: !!h.self,
     role: h.role || "member",
@@ -68,13 +92,14 @@ export function leaseHolderFor(
   return "";
 }
 
-/** Label for a member device id; falls back to the raw id. */
+/** Label for a member device id; falls back to a short friendly form of
+ *  the id — never the raw 37-char hex (klanker#158 U03). */
 export function hostLabelFor(
   hosts: WorkspaceHosts | null | undefined,
   deviceId: string
 ): string {
   const row = hosts?.hosts?.find((h) => h.device_id === deviceId);
-  return row?.label || deviceId;
+  return friendlyHostName(deviceId, row?.label);
 }
 
 function hostOnline(

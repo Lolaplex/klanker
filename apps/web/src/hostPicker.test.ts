@@ -10,6 +10,8 @@ import {
   hostEventEffect,
   hostLabelFor,
   hostPickerRows,
+  hostPickerVisible,
+  friendlyHostName,
   leaseHolderFor,
   presenceDelta,
   providerScope,
@@ -358,4 +360,55 @@ test("hostLabelFor resolves member labels and falls back to the id", () => {
   const h = wsHosts();
   assert.equal(hostLabelFor(h, "dev-b"), "vps");
   assert.equal(hostLabelFor(h, "dev-x"), "dev-x");
+});
+
+test("hostPickerVisible hides the chip for a local single-host ws (klanker#158)", () => {
+  const local1 = wsHosts({
+    sync_policy: "local",
+    hosts: [
+      { device_id: "dev-a", label: "laptop", role: "owner", self: true, online: true, via: "", last_seen: 1, status: "", leases: [] },
+    ],
+  });
+  assert.equal(hostPickerVisible(local1), false);
+  // No payload at all: nothing to pick from — hidden.
+  assert.equal(hostPickerVisible(null), false);
+  assert.equal(hostPickerVisible(undefined), false);
+  // Local multi-host: a choice exists — visible.
+  const local2 = wsHosts({ sync_policy: "local" });
+  assert.equal(hostPickerVisible(local2), true);
+  // Synced/shared render even with a single known member — the workspace
+  // is multi-host by policy.
+  const synced1 = wsHosts({
+    sync_policy: "synced",
+    hosts: [
+      { device_id: "dev-a", label: "laptop", role: "owner", self: true, online: true, via: "", last_seen: 1, status: "", leases: [] },
+    ],
+  });
+  assert.equal(hostPickerVisible(synced1), true);
+});
+
+test("friendlyHostName never leaks raw 37-char hex ids", () => {
+  const raw = "host_f3a9c1e7b2d40596813ef7a2c4b6d8e0";
+  assert.equal(raw.length, 37);
+  const friendly = friendlyHostName(raw);
+  assert.ok(!friendly.includes("f3a9c1e7b2d40596813ef7a2c4b6d8e0"));
+  assert.equal(friendly, "host·f3a9c1");
+  // A real label always wins.
+  assert.equal(friendlyHostName(raw, "GPU box"), "GPU box");
+  assert.equal(friendlyHostName(raw, "  "), "host·f3a9c1");
+  // Short non-hex ids pass through unchanged.
+  assert.equal(friendlyHostName("dev-a"), "dev-a");
+});
+
+test("hostPickerRows renders friendly labels, never raw hex (klanker#158)", () => {
+  const raw = "host_f3a9c1e7b2d40596813ef7a2c4b6d8e0";
+  const h = wsHosts({
+    hosts: [
+      { device_id: raw, label: "", role: "member", self: false, online: true, via: "", last_seen: 1, status: "", leases: [] },
+    ],
+  });
+  const rows = hostPickerRows(h);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].label, "host·f3a9c1");
+  assert.ok(!rows[0].label.includes("f3a9c1e7b2d40596813ef7a2c4b6d8e0"));
 });

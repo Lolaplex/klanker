@@ -5,6 +5,10 @@ import { KlankerInstance, ProcessStatus } from "../types/klanker";
 interface HeaderProps {
   activeInstance: KlankerInstance | null;
   selWs: string;
+  /** Display label of the selected workspace — wins over the raw id
+   *  (klanker#158 U03: never headline a bare workspace id when the
+   *  operator named it). */
+  workspaceLabel?: string;
   /** Selected contact id (resolved display name wins via personaLabel). */
   selPersona?: string;
   personaLabel?: string;
@@ -51,6 +55,7 @@ function statusMeta(status: ProcessStatus | null | undefined): { label: string; 
 export const Header: React.FC<HeaderProps> = ({
   activeInstance,
   selWs,
+  workspaceLabel,
   selPersona,
   personaLabel,
   chatTitle,
@@ -88,7 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="flex items-center space-x-1 min-w-0 text-[11px]">
             <Globe className="w-3 h-3 text-[#525252] shrink-0 hidden md:inline" />
             <span className="font-semibold text-white truncate" title={url.replace(/^https?:\/\//, "")}>
-              {selWs || activeInstance.name}
+              {workspaceLabel || selWs || activeInstance.name}
             </span>
             {selPersona && (
               <>
