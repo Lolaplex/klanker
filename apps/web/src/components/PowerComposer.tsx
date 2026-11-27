@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Mic, Paperclip, Volume2, X } from "lucide-react";
+import { ArrowUp, Mic, Paperclip, RefreshCw, Volume2, X } from "lucide-react";
 import type { KlankerInstance, ProviderRow } from "../types/klanker";
 import { api } from "../services/api";
-import { injectSteer, listWorkspaceFiles, speakVoice, transcribeVoice, refreshProviders } from "../services/streamExtrasApi";
+import { listWorkspaceFiles, speakVoice, transcribeVoice, refreshProviders } from "../services/streamExtrasApi";
 import type { OutAttachment } from "./ChatConsole";
 import type { UsageStats } from "./ToolTimeline";
 
@@ -41,6 +41,9 @@ export function PowerComposer(props: {
   onPaste: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   onPickFiles: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDrop: (e: React.DragEvent<HTMLFormElement>) => void;
+  onSteer: () => Promise<void>;
+  steerNote?: string;
+  acpMode?: string;
   files: OutAttachment[];
   setFiles: React.Dispatch<React.SetStateAction<OutAttachment[]>>;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -58,7 +61,7 @@ export function PowerComposer(props: {
   const {
     instance, input, onInput, onSubmit, onKeyDown, onPaste, onPickFiles, onDrop,
     files, setFiles, textareaRef, fileRef, isLoading, sendHold, displaySpeaker,
-    session, workspace, persona, usage, providers = [], pickProvider,
+    session, workspace, usage, providers = [], pickProvider, onSteer, steerNote, acpMode = "",
   } = props;
   const [dragOver, setDragOver] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
@@ -141,15 +144,8 @@ export function PowerComposer(props: {
   };
 
   const steer = async () => {
-    const text = input.trim();
-    if (!text || !session) return;
-    try {
-      await injectSteer(instance, { session, text, workspace, persona, user: instance.user_id });
-      onInput("");
-      setNote("steered");
-    } catch (e) {
-      setNote(e instanceof Error ? e.message : "steer failed");
-    }
+    if (!input.trim() || !session) return;
+    await onSteer();
   };
 
   const submit = (e?: React.FormEvent) => {
@@ -208,7 +204,7 @@ export function PowerComposer(props: {
   };
 
   return (
-    <div className="composer touch-none px-3 pt-3 bg-main border-t border-strong md:min-h-[73px] md:p-3 md:flex md:items-center">
+    <div className="composer touch-none px-3 pt-3 bg-main border-t border-subtle md:min-h-[73px] md:p-3 md:flex md:items-center">
       <form
         onSubmit={submit}
         onDragOver={(e) => {
@@ -224,14 +220,14 @@ export function PowerComposer(props: {
           setDragOver(false);
           onDrop(e);
         }}
-        className={`w-full flex flex-col min-h-12 bg-elevated border focus-within:border-strong rounded-md transition-colors ${dragOver ? "border-accent" : "border-strong"}`}
+        className={`mx-auto flex w-full max-w-3xl flex-col min-h-12 bg-elevated border focus-within:border-strong rounded-md transition-colors ${dragOver ? "border-accent" : "border-subtle"}`}
       >
         {files.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
             {files.map((f, i) => {
               const img = imageSrc(f);
               return (
-                <span key={`${f.name}-${i}`} className="inline-flex items-center gap-1.5 pl-1.5 pr-1 py-1 bg-hover border border-strong rounded-md text-[11px] text-ink-secondary">
+                <span key={`${f.name}-${i}`} className="inline-flex items-center gap-1.5 pl-1.5 pr-1 py-1 bg-hover border border-subtle rounded-md text-[11px] text-ink-secondary">
                   {img ? <img src={img} alt={f.name || "image attachment"} className="h-9 w-9 rounded border border-subtle object-cover" /> : <Paperclip className="w-3.5 h-3.5 shrink-0" />}
                   <span className="max-w-[160px] truncate">{f.name || "file"}</span>
                   <button type="button" onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))} className="inline-flex h-5 w-5 min-h-0 min-w-0 items-center justify-center rounded-md hover:bg-hover hover:text-ink-primary" aria-label={`Remove ${f.name || "attachment"}`}>
@@ -283,14 +279,15 @@ export function PowerComposer(props: {
             <Volume2 className="h-3.5 w-3.5" />
           </button>
           {usage && (usage.tokensIn || usage.tokensOut) ? <span>{usage.tokensIn + usage.tokensOut} tok{usage.costUsd ? ` · $${usage.costUsd.toFixed(6)}` : ""}</span> : null}
-          <button type="button" onClick={() => void refreshProviders(instance).catch(() => setNote("provider refresh failed"))} className="rounded px-1 py-0.5 hover:bg-hover hover:text-ink-primary" aria-label="Refresh providers">refresh</button>
+          <button type="button" onClick={() => void refreshProviders(instance).catch(() => setNote("provider refresh failed"))} className="rounded p-1 hover:bg-hover hover:text-ink-primary" aria-label="Refresh providers" title="Refresh providers"><RefreshCw className="h-3.5 w-3.5" /></button>
           {modes.length ? (
-            <select aria-label="ACP mode" className="ml-auto bg-transparent text-ink-secondary outline-none" onChange={(e) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode: e.target.value, provider: pickProvider } }))}>
+            <select aria-label="ACP mode" value={acpMode || modes[0] || ""} className="bg-transparent text-ink-secondary outline-none" onChange={(e) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode: e.target.value, provider: pickProvider } }))}>
               {modes.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           ) : null}
-          {isLoading ? <span className={modes.length ? "" : "ml-auto"}>enter = steer</span> : null}
-          {note ? <span className={modes.length || isLoading ? "" : "ml-auto"}>{note}</span> : null}
+          <span className="flex-1" aria-hidden="true" />
+          {note || steerNote ? <span>{note || steerNote}</span> : null}
+          <span className="hidden md:inline text-[10px] font-mono text-ink-dim">{isLoading ? "enter steer · shift+enter newline" : "enter send · / commands · @ mention"}</span>
         </div>
       </form>
     </div>

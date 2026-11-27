@@ -18,7 +18,7 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
     <div
       role="radiogroup"
       aria-label="Theme"
-      className="inline-flex items-center gap-0.5 bg-surface border border-strong rounded-md p-0.5"
+      className="inline-flex items-center gap-0.5 bg-transparent border border-subtle rounded-md p-0.5"
     >
       {OPTIONS.map(({ value, label, Icon }) => {
         const active = preference === value;
@@ -34,7 +34,7 @@ export function ThemeSwitcher({ compact = false }: { compact?: boolean }) {
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-[10px] transition-colors ${
               active
                 ? "bg-accent text-accent-ink"
-                : "text-ink-secondary hover:text-ink-primary hover:bg-bg-hover"
+                : "text-ink-secondary hover:text-ink-primary hover:bg-hover"
             }`}
           >
             <Icon className="w-3.5 h-3.5" />

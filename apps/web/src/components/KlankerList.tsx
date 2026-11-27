@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Cloud, CopyPlus, GitBranch, Globe, Lock, Pencil, Plus, Search, Settings2, WifiOff, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Cloud, CopyPlus, GitBranch, Globe, Lock, PanelLeftClose, Pencil, Plus, Search, Settings2, WifiOff, X } from "lucide-react";
 import { WorkspaceHosts, WorkspaceRow } from "../types/klanker";
 import { KlankerMark } from "./KlankerMark";
 import { wsSyncBadge, type WsBadge, type WsBadgeKind } from "../wsTree";
@@ -108,7 +108,7 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
   useEffect(() => {
     const move = (e: PointerEvent) => {
       if (!resizing.current) return;
-      onResize(Math.max(208, Math.min(440, e.clientX)));
+      onResize(Math.max(200, Math.min(420, e.clientX)));
     };
     const up = () => { resizing.current = false; };
     window.addEventListener("pointermove", move);
@@ -153,19 +153,18 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
   const firstPersona = selPersona || (firstWs ? personasOf(firstWs)?.[0]?.id || "" : "");
 
   return (
-    <aside data-testid="klanker-sidebar" style={{ width: undefined }} className="relative h-full w-[80vw] max-w-72 md:w-60 shrink-0 flex flex-col border-r border-strong bg-main select-none">
-      <style>{`@media (min-width:768px){[data-testid="klanker-sidebar"]{width:${width}px}}`}</style>
+    <aside data-testid="klanker-sidebar" style={{ "--sidebar-width": `${width}px` } as React.CSSProperties} className="relative h-full w-[80vw] max-w-72 md:w-[var(--sidebar-width)] md:min-w-[200px] md:max-w-[420px] shrink-0 flex flex-col border-r border-subtle bg-main select-none">
       <div
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize sidebar"
         onPointerDown={(e) => { resizing.current = true; e.preventDefault(); }}
-        className="absolute -right-1 top-0 z-20 hidden h-full w-2 cursor-col-resize md:block hover:bg-hover/40"
+        className="absolute -right-1 top-0 z-20 hidden h-full w-2 cursor-col-resize md:block hover:bg-strong"
       />
-      <div className="h-11 shrink-0 flex items-center justify-between px-3 border-b border-strong font-mono text-xs font-semibold tracking-wider text-ink-primary">
+      <div className="h-11 shrink-0 flex items-center justify-between px-3 border-b border-subtle font-mono text-xs font-semibold tracking-wider text-ink-primary">
         <span className="flex items-center min-w-0"><KlankerMark size={18} className="mr-2 shrink-0" />KLANKER</span>
         <button type="button" onClick={onToggleCollapse} title="Collapse sidebar (Ctrl/⌘ B)" aria-label="Collapse sidebar" className="hidden md:inline-flex h-7 w-7 items-center justify-center rounded-md text-ink-dim hover:bg-hover hover:text-ink-primary">
-          <ChevronRight className="h-3.5 w-3.5" />
+          <PanelLeftClose className="h-3.5 w-3.5" />
         </button>
       </div>
 
@@ -175,7 +174,7 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
           <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter workspaces and chats" aria-label="Filter sidebar" className={`${inputClass} pl-7 text-[11px]`} />
         </div>
         {firstWs && firstPersona && !q && (
-          <button type="button" onClick={() => onNewChat(firstWs, firstPersona)} className="mt-2 flex min-h-9 w-full items-center justify-center gap-1.5 rounded-md border border-strong bg-accent px-2 py-1.5 font-mono text-[11px] font-semibold text-accent-ink">
+          <button type="button" onClick={() => onNewChat(firstWs, firstPersona)} className="mt-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-subtle bg-elevated px-2 font-mono text-xs text-ink-primary transition-colors hover:border-strong hover:bg-hover">
             <Plus className="h-3 w-3" /> new chat
           </button>
         )}
@@ -237,14 +236,14 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
                                 <div key={s.chatId} className={`group/session relative flex items-center ${chatSelected ? "bg-elevated" : "hover:bg-hover"}`}>
                                   {renaming === rowKey ? (
                                     <form className="flex flex-1 items-center gap-1 py-1 pl-9 pr-1" onSubmit={(e) => { e.preventDefault(); onRenameChat?.(w.id, p.id, s, renameText.trim()); setRenaming(""); }}>
-                                      <input autoFocus value={renameText} onChange={(e) => setRenameText(e.target.value)} aria-label="Rename chat" className="min-w-0 flex-1 rounded border border-strong bg-elevated px-1 py-0.5 font-mono text-[11px] text-ink-primary outline-none" />
+                                      <input autoFocus value={renameText} onChange={(e) => setRenameText(e.target.value)} aria-label="Rename chat" className="min-w-0 flex-1 rounded border border-subtle hover:border-strong focus:border-strong bg-elevated px-1 py-0.5 font-mono text-[11px] text-ink-primary outline-none" />
                                       <button type="submit" aria-label="Save chat title" className="text-ink-dim hover:text-ink-primary"><Check className="h-3 w-3" /></button>
                                     </form>
                                   ) : (
                                     <button type="button" onClick={() => onSelectChat(w.id, p.id, s.chatId)} title={s.session} className={`flex-1 min-w-0 min-h-11 md:min-h-8 text-left pl-9 pr-1 py-1.5 font-mono text-[11px] flex flex-col justify-center gap-0.5 ${chatSelected ? "text-ink-primary" : "text-ink-secondary"}`}>
                                       <span className="flex min-w-0 items-center gap-1">
                                         <span className="truncate">{s.label}</span>
-                                        {s.host && <span className="shrink-0 max-w-[72px] truncate px-1 py-0.5 rounded-full border border-strong text-[8px] uppercase tracking-wider text-ink-muted" title={`bound host: ${s.host}`}>@{s.host}</span>}
+                                        {s.host && <span className="shrink-0 max-w-[72px] truncate px-1 py-0.5 rounded-full border border-subtle text-[8px] uppercase tracking-wider text-ink-muted" title={`bound host: ${s.host}`}>@{s.host}</span>}
                                         {s.wip_unpushed && <span className="shrink-0 rounded-full bg-accent px-1 text-[8px] uppercase text-accent-ink" title="unpushed work">wip</span>}
                                       </span>
                                       {(s.branch || s.repo) && <span className="flex min-w-0 items-center gap-1 text-[9px] text-ink-dim"><GitBranch className="h-2.5 w-2.5 shrink-0" /><span className="truncate">{s.branch || "no branch"}{s.repo ? ` · ${s.repo.split("/").pop()}` : ""}</span></span>}

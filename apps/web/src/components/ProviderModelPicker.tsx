@@ -110,12 +110,12 @@ export function ProviderModelPicker({
           type="button"
           disabled={disabled}
           title={disabled ? "host offline — cached provider list" : "Model for this chat"}
-          className={`bg-surface border hover:border-strong rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[190px] truncate ${
+          className={`bg-transparent border hover:border-strong rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[190px] truncate ${
             disabled
-              ? "border-strong text-ink-dim cursor-not-allowed"
+              ? "border-subtle text-ink-dim cursor-not-allowed"
               : active
-                ? "border-strong text-ink-primary cursor-pointer"
-                : "border-strong text-ink-secondary hover:text-ink-primary cursor-pointer"
+                ? "border-subtle text-ink-primary cursor-pointer"
+                : "border-subtle text-ink-secondary hover:text-ink-primary cursor-pointer"
           }`}
         >
           {stale && <span className="text-ink-muted">⟳ </span>}
@@ -136,7 +136,7 @@ export function ProviderModelPicker({
                   commitFreeId();
                 }
               }}
-              className="w-full min-w-0 bg-elevated border border-strong focus:border-accent rounded-md px-2 py-1.5 text-ink-primary outline-none"
+              className="w-full min-w-0 bg-elevated border border-subtle hover:border-strong focus:border-strong rounded-md px-2 py-1.5 text-ink-primary outline-none"
             />
             <button
               type="button"

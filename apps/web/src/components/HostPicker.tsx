@@ -47,12 +47,12 @@ export function HostPicker({
             title={locked ? `${text} — switch after the run ends` : `chat host — ${text}`}
             aria-label={`Chat host — ${text}`}
             aria-busy={switching}
-            className={`bg-surface border rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[170px] truncate inline-flex items-center gap-1.5 ${
+            className={`bg-transparent border rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[170px] truncate inline-flex items-center gap-1.5 ${
               locked
-                ? "border-strong text-ink-dim cursor-not-allowed"
+                ? "border-subtle text-ink-dim cursor-not-allowed"
                 : binding.kind === "bound"
-                  ? "border-strong text-ink-primary hover:border-accent cursor-pointer"
-                  : "border-strong text-ink-secondary hover:text-ink-primary hover:border-strong cursor-pointer"
+                  ? "border-subtle text-ink-primary hover:border-strong hover:bg-hover cursor-pointer"
+                  : "border-subtle text-ink-secondary hover:text-ink-primary hover:border-strong hover:bg-hover cursor-pointer"
             }`}
           >
             <span

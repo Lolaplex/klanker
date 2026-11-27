@@ -66,7 +66,7 @@ export function OnboardingEmpty({
         </div>
       )}
 
-      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-ink-dim">
+      <div className="hidden md:flex items-center gap-2 text-[10px] uppercase tracking-wider text-ink-dim">
         <TerminalSquare className="h-3 w-3" /> ctrl/cmd+k commands · ctrl/cmd+b sidebar · ctrl/cmd+j workbench
       </div>
     </div>

@@ -255,7 +255,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                       title="Browse…"
                       aria-label="Browse for workdir"
                       onClick={() => void pickWorkdir()}
-                      className="shrink-0 inline-flex h-8 w-8 items-center justify-center border border-strong rounded-md text-ink-secondary hover:text-ink-primary hover:bg-elevated"
+                      className="shrink-0 inline-flex h-8 w-8 items-center justify-center border border-subtle rounded-md text-ink-secondary hover:border-strong hover:text-ink-primary hover:bg-elevated"
                     >
                       <FolderOpen className="w-3.5 h-3.5" />
                     </button>
@@ -369,12 +369,12 @@ export const WorkspaceModal: React.FC<Props> = ({
                           )}
                           <span
                             className={`ml-auto shrink-0 px-1.5 py-0.5 rounded-full border text-[9px] uppercase tracking-wider ${
-                              d.online ? "border-accent text-ink-primary" : "border-strong text-ink-muted"
+                              d.online ? "border-accent text-ink-primary" : "border-subtle text-ink-muted"
                             }`}
                           >
                             {d.online ? "online" : "offline"}
                           </span>
-                          <span className="shrink-0 px-1.5 py-0.5 rounded-full border border-strong text-[9px] uppercase tracking-wider text-ink-muted">
+                          <span className="shrink-0 px-1.5 py-0.5 rounded-full border border-subtle text-[9px] uppercase tracking-wider text-ink-muted">
                             {deviceRoleBadge(d.role)}
                           </span>
                         </label>
@@ -467,7 +467,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => setRepos((prev) => [...prev, blankRepo()])}
-                      className="inline-flex items-center gap-1 self-start px-2 py-1 border border-dashed border-strong rounded-md text-ink-muted hover:text-ink-primary hover:border-strong"
+                      className="inline-flex items-center gap-1 self-start px-2 py-1 border border-dashed border-subtle rounded-md text-ink-muted hover:text-ink-primary hover:border-strong"
                     >
                       <Plus className="w-3 h-3" /> add repo
                     </button>
@@ -480,7 +480,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                     <button
                       type="button"
                       onClick={() => setInviteOpen((v) => !v)}
-                      className="inline-flex items-center gap-1.5 self-start px-3 py-1.5 border border-strong rounded-md bg-elevated text-ink-primary hover:bg-hover"
+                      className="inline-flex items-center gap-1.5 self-start px-3 py-1.5 border border-subtle rounded-md bg-elevated text-ink-primary hover:border-strong hover:bg-hover"
                     >
                       <QrCode className="w-3.5 h-3.5" />
                       {inviteOpen ? "hide guest invite" : "+ Invite guest to this workspace only (QR / code)"}
@@ -519,7 +519,7 @@ export const WorkspaceModal: React.FC<Props> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3 py-1.5 border border-strong rounded-md text-ink-secondary hover:text-ink-primary hover:bg-elevated"
+                className="px-3 py-1.5 border border-subtle rounded-md text-ink-secondary hover:border-strong hover:text-ink-primary hover:bg-elevated"
               >
                 cancel
               </button>

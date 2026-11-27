@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { X } from "lucide-react";
 import { PatchDiff } from "@pierre/diffs/react";
 import type { KlankerInstance } from "../../types/klanker";
@@ -10,11 +10,13 @@ import { BgTab, ChangesTab, DataTab, FilesTab, TracesTab } from "./tabs";
 const TABS: { value: WorkbenchTabId; label: string }[] = [
   { value: "changes", label: "Changes" },
   { value: "files", label: "Files" },
-  { value: "traces", label: "Traces & Usage" },
-  { value: "bg", label: "BG Terminal" },
-  { value: "data", label: "Data & Memory" },
+  { value: "traces", label: "Traces" },
+  { value: "bg", label: "Terminal" },
+  { value: "data", label: "Memory" },
   { value: "detail", label: "Detail" },
 ];
+
+const clampRailWidth = (n: number) => Math.max(320, Math.min(640, Math.round(n)));
 
 /** Right-side workbench rail (klanker#167): workspace-scoped operator
  *  surface over the U14 management routes. */
@@ -24,24 +26,81 @@ export function WorkbenchRail({
   session,
   onClose,
   notify,
+  width = 420,
+  onResize,
+  tab: controlledTab,
+  onTabChange,
+  detail: controlledDetail,
+  onDetailChange,
 }: {
   instance: KlankerInstance;
   workspace: string;
   session: string;
   onClose: () => void;
   notify: (message: string, kind?: "info" | "success" | "error") => void;
+  width?: number;
+  onResize?: (width: number) => void;
+  tab?: WorkbenchTabId;
+  onTabChange?: (tab: WorkbenchTabId) => void;
+  detail?: WorkbenchDetail | null;
+  onDetailChange?: (detail: WorkbenchDetail | null) => void;
 }) {
-  const [tab, setTab] = useState<WorkbenchTabId>("changes");
-  const [detail, setDetail] = useState<WorkbenchDetail | null>(null);
+  const [innerTab, setInnerTab] = useState<WorkbenchTabId>("changes");
+  const [innerDetail, setInnerDetail] = useState<WorkbenchDetail | null>(null);
+  const [innerWidth, setInnerWidth] = useState(() => clampRailWidth(width));
+  const drag = useRef<{ x: number; width: number } | null>(null);
+  const resizeRef = useRef<(width: number) => void>(() => {});
+  const tab = controlledTab ?? innerTab;
+  const detail = controlledDetail === undefined ? innerDetail : controlledDetail;
+  const railWidth = clampRailWidth(onResize ? width : innerWidth);
+  const setWidth = onResize ?? ((n: number) => setInnerWidth(clampRailWidth(n)));
+  resizeRef.current = setWidth;
+  const setTab = (next: WorkbenchTabId) => {
+    if (controlledTab === undefined) setInnerTab(next);
+    onTabChange?.(next);
+  };
+  const setDetailState = (next: WorkbenchDetail | null) => {
+    if (controlledDetail === undefined) setInnerDetail(next);
+    onDetailChange?.(next);
+  };
   const openDetail = (next: WorkbenchDetail, activate = true) => {
-    setDetail(next);
+    setDetailState(next);
     if (activate) setTab("detail");
   };
   const tabProps = { instance, workspace, session, openDetail, notify };
 
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const start = drag.current;
+      if (!start) return;
+      resizeRef.current(clampRailWidth(start.width + (start.x - e.clientX)));
+    };
+    const up = () => { drag.current = null; };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+  }, []);
+
   return (
-    <aside data-testid="workbench-rail" className="fixed inset-0 z-50 flex w-full flex-col border-l border-strong bg-surface font-mono text-xs md:static md:z-auto md:w-[420px] md:shrink-0">
-      <div className="flex h-11 shrink-0 items-center justify-between border-b border-strong px-3">
+    <aside
+      data-testid="workbench-rail"
+      style={{ "--workbench-width": `${railWidth}px` } as CSSProperties}
+      className="fixed inset-0 z-50 flex w-full flex-col border-l border-subtle bg-surface font-mono text-xs md:relative md:z-auto md:w-[var(--workbench-width)] md:min-w-[320px] md:max-w-[640px] md:shrink-0"
+    >
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize workbench"
+        onPointerDown={(e) => {
+          drag.current = { x: e.clientX, width: railWidth };
+          e.preventDefault();
+        }}
+        className="absolute left-0 top-0 z-20 hidden h-full w-2 cursor-col-resize hover:bg-strong md:block"
+      />
+      <div className="flex h-11 shrink-0 items-center justify-between border-b border-subtle px-3">
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-[0.2em] text-ink-dim">workbench</div>
           <div className="truncate text-[11px] text-ink-primary">{workspace || "default"}{session ? ` · ${session}` : ""}</div>
@@ -50,7 +109,7 @@ export function WorkbenchRail({
           <X className="h-4 w-4" />
         </button>
       </div>
-      <Tabs value={tab} onValueChange={(v) => setTab(v as WorkbenchTabId)} ariaLabel="Workbench sections" tabs={TABS} />
+      <Tabs value={tab} onValueChange={(v) => setTab(v as WorkbenchTabId)} ariaLabel="Workbench sections" tabs={TABS} tabClassName="px-2.5 py-2 text-[11px] shrink-0 whitespace-nowrap text-ink-muted hover:text-ink-primary data-[selected]:text-ink-primary border-b-2 border-transparent data-[selected]:border-accent cursor-pointer outline-none focus-visible:text-ink-primary -mb-px" />
       <div key={`${instance.id}:${workspace}`} className="min-h-0 flex-1 overflow-hidden">
         {tab === "changes" && (session ? <ChangesTab {...tabProps} openDetail={openDetail} notify={notify} /> : <div className="p-4 text-ink-dim">open a session to inspect its git worktree</div>)}
         {tab === "files" && <FilesTab {...tabProps} openDetail={openDetail} notify={notify} />}

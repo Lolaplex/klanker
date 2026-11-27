@@ -49,3 +49,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 klanker = ["modules/*.json", "_web/**/*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

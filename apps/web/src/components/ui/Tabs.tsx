@@ -10,20 +10,22 @@ export function Tabs({
   onValueChange,
   tabs,
   ariaLabel,
+  tabClassName,
 }: {
   value: string;
   onValueChange: (value: string) => void;
   tabs: { value: string; label: React.ReactNode }[];
   ariaLabel?: string;
+  tabClassName?: string;
 }) {
   return (
     <BaseTabs.Root value={value} onValueChange={(v) => onValueChange(v as string)}>
-      <BaseTabs.List aria-label={ariaLabel} className="flex items-center gap-1 border-b border-strong px-2 overflow-x-auto">
+      <BaseTabs.List aria-label={ariaLabel} className="flex items-center justify-start gap-1 border-b border-subtle px-1 overflow-x-auto">
         {tabs.map((t) => (
           <BaseTabs.Tab
             key={t.value}
             value={t.value}
-            className="px-2.5 py-2 text-[11px] uppercase tracking-wider whitespace-nowrap text-ink-muted hover:text-ink-primary data-[selected]:text-ink-primary border-b-2 border-transparent data-[selected]:border-accent cursor-pointer outline-none focus-visible:text-ink-primary -mb-px"
+            className={tabClassName || "px-2.5 py-2 text-[11px] shrink-0 uppercase tracking-wider whitespace-nowrap text-ink-muted hover:text-ink-primary data-[selected]:text-ink-primary border-b-2 border-transparent data-[selected]:border-accent cursor-pointer outline-none focus-visible:text-ink-primary -mb-px"}
           >
             {t.label}
           </BaseTabs.Tab>

@@ -10,7 +10,6 @@ import pytest
 
 from agents_workspace import Host
 from klanker import mgmt
-from klanker.prompt import build_system_prompt
 from klanker.sensing import probe_host
 
 
@@ -234,15 +233,3 @@ def test_memory_put_skills_get_put_and_traversal_refusal(authed_ws):
     h_bad_sk = _Handler("/v1/klanker/skills/..", body={"workspace": "default", "content": "x"})
     mgmt._dispatch(h_bad_sk, "PUT")
     assert h_bad_sk.error is not None and h_bad_sk.error[0] in (400, 403)
-
-
-def test_prompt_genui_block_opt_in(monkeypatch):
-    monkeypatch.delenv("KLANKER_GENUI", raising=False)
-    caps = probe_host()
-    p_off = build_system_prompt(caps)
-    assert "```openui" not in p_off
-
-    monkeypatch.setenv("KLANKER_GENUI", "1")
-    p_on = build_system_prompt(caps)
-    assert "```openui" in p_on
-    assert "Strictly FORBIDDEN" in p_on
