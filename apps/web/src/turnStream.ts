@@ -18,7 +18,28 @@ export type TurnEvent = {
   session?: string;
   user_id?: string;
   returncode?: number;
+  id?: string;
+  tool?: string;
+  args_preview?: string;
+  ok?: boolean;
+  duration_ms?: number;
+  result_preview?: string;
+  error?: string;
+  tokens_in?: number;
+  tokens_out?: number;
+  est_cost_usd?: number;
+  model?: string;
 };
+
+export const TURN_EVENT_NAME = "klanker:turn-event";
+
+/** Side-channel for UI-only trace affordances. App.tsx stays backward
+ * compatible while ChatConsole can observe the typed U13 frames passing
+ * through the resumable transport. */
+export function publishTurnEvent(ev: TurnEvent): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<TurnEvent>(TURN_EVENT_NAME, { detail: ev }));
+}
 
 /** The server reported the turn itself failed (SSE `error` event). */
 export class TurnError extends Error {}
@@ -107,6 +128,7 @@ async function consume(source: AsyncIterable<TurnEvent>, o: ResumableOpts): Prom
       const ev = next.value;
       if (!ev || ev.type === "attach" || ev.type === "start") continue;
       if (ev.type === "error") throw new TurnError(ev.text || "turn failed");
+      publishTurnEvent(ev);
       o.onEvent(ev);
       if (ev.type === "trailer") return;
     }
