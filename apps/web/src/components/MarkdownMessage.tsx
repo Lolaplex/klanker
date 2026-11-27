@@ -4,6 +4,7 @@ import type { Options } from "react-markdown";
 import { assistantMarkdownComponents, assistantMarkdownOptions } from "../assistantMarkdown";
 import { codeFenceText } from "../chatUi";
 import { CopyButton } from "./CopyButton";
+import { MermaidBlock } from "./MermaidBlock";
 
 function nodeText(node: React.ReactNode): string {
   if (node == null || typeof node === "boolean") return "";
@@ -32,6 +33,9 @@ function fenceLanguage(node: React.ReactNode): string {
 function CodeFence({ children }: { children?: React.ReactNode }) {
   const text = codeFenceText(nodeText(children));
   const lang = fenceLanguage(children);
+  if (lang === "mermaid") {
+    return <MermaidBlock source={text} />;
+  }
   return (
     <div className="my-2 overflow-hidden rounded border border-[#262626] bg-black">
       <div className="flex items-center justify-between gap-2 border-b border-[#262626] pl-3">

@@ -1,6 +1,58 @@
+@import "katex/dist/katex.min.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* KaTeX + prism monochrome-dark overrides (klanker#163 U08) — the
+   shipped themes assume light backgrounds. */
+.klanker-md .katex {
+  color: #e5e5e5;
+  font-size: 1.02em;
+}
+.klanker-md .katex-display {
+  margin: 0.5rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.klanker-md code[class*="language-"],
+.klanker-md pre[class*="language-"] {
+  color: #e5e5e5;
+  background: transparent;
+  text-shadow: none;
+  font-family: inherit;
+}
+.klanker-md .token.comment,
+.klanker-md .token.prolog,
+.klanker-md .token.cdata {
+  color: #525252;
+}
+.klanker-md .token.keyword,
+.klanker-md .token.tag,
+.klanker-md .token.important {
+  color: #ffffff;
+}
+.klanker-md .token.string,
+.klanker-md .token.char,
+.klanker-md .token.attr-value,
+.klanker-md .token.regex {
+  color: #a3a3a3;
+}
+.klanker-md .token.function,
+.klanker-md .token.class-name,
+.klanker-md .token.selector,
+.klanker-md .token.attr-name {
+  color: #d4d4d4;
+}
+.klanker-md .token.operator,
+.klanker-md .token.punctuation {
+  color: #737373;
+}
+.klanker-md .token.number,
+.klanker-md .token.boolean,
+.klanker-md .token.constant {
+  color: #e5e5e5;
+}
 
 @layer base {
   :root {
