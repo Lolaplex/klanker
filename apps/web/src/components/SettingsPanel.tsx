@@ -3,6 +3,7 @@ import { Check } from "lucide-react";
 import { DesktopSettings, KlankerInstance } from "../types/klanker";
 import { getPushSubscription, pushSupported, subscribePush, unsubscribePush } from "../push";
 import { api } from "../services/api";
+import { getQuickAskConfig, quickAskShortcutFormatError, setQuickAskConfig, type QuickAskConfig } from "../services/desktopApi";
 import { ThemeSwitcher } from "./ui/ThemeSwitcher";
 import { ProvidersPanel } from "./ProvidersPanel";
 import { Dialog } from "./ui/Dialog";
@@ -60,6 +61,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [updateInfo, setUpdateInfo] = useState<{ available: boolean; version?: string } | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateNote, setUpdateNote] = useState<string | null>(null);
+  const [quickAsk, setQuickAsk] = useState<QuickAskConfig>({ enabled: true, shortcut: "Alt+Space" });
+  const [quickAskShortcut, setQuickAskShortcut] = useState("Alt+Space");
+  const [quickAskBusy, setQuickAskBusy] = useState(false);
+  const [quickAskError, setQuickAskError] = useState<string | null>(null);
   const desktop = typeof window !== "undefined" && "__TAURI__" in window;
 
   // Desktop truth wins over the stored flag (user may have toggled the OS
@@ -73,6 +78,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
       .klankerVersion()
       .then((v) => setAppVersion(v.klanker_version || ""))
       .catch(() => {});
+    void getQuickAskConfig()
+      .then((cfg) => {
+        setQuickAsk(cfg);
+        setQuickAskShortcut(cfg.shortcut);
+      })
+      .catch((e) => setQuickAskError(e instanceof Error ? e.message : String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -157,6 +168,26 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
   };
 
+  const saveQuickAsk = async (enabled = quickAsk.enabled, shortcut = quickAskShortcut) => {
+    if (quickAskBusy) return;
+    const formatError = quickAskShortcutFormatError(shortcut);
+    if (formatError) {
+      setQuickAskError(formatError);
+      return;
+    }
+    setQuickAskBusy(true);
+    setQuickAskError(null);
+    try {
+      const next = await setQuickAskConfig(enabled, shortcut.trim());
+      setQuickAsk(next);
+      setQuickAskShortcut(next.shortcut);
+    } catch (e) {
+      setQuickAskError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setQuickAskBusy(false);
+    }
+  };
+
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     setHostNote(null);
@@ -229,6 +260,67 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     On: the local serve binds 0.0.0.0 so tailnet/LAN peers can reach the hub. Off: 127.0.0.1 only.
                     Applies to the next spawn/restart.
                   </p>
+                </div>
+                <div className="mt-2 space-y-2 border-t border-subtle pt-2">
+                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-subtle rounded-md text-[11px] text-ink-secondary hover:border-strong hover:text-ink-primary cursor-pointer">
+                    <Switch
+                      checked={quickAsk.enabled}
+                      onCheckedChange={(v) => void saveQuickAsk(v, quickAsk.shortcut)}
+                      ariaLabel="Quick-Ask overlay"
+                      disabled={quickAskBusy}
+                    />
+                    Quick-Ask overlay
+                  </label>
+                  <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wider text-ink-dim">Global hotkey</div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        value={quickAskShortcut}
+                        onChange={(e) => setQuickAskShortcut(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void saveQuickAsk();
+                          }
+                        }}
+                        placeholder="Alt+Space"
+                        aria-label="Quick-Ask global hotkey"
+                        className="w-44 bg-elevated border border-subtle hover:border-strong focus:border-strong rounded-md px-2.5 py-1.5 text-[11px] text-ink-primary outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={quickAskBusy || quickAskShortcut.trim() === quickAsk.shortcut}
+                        onClick={() => void saveQuickAsk()}
+                        className="inline-flex min-h-8 items-center px-2.5 py-1 bg-surface border border-subtle rounded-md text-[10px] text-ink-secondary hover:border-strong hover:text-ink-primary hover:bg-elevated disabled:opacity-50"
+                      >
+                        {quickAskBusy ? "saving…" : "apply"}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1">
+                      {["Alt+Space", "Ctrl+Shift+K", "Alt+K"].map((preset) => (
+                        <button
+                          key={preset}
+                          type="button"
+                          disabled={quickAskBusy}
+                          onClick={() => {
+                            setQuickAskShortcut(preset);
+                            void saveQuickAsk(quickAsk.enabled, preset);
+                          }}
+                          className={`inline-flex min-h-7 items-center px-2 py-0.5 border rounded-md text-[10px] ${
+                            quickAsk.shortcut === preset
+                              ? "bg-accent text-accent-ink border-accent"
+                              : "bg-surface border-subtle text-ink-secondary hover:border-strong hover:text-ink-primary"
+                          }`}
+                        >
+                          {preset}
+                        </button>
+                      ))}
+                    </div>
+                    {quickAskError && <p className="text-[10px] text-danger">{quickAskError}</p>}
+                    <p className="text-[10px] text-ink-dim">
+                      Live-registers without restart. When Quick-Ask is off, the same hotkey raises the main window composer.
+                    </p>
+                  </div>
                 </div>
                 <div className="mt-2 border-t border-subtle pt-2">
                   <div className="flex items-center gap-2">

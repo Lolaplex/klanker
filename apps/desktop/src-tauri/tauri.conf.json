@@ -28,7 +28,7 @@
         "shadow": true,
         "resizable": true,
         "center": true,
-        "visible": true,
+        "visible": false,
         "focus": true,
         "dragDropEnabled": false,
         "backgroundColor": "#000000"
