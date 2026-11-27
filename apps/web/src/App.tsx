@@ -49,7 +49,7 @@ import { Kicker, runResumableTurn } from "./turnStream";
 import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
 import { PairModal } from "./components/PairModal";
-import { WorkspacePane } from "./components/WorkspacePane";
+import { WorkbenchRail } from "./components/workbench/WorkbenchRail";
 import { WorkspaceModal, type WorkspaceTab } from "./components/WorkspaceModal";
 import { PersonaEditorModal } from "./components/PersonaEditorModal";
 import { useKeyboardViewport } from "./hooks/useKeyboardViewport";
@@ -126,10 +126,8 @@ export function App() {
   const [sseHealthy, setSseHealthy] = useState(false);
   const [personaEditor, setPersonaEditor] = useState<{ ws: string; persona: string } | null>(null);
   const [pairOpen, setPairOpen] = useState(false);
-  const [storeOpen, setStoreOpen] = useState(false);
   const [storeSupported, setStoreSupported] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(false);
-  const [storeRev, setStoreRev] = useState(0);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   // Per-chat host switch (klanker#152): in-flight flag + result note.
   const [hostSwitching, setHostSwitching] = useState(false);
@@ -472,7 +470,6 @@ export function App() {
       } else if (ev.kind === "approval.changed") {
         approvals.refresh();
       } else if (ev.kind === "store.changed") {
-        setStoreRev((n) => n + 1);
       } else {
         // Host/presence surface: device.* badges, member joins, lease locks,
         // session:host rebinds (klanker#152).
@@ -1489,16 +1486,13 @@ export function App() {
                     onDecide={(allow, remember) => void approvals.handleDecide(allow, remember)}
                   />
                 </div>
-                {storeOpen && storeSupported && (
-                  <WorkspacePane
+                {workbenchOpen && (
+                  <WorkbenchRail
                     instance={activeInstance}
-                    workspaceId={selWs}
-                    revision={storeRev}
-                    onUnsupported={() => {
-                      setStoreSupported(false);
-                      setStoreOpen(false);
-                    }}
-                    onClose={() => setStoreOpen(false)}
+                    workspace={selWs || "default"}
+                    session={openChat?.session || ""}
+                    notify={pushToast}
+                    onClose={() => setWorkbenchOpen(false)}
                   />
                 )}
               </div>
@@ -1567,7 +1561,7 @@ export function App() {
           instance={activeInstance}
           workspace={tree.workspaces.find((w) => w.id === wsModal.id) ?? { id: wsModal.id }}
           initialTab={wsModal.tab}
-          onOpenStoreInspector={storeSupported ? () => setStoreOpen(true) : undefined}
+          onOpenStoreInspector={storeSupported ? () => { setWsModal(null); setWorkbenchOpen(true); } : undefined}
           onOpenSession={(ws, persona, session) => {
             setWsModal(null);
             selectChat(ws, persona, session);

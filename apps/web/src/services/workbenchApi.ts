@@ -1,5 +1,5 @@
 import type { KlankerInstance } from "../types/klanker";
-import { caps, httpErrorMessage, localRelayBaseUrl } from "./api";
+import { caps, httpErrorMessage, hydrateSecret, localRelayBaseUrl } from "./api";
 
 /** U14 workbench API helpers (klanker#167). Kept out of services/api.ts so
  *  chat-surface changes never fight the workbench wire contract. */
@@ -17,6 +17,7 @@ function base(inst: KlankerInstance): string {
 }
 
 async function request<T = unknown>(inst: KlankerInstance, path: string, init: RequestInit = {}): Promise<T> {
+  await hydrateSecret(inst);
   const headers = { ...(init.headers as Record<string, string> | undefined) };
   if (inst.secret && !headers.Authorization) headers.Authorization = `Bearer ${inst.secret}`;
   const res = await fetch(base(inst) + path, { ...init, headers });
