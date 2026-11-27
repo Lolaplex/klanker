@@ -6,12 +6,13 @@ import { buildPolicyPatch, deviceRoleBadge, mergeDeviceRows, shortId, type RepoE
 import { Select } from "./ui/Select";
 import { WsInviteCard } from "./WsInviteCard";
 import { WsSkillsRoutinesTab, WsMemoryTab, WsJobsTracesTab } from "./WsManageTabs";
+import { WsInboxTab } from "./WsInboxTab";
 
 const inputClass =
   "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
 const labelClass = "text-[10px] uppercase tracking-wider text-[#525252]";
 
-export type WorkspaceTab = "general" | "sharing" | "skills" | "memory" | "jobs";
+export type WorkspaceTab = "general" | "sharing" | "skills" | "memory" | "jobs" | "inbox";
 
 const TABS: { id: WorkspaceTab; label: string }[] = [
   { id: "general", label: "General" },
@@ -19,12 +20,17 @@ const TABS: { id: WorkspaceTab; label: string }[] = [
   { id: "skills", label: "Skills & Routines" },
   { id: "memory", label: "Memory" },
   { id: "jobs", label: "Jobs & Traces" },
+  { id: "inbox", label: "Inbox" },
 ];
 
 interface Props {
   instance: KlankerInstance;
   workspace: WorkspaceRow;
   initialTab?: WorkspaceTab;
+  /** Persona rows of this workspace for the inbox tab (names + targets). */
+  treePersonas?: { id: string; name?: string }[];
+  /** Inbox "open chat" — selects the contact in the sidebar. */
+  onOpenInboxChat?: (ws: string, persona: string) => void;
   /** Open the raw datom inspector (advanced, desktop side-pane). */
   onOpenStoreInspector?: () => void;
   /** Job id is its goal-session id — open it as a chat. */
@@ -44,6 +50,8 @@ export const WorkspaceModal: React.FC<Props> = ({
   instance,
   workspace,
   initialTab = "general",
+  treePersonas = [],
+  onOpenInboxChat,
   onOpenStoreInspector,
   onOpenSession,
   onSaved,
@@ -520,6 +528,17 @@ export const WorkspaceModal: React.FC<Props> = ({
           {tab === "skills" && <WsSkillsRoutinesTab instance={instance} workspace={workspace.id} />}
           {tab === "memory" && <WsMemoryTab instance={instance} workspace={workspace.id} />}
           {tab === "jobs" && <WsJobsTracesTab instance={instance} workspace={workspace.id} onOpenSession={onOpenSession} />}
+          {tab === "inbox" && (
+            <WsInboxTab
+              instance={instance}
+              workspace={workspace.id}
+              personas={treePersonas}
+              onOpenChat={(ws, persona) => {
+                onClose();
+                onOpenInboxChat?.(ws, persona);
+              }}
+            />
+          )}
 
           {note && <div className="text-red-500">{note}</div>}
           {dirtyTab && (

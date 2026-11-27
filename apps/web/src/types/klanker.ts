@@ -355,6 +355,18 @@ export interface WsInboxPersona {
   total?: number;
 }
 
+/** GET /v1/workspaces/<ws>/personas/<p>/inbox task row. */
+export interface InboxTask {
+  id: string;
+  title?: string;
+  note?: string;
+  status?: string;
+  owner?: string;
+  reply_summary?: string;
+  created_at?: string;
+  wake?: boolean;
+}
+
 /** GET /v1/workspaces/<ws>/hosts payload. */
 export interface WorkspaceHosts {
   workspace: string;

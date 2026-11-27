@@ -20,6 +20,9 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenWorkspace: () => void;
   onOpenNav: () => void;
+  /** Open handoffs in the selected workspace — unread badge on the
+   *  Workspace button (klanker#166 U11). */
+  workspaceUnread?: number;
 }
 
 type TauriWindow = { minimize(): Promise<void>; toggleMaximize(): Promise<void>; close(): Promise<void> };
@@ -57,6 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenWorkspace,
   onOpenNav,
+  workspaceUnread = 0,
 }) => {
   const url = activeInstance?.endpoint?.base_url || activeInstance?.base_url || window.location.host;
   const win = tauriWindow();
@@ -109,10 +113,19 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenWorkspace}
             aria-label="Workspace"
-            className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
+            className="relative inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
           >
             <SlidersHorizontal className="w-3.5 h-3.5" />
             <span className="hidden md:inline">Workspace</span>
+            {workspaceUnread > 0 && (
+              <span
+                className="absolute -top-1.5 -right-1.5 min-w-4 px-1 rounded-full bg-white text-black text-[9px] font-mono text-center"
+                title={`${workspaceUnread} open handoff${workspaceUnread === 1 ? "" : "s"}`}
+                aria-label={`${workspaceUnread} open handoffs`}
+              >
+                {workspaceUnread}
+              </span>
+            )}
           </button>
         )}
         <button
