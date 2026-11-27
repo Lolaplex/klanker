@@ -1,19 +1,17 @@
-//! Tray presence: close-to-tray, native menu, global hotkey.
+//! Tray presence: close-to-tray and the native menu.
 //!
 //! Menu: Open Klanker / Restart serve / Open logs / Quit.
 //! Quit kills the local serve only when the app spawned it
 //! (`serve::kill_owned`); foreign serves are left running.
-//! Hotkey: Alt+Space raises the window and asks the frontend to focus
-//! the chat composer (`klanker:focus-composer`).
+//! The global hotkey lives in `quick_ask` — its disabled fallback calls
+//! `show_main` here and asks the frontend to focus the chat composer.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, WindowEvent};
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 pub const MAIN_LABEL: &str = "main";
-const HOTKEY: &str = "Alt+Space";
 
 static QUITTING: AtomicBool = AtomicBool::new(false);
 
@@ -77,20 +75,7 @@ pub(crate) fn update_tray_tooltip(app: &AppHandle, st: &crate::serve::ServeStatu
     }
 }
 
-fn register_hotkey(app: &AppHandle) {
-    if let Err(err) = app
-        .global_shortcut()
-        .on_shortcut(HOTKEY, |app_handle, _shortcut, event| {
-            if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                show_main(app_handle);
-            }
-        })
-    {
-        eprintln!("tray: global shortcut {HOTKEY} not registered: {err}");
-    }
-}
-
-/// Wire the tray icon, menu, close-to-tray, and the global hotkey.
+/// Wire the tray icon, menu, and close-to-tray behavior.
 pub fn setup_tray(app: &AppHandle) -> Result<(), String> {
     let open = MenuItemBuilder::with_id("tray-open", "Open Klanker")
         .build(app)
@@ -158,6 +143,5 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), String> {
         });
     }
 
-    register_hotkey(app);
     Ok(())
 }

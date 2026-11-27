@@ -1,10 +1,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { QuickAskApp } from "./components/QuickAskApp";
 import { kbDebugEnabled } from "./kbDebug";
 import { migrateLegacyStorage } from "./chatBuckets";
 import { ThemeRoot } from "./ThemeRoot";
 import { bootstrapTheme } from "./theme";
+import { closeSplash } from "./services/desktopApi";
 import "./index.css";
 
 // Apply the persisted/system theme before first paint — no dark flash in
@@ -28,10 +30,26 @@ if (
   });
 }
 
+function SplashCloser() {
+  React.useEffect(() => {
+    void closeSplash();
+  }, []);
+  return null;
+}
+
+const quickAskView = new URLSearchParams(window.location.search).get("view") === "quick-ask";
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ThemeRoot>
-      <App />
+      {quickAskView ? (
+        <QuickAskApp />
+      ) : (
+        <>
+          <SplashCloser />
+          <App />
+        </>
+      )}
     </ThemeRoot>
   </React.StrictMode>
 );

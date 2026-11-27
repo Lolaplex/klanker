@@ -2,16 +2,17 @@ pub mod autostart;
 pub mod discovery;
 pub mod migrate;
 pub mod provision;
+pub mod quick_ask;
 pub mod registry;
 pub mod secrets;
 pub mod serve;
+pub mod splash;
 pub mod tray;
 pub mod updater;
 
 use serde_json::{Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
 
 pub(crate) fn desktop_host_dir_with(env_override: Option<&str>) -> Result<PathBuf, String> {
     if let Some(val) = env_override.map(str::trim).filter(|v| !v.is_empty()) {
@@ -147,10 +148,12 @@ pub fn run() {
             if let Err(err) = tray::setup_tray(app.handle()) {
                 eprintln!("tray setup failed: {err}");
             }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
-                let _ = window.unminimize();
+            if let Err(err) = quick_ask::setup_quick_ask(app.handle()) {
+                eprintln!("quick-ask setup failed: {err}");
+            }
+            if let Err(err) = splash::setup_splash(app.handle()) {
+                eprintln!("splash setup failed: {err}");
+                tray::show_main(app.handle());
             }
             Ok(())
         })
@@ -172,7 +175,12 @@ pub fn run() {
             registry::instances_list,
             registry::instance_save,
             registry::instance_delete,
-            discovery::discover_peers
+            discovery::discover_peers,
+            quick_ask::get_quick_ask_config,
+            quick_ask::set_quick_ask_config,
+            quick_ask::hide_quick_ask,
+            quick_ask::open_main_session,
+            splash::close_splash
         ])
         .run(tauri::generate_context!())
         .expect("error while running klanker desktop application");

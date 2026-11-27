@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { api, caps, ensureLocalServePort, localInstance, rememberSecret, secretAccount, serveToProcess, setAuthExpiredHandler, setLocalServePort } from "../services/api";
+import { DESKTOP_EVENTS } from "../services/desktopApi";
 import type { AuthState } from "../components/AuthGate";
 
 /**
@@ -104,43 +105,55 @@ export function useInstances(args: {
 
   // Serve lifecycle sync (desktop): "klanker:serve-state" Tauri event +
   // a 10s serveStatus() poll keep localServePort and the managed health
-  // row accurate across Tray restarts and port changes.
+  // row accurate across Tray restarts and port changes. Native quick-ask
+  // intents are re-dispatched onto window because Tauri events never become
+  // DOM events by themselves.
   useEffect(() => {
     if (!caps.spawn) return;
-    let unlisten: (() => void) | undefined;
+    const unlisteners: (() => void)[] = [];
+    let cancelled = false;
     void (async () => {
-      try {
-        // Runtime global only — no @tauri-apps dependency, PWA-safe.
-        const listen = (window as {
-          __TAURI__?: {
-            event?: {
-              listen?: (
-                name: string,
-                cb: (ev: { payload?: { port?: number; pid?: number; state?: string } }) => void
-              ) => Promise<() => void>;
-            };
+      // Runtime global only — no @tauri-apps dependency, PWA-safe.
+      const listen = (window as {
+        __TAURI__?: {
+          event?: {
+            listen?: (
+              name: string,
+              cb: (ev: { payload?: unknown }) => void
+            ) => Promise<() => void>;
           };
-        }).__TAURI__?.event?.listen;
-        if (typeof listen !== "function") return;
-        unlisten = await listen(
-          "klanker:serve-state",
-          (ev: { payload?: { port?: number; pid?: number; state?: string } }) => {
-            const p = ev.payload?.port;
-            if (p) setLocalServePort(p);
-            setHerd((prev) => ({
-              ...prev,
-              local: {
-                is_running: true,
-                pid: ev.payload?.pid,
-                port: p || 0,
-                state: (ev.payload?.state as ProcessStatus["state"]) || "running",
-              },
-            }));
-          }
-        );
-      } catch {
-        // No Tauri runtime (PWA) — polling below still covers state.
-      }
+        };
+      }).__TAURI__?.event?.listen;
+      if (typeof listen !== "function") return;
+      const add = async (name: string, cb: (ev: { payload?: unknown }) => void) => {
+        try {
+          const off = await listen(name, cb);
+          if (cancelled) off();
+          else unlisteners.push(off);
+        } catch {
+          // One missing event name must not disarm the rest of the bridge.
+        }
+      };
+      await add("klanker:serve-state", (ev) => {
+        const payload = ev.payload as { port?: number; pid?: number; state?: string } | undefined;
+        const p = payload?.port;
+        if (p) setLocalServePort(p);
+        setHerd((prev) => ({
+          ...prev,
+          local: {
+            is_running: true,
+            pid: payload?.pid,
+            port: p || 0,
+            state: (payload?.state as ProcessStatus["state"]) || "running",
+          },
+        }));
+      });
+      await add(DESKTOP_EVENTS.focusComposer, () => {
+        window.dispatchEvent(new Event(DESKTOP_EVENTS.focusComposer));
+      });
+      await add(DESKTOP_EVENTS.openSession, (ev) => {
+        window.dispatchEvent(new CustomEvent(DESKTOP_EVENTS.openSession, { detail: ev.payload }));
+      });
     })();
     const poll = () => {
       void api
@@ -153,7 +166,8 @@ export function useInstances(args: {
     };
     const timer = window.setInterval(poll, 10_000);
     return () => {
-      unlisten?.();
+      cancelled = true;
+      for (const off of unlisteners.splice(0)) off();
       window.clearInterval(timer);
     };
   }, []);
