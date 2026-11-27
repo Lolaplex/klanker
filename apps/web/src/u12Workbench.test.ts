@@ -161,7 +161,7 @@ describe("workbench rail shell", () => {
     const r = await renderInDom(React.createElement(WorkbenchRail, { instance: inst, workspace: "alpha", session: "", onClose: () => {}, notify: () => {} }));
     try {
       const html = r.html();
-      for (const label of ["Changes", "Files", "Traces & Usage", "BG Terminal", "Data & Memory", "Detail"]) {
+      for (const label of ["Changes", "Files", "Traces", "Terminal", "Memory", "Detail"]) {
         assert.ok(html.includes(label) || html.includes(label.replace("&", "&amp;")), `${label} tab missing`);
       }
       assert.ok(html.includes("open a session to inspect its git worktree"), "empty session guidance missing");
@@ -242,7 +242,7 @@ describe("data and memory tab", () => {
     });
     const r = await renderInDom(React.createElement(WorkbenchRail, { instance: inst, workspace: "alpha", session: "", onClose: () => {}, notify: () => {} }));
     try {
-      const dataTab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent === "Data & Memory") as HTMLElement;
+      const dataTab = [...document.querySelectorAll('[role="tab"]')].find((t) => t.textContent === "Memory") as HTMLElement;
       await act(async () => dataTab.click());
       await flush(60);
       const html = r.html();

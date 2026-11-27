@@ -81,8 +81,8 @@ describe("U18 power composer contracts", () => {
     assert.ok(cc.includes('ev.type === "thought" && ev.text'));
     assert.ok(!cc.includes("ev.delta"), "thought uses text, not delta");
     assert.ok(cc.includes("jump to latest"));
-    assert.ok(cc.includes("forkSession"));
-    assert.ok(pc.includes("injectSteer"));
+    assert.ok(cc.includes("klanker:fork-session"), "fork must be an App-owned CustomEvent intent");
+    assert.ok(cc.includes("injectSteer"), "steer API call must be owned by ChatConsole");
     assert.ok(pc.includes("isLoading ? \"Steer turn\" : \"Send\""));
     assert.ok(pc.includes("aria-label=\"ACP mode\""));
     assert.ok(pc.includes("refreshProviders"));

@@ -207,7 +207,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   value={hostLabelDraft}
                   onChange={(e) => setHostLabelDraft(e.target.value)}
                   placeholder="how paired devices see this machine"
-                  className="w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
+                  className="w-full bg-elevated border border-subtle hover:border-strong focus:border-strong rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
                 />
               </label>
               {hostNote && <p className="text-[10px] text-red-400 mt-1">{hostNote}</p>}
@@ -217,11 +217,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
               <div>
                 <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-1">Desktop</div>
                 <div className="space-y-1">
-                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary cursor-pointer">
+                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-subtle rounded-md text-[11px] text-ink-secondary hover:border-strong hover:text-ink-primary cursor-pointer">
                     <Switch checked={draft.autostart} onCheckedChange={(v) => setDraft({ ...draft, autostart: v })} ariaLabel="Launch klanker on login" />
                     Launch klanker on login
                   </label>
-                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary cursor-pointer">
+                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-subtle rounded-md text-[11px] text-ink-secondary hover:border-strong hover:text-ink-primary cursor-pointer">
                     <Switch checked={!!draft.hub_mode} onCheckedChange={(v) => setDraft({ ...draft, hub_mode: v })} ariaLabel="Hub mode — serve on LAN" />
                     Hub mode — serve on LAN (0.0.0.0)
                   </label>
@@ -239,7 +239,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                       type="button"
                       disabled={updateBusy}
                       onClick={() => void checkUpdate()}
-                      className="inline-flex min-h-7 items-center px-2.5 py-1 bg-surface border border-strong rounded-md text-[10px] text-ink-secondary hover:text-ink-primary hover:bg-elevated disabled:opacity-50"
+                      className="inline-flex min-h-7 items-center px-2.5 py-1 bg-surface border border-subtle rounded-md text-[10px] text-ink-secondary hover:border-strong hover:text-ink-primary hover:bg-elevated disabled:opacity-50"
                       aria-label="Check for app updates"
                     >
                       {updateBusy ? "checking…" : "check for updates"}
@@ -264,7 +264,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
             {onToggleVoice && (
               <div>
                 <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-1">Web</div>
-                <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary cursor-pointer">
+                <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-subtle rounded-md text-[11px] text-ink-secondary hover:border-strong hover:text-ink-primary cursor-pointer">
                   <Switch checked={!!voiceEnabled} onCheckedChange={() => onToggleVoice()} ariaLabel="Browser read-aloud" />
                   Browser read-aloud (experimental)
                 </label>
@@ -294,7 +294,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   className={`inline-flex min-h-9 items-center px-3 py-1.5 border rounded-md text-[11px] transition-colors disabled:opacity-50 ${
                     pushOn
                       ? "bg-accent text-accent-ink border-accent hover:bg-accent-hover"
-                      : "bg-surface border-strong text-ink-secondary hover:bg-elevated hover:text-ink-primary"
+                      : "bg-surface border-subtle text-ink-secondary hover:border-strong hover:bg-elevated hover:text-ink-primary"
                   }`}
                 >
                   {pushBusy ? "…" : pushOn ? "Push on — disable" : "Enable push on this relay"}

@@ -37,7 +37,7 @@ export function Select({
     >
       <BaseSelect.Trigger
         aria-label={ariaLabel}
-        className={`w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none flex items-center justify-between gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        className={`w-full bg-elevated border border-subtle hover:border-strong focus:border-strong rounded-md px-2.5 py-1.5 text-ink-primary outline-none flex items-center justify-between gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
       >
         <BaseSelect.Value placeholder={placeholder} />
         <BaseSelect.Icon className="text-ink-dim">

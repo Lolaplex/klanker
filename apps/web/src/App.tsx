@@ -50,6 +50,7 @@ import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
 import { PairModal } from "./components/PairModal";
 import { WorkbenchRail } from "./components/workbench/WorkbenchRail";
+import type { WorkbenchDetail, WorkbenchTabId } from "./components/workbench/types";
 import { WorkspaceModal, type WorkspaceTab } from "./components/WorkspaceModal";
 import { PersonaEditorModal } from "./components/PersonaEditorModal";
 import { useKeyboardViewport } from "./hooks/useKeyboardViewport";
@@ -134,10 +135,17 @@ export function App() {
   const [hostNote, setHostNote] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTabId>("changes");
+  const [workbenchDetail, setWorkbenchDetail] = useState<WorkbenchDetail | null>(null);
+  const [workbenchWidth, setWorkbenchWidth] = useState(() => {
+    const n = Number(localStorage.getItem("klanker.workbench.width") || 420);
+    return Number.isFinite(n) ? Math.max(320, Math.min(640, n)) : 420;
+  });
+  const [acpModes, setAcpModes] = useState<Record<string, { provider: string; mode: string }>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("klanker.sidebar.collapsed") === "1");
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const n = Number(localStorage.getItem("klanker.sidebar.width") || 240);
-    return Number.isFinite(n) ? Math.max(208, Math.min(440, n)) : 240;
+    return Number.isFinite(n) ? Math.max(200, Math.min(420, n)) : 240;
   });
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
@@ -187,6 +195,9 @@ export function App() {
   useEffect(() => {
     try { localStorage.setItem("klanker.sidebar.width", String(sidebarWidth)); } catch {}
   }, [sidebarWidth]);
+  useEffect(() => {
+    try { localStorage.setItem("klanker.workbench.width", String(workbenchWidth)); } catch {}
+  }, [workbenchWidth]);
 
   // Bucket key: `${ws} ${persona}` — the primary endpoint fronts every
   // workspace, so chat state is never partitioned per instance (klanker#150).
@@ -816,6 +827,21 @@ export function App() {
    *  is not conversation content. opts.reuseAssistant (only with
    *  /retry): stream the regenerated answer into the last assistant
    *  bubble instead of stacking a duplicate pair (klanker#169 U15). */
+  const acpModeStorageKey = `klanker.acp-mode.${pickKey}`;
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(acpModeStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { provider?: string; mode?: string };
+      if (!parsed.mode) return;
+      setAcpModes((prev) => prev[pickKey] ? prev : { ...prev, [pickKey]: { provider: parsed.provider || "", mode: parsed.mode || "" } });
+    } catch {}
+  }, [acpModeStorageKey, pickKey]);
+
+  const selectedAcpMode = acpModes[pickKey]?.provider === (chatPicks[pickKey]?.provider || "")
+    ? acpModes[pickKey]?.mode || ""
+    : "";
+
   const handleSendMessage = async (
     text: string,
     attachments?: { data: string; mime?: string; name?: string }[],
@@ -919,6 +945,7 @@ export function App() {
         persona: selPersona || undefined,
         provider: provider || undefined,
         model: model || undefined,
+        mode: selectedAcpMode || undefined,
         attachments: attachments && attachments.length ? attachments : undefined,
       };
       // A dead client stream (iOS "Load failed", suspend, network switch) is
@@ -1120,6 +1147,57 @@ export function App() {
     tree.setSessionTitles((prev) => ({ ...prev, [`${ws} ${persona} ${row.session}`]: clipped }));
     pushToast("chat title updated locally", "success");
   }, [pushToast, tree]);
+
+
+  // U18 CustomEvent surface: slash commands and composer controls stay
+  // decoupled, but every intent has exactly one owner here in the shell.
+  useEffect(() => {
+    const detailOf = (event: Event) => ((event as CustomEvent<Record<string, unknown>>).detail || {}) as Record<string, unknown>;
+    const openDetail = (event: Event) => {
+      const d = detailOf(event);
+      setWorkbenchDetail({
+        title: String(d.title || d.session || "detail"),
+        body: typeof d.body === "string" && d.body ? d.body : JSON.stringify(d.params || d, null, 2),
+        diff: typeof d.diff === "string" && d.diff ? d.diff : undefined,
+        truncated: d.truncated === true,
+      });
+      setWorkbenchTab("detail");
+      setWorkbenchOpen(true);
+    };
+    const fork = (event: Event) => {
+      const d = detailOf(event);
+      const ws = String(d.workspace || selWsRef.current || "");
+      const persona = String(d.persona || selPersonaRef.current || "default");
+      const session = String(d.session || d.source_session || "");
+      if (ws && session) forkChat(ws, persona, { chatId: session, session, label: session, pending: false });
+    };
+    const clear = (event: Event) => {
+      const d = detailOf(event);
+      const ws = String(d.workspace || selWsRef.current || "");
+      if (ws) newChat(ws, String(d.persona || selPersonaRef.current || "default"));
+    };
+    const providers = () => refreshProviders();
+    const acpMode = (event: Event) => {
+      const d = detailOf(event);
+      const mode = String(d.mode || "").trim();
+      if (!mode) return;
+      const value = { provider: String(d.provider || ""), mode };
+      setAcpModes((prev) => ({ ...prev, [pickKey]: value }));
+      try { localStorage.setItem(acpModeStorageKey, JSON.stringify(value)); } catch {}
+    };
+    const listeners: [string, (event: Event) => void][] = [
+      ["klanker:open-detail", openDetail],
+      ["klanker:fork-session", fork],
+      ["klanker:clear-chat", clear],
+      ["klanker:clear", clear],
+      ["klanker:providers-refreshed", providers],
+      ["klanker:refresh-providers", providers],
+      ["klanker:acp-mode", acpMode],
+    ];
+    for (const [name, fn] of listeners) window.addEventListener(name, fn);
+    return () => { for (const [name, fn] of listeners) window.removeEventListener(name, fn); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [forkChat, refreshProviders, pickKey, acpModeStorageKey]);
 
   const toggleTheme = useCallback(() => {
     const pref = readThemePreference();
@@ -1329,6 +1407,8 @@ export function App() {
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleWorkbench={() => setWorkbenchOpen((v) => !v)}
           workbenchOpen={workbenchOpen}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
           pendingApprovals={approvals.pendingCount}
           controls={activeInstance ? (
             <>
@@ -1363,7 +1443,7 @@ export function App() {
                 }}
               />
               {isLoadingTurn && (
-                <button type="button" onClick={handleStop} title="Stop current turn (Ctrl/⌘ .)" aria-label="Stop current turn" className="inline-flex h-8 items-center gap-1 rounded-md border border-strong bg-surface px-2 text-[11px] font-mono text-ink-secondary hover:bg-elevated hover:text-ink-primary">
+                <button type="button" onClick={handleStop} title="Stop current turn (Ctrl/⌘ .)" aria-label="Stop current turn" className="inline-flex h-8 items-center gap-1 rounded-md border border-subtle bg-transparent px-2 text-[11px] font-mono text-ink-secondary hover:bg-hover hover:border-strong hover:text-ink-primary">
                   <Square className="h-3 w-3" /> stop
                 </button>
               )}
@@ -1418,6 +1498,7 @@ export function App() {
                     sendHold={sendHold}
                     providers={chatProviders}
                     pick={chatPicks[pickKey]}
+                    acpMode={selectedAcpMode}
                     favorites={chatFavorites}
                     providersStale={providersStale}
                     providersDisabled={providersDisabled}
@@ -1492,6 +1573,12 @@ export function App() {
                     workspace={selWs || "default"}
                     session={openChat?.session || ""}
                     notify={pushToast}
+                    width={workbenchWidth}
+                    onResize={(n) => setWorkbenchWidth(Math.max(320, Math.min(640, n)))}
+                    tab={workbenchTab}
+                    onTabChange={setWorkbenchTab}
+                    detail={workbenchDetail}
+                    onDetailChange={setWorkbenchDetail}
                     onClose={() => setWorkbenchOpen(false)}
                   />
                 )}

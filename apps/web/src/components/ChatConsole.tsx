@@ -9,7 +9,7 @@ import { ApprovalReview } from "./ApprovalReview";
 import { MarkdownMessage } from "./MarkdownMessage";
 import type { HostBinding, HostRow } from "../hostPicker";
 import { api } from "../services/api";
-import { forkSession } from "../services/streamExtrasApi";
+import { injectSteer } from "../services/streamExtrasApi";
 import { TURN_EVENT_NAME, type TurnEvent } from "../turnStream";
 import { PowerComposer } from "./PowerComposer";
 import { applyLiveTurnEvent, stepsFromSessionEvents, ToolTimeline, usageFromTurnEvent, type TimelineStep, type UsageStats } from "./ToolTimeline";
@@ -53,6 +53,7 @@ interface ChatConsoleProps {
   persona?: string;
   providers?: ChatProviderRow[];
   pick?: ChatPick;
+  acpMode?: string;
   onPick?: (p: ChatPick) => void;
   /** Starred {provider,model} rows shown on top of the picker. */
   favorites?: ModelPick[];
@@ -99,6 +100,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   persona,
   providers = [],
   pick,
+  acpMode = "",
   remoteApprovalLabel = null,
   pending,
   deciding,
@@ -116,6 +118,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const [timelineSteps, setTimelineSteps] = useState<TimelineStep[]>([]);
   const [usage, setUsage] = useState<UsageStats>({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
   const [liveThought, setLiveThought] = useState("");
+  const [steerNote, setSteerNote] = useState("");
   const [showJump, setShowJump] = useState(false);
   const liveQueueRef = useRef<TurnEvent[]>([]);
   const liveRafRef = useRef(0);
@@ -213,16 +216,31 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   useEffect(resizeComposer, [input]);
 
   const SLASH_COMMAND = /^\/(retry|undo|compress)(\s+\d+)?$/;
+
+  const steer = async () => {
+    const text = input.trim();
+    if (!text || !activeSession) return;
+    try {
+      await injectSteer(instance, { session: activeSession, text, workspace: wsId, persona: personaId, user: instance.user_id });
+      onInput("");
+      setSteerNote("steered");
+    } catch (e) {
+      setSteerNote(e instanceof Error ? e.message : "steer failed");
+    }
+  };
+
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if ((!input.trim() && files.length === 0) || isLoading || sendHold) return;
+    if ((!input.trim() && files.length === 0) || sendHold) return;
+    if (isLoading) {
+      if (input.trim()) void steer();
+      return;
+    }
     stickRef.current = true;
     scrollToBottom();
     const typed = input.trim();
     if (files.length === 0 && typed === "/fork" && sessionLabel) {
-      void forkSession(instance, { workspace: wsId, source_session: sessionLabel }).then((r) => {
-        window.dispatchEvent(new CustomEvent("klanker:open-detail", { detail: { params: { session: r.session }, session: r.session, workspace: r.workspace } }));
-      });
+      window.dispatchEvent(new CustomEvent("klanker:fork-session", { detail: { workspace: wsId, persona: personaId, session: sessionLabel } }));
       onInput("");
       return;
     }
@@ -326,7 +344,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   return (
     <div className="relative flex-1 flex flex-col bg-main overflow-hidden font-mono text-xs">
       {pending && approvalQueue && approvalQueue.total > 1 && (
-        <div className="border-b border-strong bg-surface px-3 py-1 text-center text-[10px] uppercase tracking-wider text-ink-muted">
+        <div className="border-b border-subtle bg-surface px-3 py-1 text-center text-[10px] uppercase tracking-wider text-ink-muted">
           approval {approvalQueue.index} of {approvalQueue.total}
         </div>
       )}
@@ -356,7 +374,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
           emptyState
         ) : messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6 text-ink-dim">
-            <div className="w-12 h-12 border border-strong rounded-full flex items-center justify-center mb-3">
+            <div className="w-12 h-12 border border-subtle rounded-full flex items-center justify-center mb-3">
               <Bot className="w-6 h-6 text-ink-muted" />
             </div>
             <div className="text-ink-primary font-medium mb-1">Klanker is standby.</div>
@@ -388,7 +406,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               <span>•</span>
               <span className="animate-pulse text-ink-primary">thinking...</span>
             </div>
-            <div className="bg-surface border border-strong rounded-md p-3 text-ink-muted flex items-center space-x-2">
+            <div className="bg-surface border border-subtle rounded-md p-3 text-ink-muted flex items-center space-x-2">
               <span className="w-2 h-2 bg-accent rounded-full animate-ping"></span>
               <span>{streamStatus || "Working..."}</span>
             </div>
@@ -399,7 +417,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {showJump ? (
-        <button type="button" onClick={() => { stickRef.current = true; scrollToBottom(); setShowJump(false); }} className="absolute bottom-24 right-5 z-30 rounded-full border border-strong bg-elevated px-3 py-1.5 text-[10px] text-ink-secondary shadow-lg hover:bg-hover hover:text-ink-primary">
+        <button type="button" onClick={() => { stickRef.current = true; scrollToBottom(); setShowJump(false); }} className="absolute bottom-24 right-5 z-30 rounded-full border border-subtle bg-elevated px-3 py-1.5 text-[10px] text-ink-secondary shadow-lg hover:bg-hover hover:text-ink-primary">
           jump to latest
         </button>
       ) : null}
@@ -412,6 +430,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         onPaste={onPaste}
         onPickFiles={onPickFiles}
         onDrop={onDrop}
+        onSteer={steer}
+        steerNote={steerNote}
         files={files}
         setFiles={setFiles}
         textareaRef={textareaRef}
@@ -425,6 +445,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         usage={usage}
         providers={providers}
         pickProvider={pick?.provider}
+        acpMode={acpMode}
       />
     </div>
   );
@@ -506,8 +527,8 @@ const MessageBubble = React.memo(function MessageBubble({
         <div
           className={`min-w-0 max-w-full rounded-md border p-3 leading-relaxed select-text ${
             mine
-              ? "border-strong bg-elevated text-ink-primary"
-              : "border-strong bg-surface text-ink-primary"
+              ? "border-subtle bg-elevated text-ink-primary"
+              : "border-subtle bg-surface text-ink-primary"
           }`}
         >
           {message.attachments?.length ? (
@@ -515,7 +536,7 @@ const MessageBubble = React.memo(function MessageBubble({
               {message.attachments.map((name, i) => (
                 <span
                   key={`${name}-${i}`}
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-hover border border-strong rounded-md text-[10px] text-ink-secondary"
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-hover border border-subtle rounded-md text-[10px] text-ink-secondary"
                 >
                   {imageFor?.(name) ? <img src={imageFor(name) || ""} alt={name} className="h-8 w-8 rounded border border-subtle object-cover" /> : <Paperclip className="w-3 h-3 shrink-0" />}
                   <span className="max-w-[180px] truncate">{name}</span>

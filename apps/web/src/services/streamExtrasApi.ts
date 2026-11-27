@@ -40,19 +40,20 @@ export async function speakVoice(inst: KlankerInstance, text: string): Promise<B
   return res.blob();
 }
 
-/** Mid-turn steer. Send both wire aliases: current relays key on chat_id;
- * newer U13 relays accept session_id/session directly. */
+/** POST /v1/inject's measured relay contract: numeric ``chat_id`` plus
+ * ``text``. Session/workspace keys are not sent — current relays ignore them
+ * for routing and concatenate unknown keys into the injected prompt. */
 export async function injectSteer(
   inst: KlankerInstance,
   body: { session: string; text: string; workspace?: string; persona?: string; user?: string }
 ): Promise<unknown> {
+  const chatId = String(body.user || "").trim();
+  if (!/^\d+$/.test(chatId)) {
+    throw new Error("steer unavailable: /v1/inject requires a numeric chat_id");
+  }
   return apiJson(inst, "/v1/inject", {
-    session_id: body.session,
-    session: body.session,
+    chat_id: Number(chatId),
     text: body.text,
-    workspace: body.workspace,
-    persona: body.persona,
-    user: body.user,
   });
 }
 

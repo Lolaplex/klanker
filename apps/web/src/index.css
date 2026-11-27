@@ -94,6 +94,10 @@
 }
 
 @layer base {
+  *, ::before, ::after {
+    border-color: var(--border-subtle);
+  }
+
   /* Klanker semantic monochrome tokens (klanker#170 U16). Dark is the
      default; [data-theme="light"] inverts the same semantic slots. Zero
      hue anywhere — every shade is pure neutral. */
@@ -102,8 +106,8 @@
     --bg-surface: #0a0a0a;
     --bg-elevated: #141414;
     --bg-hover: #1a1a1a;
-    --border-subtle: #1f1f1f;
-    --border-strong: #333333;
+    --border-subtle: #1c1c1c;
+    --border-strong: #2e2e2e;
     --ink-primary: #ffffff;
     --ink-secondary: #a3a3a3;
     --ink-muted: #737373;

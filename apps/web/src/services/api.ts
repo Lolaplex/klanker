@@ -1381,6 +1381,7 @@ export const api = {
       persona?: string;
       provider?: string;
       model?: string;
+      mode?: string;
       new_session?: boolean;
       attachments?: { data: string; mime?: string; name?: string }[];
     }

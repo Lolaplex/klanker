@@ -84,7 +84,7 @@ export function CommandPalette({ open, onClose, items }: { open: boolean; onClos
           aria-label="Command search"
         />
       </div>
-      <div className="max-h-[26rem] overflow-y-auto py-1" role="listbox" aria-label="Commands">
+      <div className="max-h-[26rem] overflow-y-auto py-1 pb-2" role="listbox" aria-label="Commands">
         {filtered.length === 0 && <div className="px-4 py-8 text-center text-ink-dim">no matching command</div>}
         {grouped.map((g) => (
           <div key={g.section}>

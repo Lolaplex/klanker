@@ -12,18 +12,6 @@ from .evidence import evidence_policy_lines, workspace_path
 from .sensing import HostCapabilities
 
 
-def genui_block() -> list[str]:
-    """OpenUI Lang GenUI prompt contract when ``KLANKER_GENUI`` is enabled."""
-    return [
-        "",
-        "8. OpenUI Generative UI (optional rich cards):",
-        "   - When presenting structured metrics, tables, charts, comparisons, or interactive action/form choices, you MAY embed a fenced ```` ```openui ```` block using OpenUI Lang.",
-        "   - Allowed components ONLY: Card, CardHeader, Table, EditableTable, BarChart, LineChart, AreaChart, PieChart, Form, Input, Select, Slider, DatePicker, CheckBoxGroup, RadioGroup, SwitchGroup, OptionCards, Chips, Button, Buttons, Steps, Accordion, Tabs, Callout, TextCallout, MetricIndicator, EntityList, ListBlock, SectionBlock, FollowUpBlock, Sources, Citation, ImageGallery, Carousel, TagBlock.",
-        "   - Strictly FORBIDDEN inside ```` ```openui ```` blocks: raw HTML, inline JS, `<script>`, `<iframe>`, `<object>`, `<embed>`, or `javascript:`/`data:` URLs.",
-        "   - Keep interactive actions concise and structured so clicking a button or submitting a form triggers a follow-up turn.",
-    ]
-
-
 def coding_block(workspace: Path) -> list[str]:
     """Repo rules when the workspace is a git checkout. Empty otherwise."""
     if not (workspace / ".git").exists():
@@ -109,8 +97,6 @@ def build_system_prompt(caps: HostCapabilities) -> str:
             "7. Deploy policy:",
             "   - A repo webhook auto-deploys pushed commits on this host (KLANKER_DEPLOY_WEBHOOK). Do NOT call the deploy API after pushing — it queues a duplicate build of the same commit. The deploy API remains for restart, rollback and force-rebuild only.",
         ])
-    if os.environ.get("KLANKER_GENUI", "").strip().lower() in ("1", "true", "yes", "on"):
-        lines.extend(genui_block())
     lines.extend(evidence_policy_lines())
     lines.extend(coding_block(workspace_path()))
 

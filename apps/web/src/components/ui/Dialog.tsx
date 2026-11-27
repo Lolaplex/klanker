@@ -29,7 +29,7 @@ export function Dialog({
           <BaseDialog.Popup
             className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-surface border border-strong rounded-lg font-mono text-xs flex flex-col max-h-[90vh] outline-none`}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-strong shrink-0">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-subtle shrink-0">
               <BaseDialog.Title className="text-ink-primary tracking-wider uppercase truncate">
                 {title}
               </BaseDialog.Title>

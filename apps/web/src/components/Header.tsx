@@ -1,5 +1,5 @@
 import React from "react";
-import { Command, Menu, Minus, PanelRight, Settings, Square, X } from "lucide-react";
+import { Command, Menu, Minus, PanelLeftOpen, PanelRight, Settings, Square, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { ThemeSwitcher } from "./ui/ThemeSwitcher";
 import { KlankerMark } from "./KlankerMark";
@@ -19,6 +19,8 @@ interface HeaderProps {
   onOpenPalette: () => void;
   onToggleWorkbench: () => void;
   workbenchOpen?: boolean;
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
   workspaceUnread?: number;
   pendingApprovals?: number;
   /** Host/provider pickers and turn controls moved out of the chat stream. */
@@ -48,7 +50,10 @@ function statusMeta(status: ProcessStatus | null | undefined): { label: string; 
 }
 
 const iconBtn =
-  "inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-md border border-strong bg-surface px-2 text-[11px] font-mono text-ink-secondary transition-colors hover:bg-elevated hover:text-ink-primary";
+  "inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-md border border-subtle bg-transparent px-2 text-[11px] font-mono text-ink-secondary transition-colors hover:bg-hover hover:border-strong hover:text-ink-primary";
+
+const ghostBtn =
+  "inline-flex h-8 w-8 items-center justify-center rounded-md border border-transparent bg-transparent text-ink-secondary transition-colors hover:bg-hover hover:text-ink-primary";
 
 /** Unified 44px shell header (klanker#171): one navigation row, breadcrumb
  *  context in the center, chat/host controls and shell commands on the right. */
@@ -67,6 +72,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenPalette,
   onToggleWorkbench,
   workbenchOpen = false,
+  sidebarCollapsed = false,
+  onToggleSidebar,
   workspaceUnread = 0,
   pendingApprovals = 0,
   controls,
@@ -78,9 +85,20 @@ export const Header: React.FC<HeaderProps> = ({
   const pill = statusMeta(status);
 
   return (
-    <header data-tauri-drag-region className="h-11 shrink-0 select-none border-b border-strong bg-main z-30 touch-none">
+    <header data-tauri-drag-region className="h-11 shrink-0 select-none border-b border-subtle bg-main z-30 touch-none">
       <div className="grid h-11 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2" data-tauri-drag-region>
         <div className="flex min-w-0 items-center gap-1">
+          {sidebarCollapsed && onToggleSidebar && (
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              className="hidden md:inline-flex h-8 w-8 items-center justify-center rounded-md border border-subtle bg-transparent text-ink-secondary transition-colors hover:bg-hover hover:border-strong hover:text-ink-primary"
+              aria-label="Expand sidebar"
+              title="Expand sidebar (Ctrl/⌘ B)"
+            >
+              <PanelLeftOpen className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             onClick={onOpenNav}
             className="md:hidden inline-flex h-9 w-9 items-center justify-center text-ink-secondary hover:text-ink-primary"
@@ -88,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Menu className="w-4 h-4" />
           </button>
-          <div className="hidden md:flex items-center gap-2 pl-1 text-xs font-semibold text-ink-primary">
+          <div className={`${sidebarCollapsed ? "flex" : "flex md:hidden"} items-center gap-2 pl-1 text-xs font-semibold text-ink-primary`}>
             <KlankerMark size={16} className="shrink-0" />
             <span className="tracking-wider">klanker</span>
           </div>
@@ -146,14 +164,14 @@ export const Header: React.FC<HeaderProps> = ({
             aria-label="Toggle workbench"
             aria-pressed={workbenchOpen}
             title="Workbench (Ctrl/⌘ J)"
-            className={`${iconBtn} ${workbenchOpen ? "bg-elevated text-ink-primary" : ""}`}
+            className={`${ghostBtn} ${workbenchOpen ? "border-subtle bg-elevated text-ink-primary" : ""}`}
           >
             <PanelRight className="h-3.5 w-3.5" />
           </button>
           <div className="hidden sm:block">
             <ThemeSwitcher compact />
           </div>
-          <button onClick={onOpenSettings} aria-label="Settings" className={iconBtn}>
+          <button type="button" onClick={onOpenSettings} aria-label="Settings" title="Settings" className={ghostBtn}>
             <Settings className="h-3.5 w-3.5" />
           </button>
           {win && (

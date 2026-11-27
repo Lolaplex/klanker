@@ -35,7 +35,7 @@ import type { WorkbenchTabProps } from "./types";
 
 type Props = WorkbenchTabProps & { instance: KlankerInstance; workspace: string; session: string };
 
-const btn = "inline-flex h-7 items-center gap-1 rounded-md border border-strong bg-elevated px-2 text-[10px] text-ink-secondary hover:bg-hover hover:text-ink-primary disabled:opacity-40";
+const btn = "inline-flex h-7 items-center gap-1 rounded-md border border-subtle bg-elevated px-2 text-[10px] text-ink-secondary hover:border-strong hover:bg-hover hover:text-ink-primary disabled:opacity-40";
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 function useAsync<T>(fn: () => Promise<T>, deps: readonly unknown[]) {
@@ -53,7 +53,7 @@ function useAsync<T>(fn: () => Promise<T>, deps: readonly unknown[]) {
 }
 
 function StateLine({ loading, error, empty }: { loading: boolean; error: string; empty?: boolean }) {
-  if (error) return <div className="border-b border-strong px-3 py-2 text-red-500">{error}</div>;
+  if (error) return <div className="border-b border-subtle px-3 py-2 text-red-500">{error}</div>;
   if (loading) return <div className="p-4 text-ink-dim">loading…</div>;
   if (empty) return <div className="p-4 text-ink-dim">nothing here yet</div>;
   return null;
@@ -85,13 +85,13 @@ export function ChangesTab({ instance, workspace, session, openDetail, notify }:
             }}
             className="flex w-full items-center gap-2 border-b border-subtle px-3 py-2 text-left hover:bg-hover"
           >
-            <span className="w-7 shrink-0 rounded border border-strong px-1 text-center text-[9px] uppercase text-ink-muted">{f.status}</span>
+            <span className="w-7 shrink-0 rounded border border-subtle px-1 text-center text-[9px] uppercase text-ink-muted">{f.status}</span>
             <span className="min-w-0 flex-1 truncate text-ink-primary">{f.path}</span>
           </button>
         ))}
       </div>
       {data.diff && (
-        <button type="button" className="border-t border-strong px-3 py-2 text-left text-ink-secondary hover:bg-hover" onClick={() => openDetail({ title: `${data.branch || "session"} diff`, body: data.diff, diff: data.diff, truncated: data.diff_truncated })}>
+        <button type="button" className="border-t border-subtle px-3 py-2 text-left text-ink-secondary hover:bg-hover" onClick={() => openDetail({ title: `${data.branch || "session"} diff`, body: data.diff, diff: data.diff, truncated: data.diff_truncated })}>
           open full patch{data.diff_truncated ? " (truncated)" : ""}
         </button>
       )}
@@ -139,7 +139,7 @@ export function FilesTab({ instance, workspace, openDetail, notify }: Props) {
         <span>/</span><span className="truncate">{path}</span>
         <button type="button" className={`${btn} ml-auto`} onClick={() => load(path)}><RefreshCw className="h-3 w-3" /></button>
       </div>
-      {error && <div className="border-b border-strong px-3 py-2 text-red-500">{error}</div>}
+      {error && <div className="border-b border-subtle px-3 py-2 text-red-500">{error}</div>}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {matches ? (
           matches.map((m) => (
@@ -273,13 +273,13 @@ export function DataTab({ instance, workspace, openDetail, notify }: Props) {
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="filter memory" aria-label="Filter memory" className={`${inputClass} text-[11px]`} />
         <button type="button" className={btn} onClick={reload}><RefreshCw className="h-3 w-3" /></button>
       </div>
-      {error && <div className="border-b border-strong px-3 py-2 text-red-500">{error}</div>}
+      {error && <div className="border-b border-subtle px-3 py-2 text-red-500">{error}</div>}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {edit && (
-          <div className="mb-3 rounded-md border border-strong bg-main p-2">
+          <div className="mb-3 rounded-md border border-subtle bg-main p-2">
             <div className="mb-1 flex items-center justify-between"><span className="truncate text-ink-primary">{edit.kind}: {edit.path}</span><button type="button" className={btn} onClick={saveEdit}><Save className="h-3 w-3" />save</button></div>
-            <input value={edit.path} onChange={(e) => setEdit({ ...edit, path: e.target.value })} aria-label={`${edit.kind} path`} className="mb-1 w-full rounded-md border border-strong bg-elevated px-2 py-1 font-mono text-[11px] text-ink-primary outline-none" />
-            <textarea value={edit.content} onChange={(e) => setEdit({ ...edit, content: e.target.value })} aria-label={`Edit ${edit.kind}`} className="h-48 w-full resize-y rounded-md border border-strong bg-elevated p-2 font-mono text-[11px] text-ink-primary outline-none" />
+            <input value={edit.path} onChange={(e) => setEdit({ ...edit, path: e.target.value })} aria-label={`${edit.kind} path`} className="mb-1 w-full rounded-md border border-subtle hover:border-strong focus:border-strong bg-elevated px-2 py-1 font-mono text-[11px] text-ink-primary outline-none" />
+            <textarea value={edit.content} onChange={(e) => setEdit({ ...edit, content: e.target.value })} aria-label={`Edit ${edit.kind}`} className="h-48 w-full resize-y rounded-md border border-subtle hover:border-strong focus:border-strong bg-elevated p-2 font-mono text-[11px] text-ink-primary outline-none" />
           </div>
         )}
         <Section title={`workspace data · ${storeKind}`}>
@@ -301,7 +301,7 @@ export function DataTab({ instance, workspace, openDetail, notify }: Props) {
                 .then(() => { setStoreTitle(""); reload(); })
                 .catch((err) => notify(`store: ${errText(err)}`, "error"));
             }}>
-              <input value={storeTitle} onChange={(e) => setStoreTitle(e.target.value)} placeholder={`new ${storeKind}`} aria-label={`New ${storeKind}`} className="min-w-0 flex-1 rounded-md border border-strong bg-elevated px-2 py-1 text-[11px] text-ink-primary outline-none" />
+              <input value={storeTitle} onChange={(e) => setStoreTitle(e.target.value)} placeholder={`new ${storeKind}`} aria-label={`New ${storeKind}`} className="min-w-0 flex-1 rounded-md border border-subtle hover:border-strong focus:border-strong bg-elevated px-2 py-1 text-[11px] text-ink-primary outline-none" />
               <button type="submit" className={btn}>add</button>
             </form>
           )}
