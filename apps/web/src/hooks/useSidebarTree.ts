@@ -34,6 +34,7 @@ export function useSidebarTree(args: {
 }): {
   workspaces: WorkspaceRow[];
   setWorkspaces: (rows: WorkspaceRow[]) => void;
+  personaCounts: Record<string, Record<string, WsInboxPersona>>;
   wsHosts: Record<string, WorkspaceHosts>;
   setWsHosts: React.Dispatch<React.SetStateAction<Record<string, WorkspaceHosts>>>;
   treePersonas: Record<string, PersonaRow[]>;
@@ -335,6 +336,7 @@ export function useSidebarTree(args: {
   return {
     workspaces,
     setWorkspaces,
+    personaCounts,
     wsHosts,
     setWsHosts,
     treePersonas,

@@ -1124,6 +1124,7 @@ export function App() {
           onOpenDevices={() => setDevicesOpen(true)}
           onOpenSettings={openSettings}
           onOpenWorkspace={() => selWs && setWsModal({ id: selWs })}
+          workspaceUnread={Object.values(tree.personaCounts[selWs] || {}).reduce((n, c) => n + (c.open ?? 0), 0)}
           onOpenNav={() => setNavOpen(true)}
         />
 
@@ -1333,6 +1334,13 @@ export function App() {
           onOpenSession={(ws, persona, session) => {
             setWsModal(null);
             selectChat(ws, persona, session);
+          }}
+          treePersonas={(tree.treePersonas[wsModal.id] || []).map((p) => ({ id: p.id, name: p.name }))}
+          onOpenInboxChat={(ws, persona) => {
+            const sessions = tree.sessionRowsOf(ws, persona) || [];
+            const newest = sessions.find((r) => r.session)?.session;
+            if (newest) selectChat(ws, persona, newest);
+            else newChat(ws, persona);
           }}
           onSaved={(row) => {
             tree.setWorkspaces((tree.workspaces || []).map((w) => (w.id === row.id ? { ...w, ...row } : w)));

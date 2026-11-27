@@ -6,6 +6,7 @@ import type {
   HubConnectResult,
   HubDevice,
   HubLease,
+  InboxTask,
   HubLink,
   JobRow,
   KlankerInstance,
@@ -983,6 +984,48 @@ export const api = {
     } catch {
       return null;
     }
+  },
+
+  /** GET /v1/workspaces/<ws>/personas/<p>/inbox — full task rows incl.
+   *  reply_summary (the ws-wide inbox `recent` feed flattens events and
+   *  drops them; the tab enriches rows from here). */
+  async personaInboxTasks(inst: KlankerInstance, workspace: string, persona: string): Promise<InboxTask[]> {
+    try {
+      const r = await req<{ tasks?: WireRow[]; inbox?: WireRow[] }>(
+        inst,
+        `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/inbox`,
+        { headers: headers(inst) }
+      );
+      const rows = r.tasks || r.inbox || [];
+      return rows.map((t) => ({
+        id: wstr(t.id) || "",
+        title: wstr(t.title),
+        note: wstr(t.note),
+        status: wstr(t.status),
+        owner: wstr(t.owner),
+        reply_summary: wstr(t.reply_summary),
+        created_at: wstr(t.created_at),
+        wake: t.wake === true,
+      })).filter((t) => t.id);
+    } catch {
+      return [];
+    }
+  },
+
+  /** POST /v1/workspaces/<ws>/personas/<p>/inbox — create a task/handoff. */
+  async createInboxTask(
+    inst: KlankerInstance,
+    workspace: string,
+    persona: string,
+    fields: { title: string; note?: string }
+  ): Promise<InboxTask> {
+    const r = await jsonReq<{ task?: WireRow }>(
+      inst,
+      `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/inbox`,
+      { title: fields.title, note: fields.note || "" }
+    );
+    const t = r.task || {};
+    return { id: wstr(t.id) || "", title: fields.title, note: fields.note, status: wstr(t.status) || "open" };
   },
 
   /** Server-side sessions for (workspace, persona). */
