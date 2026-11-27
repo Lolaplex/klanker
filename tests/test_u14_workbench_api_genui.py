@@ -70,6 +70,7 @@ def test_device_tokens_denied_on_all_new_u14_routes(authed_ws):
         ("GET", "/v1/klanker/bg", None),
         ("GET", "/v1/klanker/bg/bg_12345678/logs", None),
         ("GET", "/v1/klanker/sessions/ses_1/git", None),
+        ("GET", "/v1/klanker/git", None),
         ("GET", "/v1/klanker/skills/demo", None),
         ("POST", "/v1/klanker/sessions/fork", {"source_session": "ses_1"}),
         ("POST", "/v1/klanker/bg/bg_12345678/kill", {}),
@@ -98,6 +99,14 @@ def test_fork_route_and_invalid_inputs(authed_ws):
     assert h.json_body is not None and h.json_body["session"].startswith("ses_fork_")
     forked = TraceStore(ws.traces).get_events_for_session(h.json_body["session"])
     assert len(forked) == 1
+
+    TraceStore(ws.traces).append(TraceEvent(session="ses_src1", type="message", metadata={"role": "assistant", "content": "answer"}))
+    h_part = _Handler("/v1/klanker/sessions/fork", body={"workspace": "default", "source_session": "ses_src1", "through_message": 1})
+    mgmt._dispatch(h_part, "POST")
+    assert h_part.status == 200
+    partial = TraceStore(ws.traces).get_events_for_session(h_part.json_body["session"])
+    assert len(partial) == 1
+    assert partial[0].metadata["content"] == "hi"
 
     h_missing = _Handler("/v1/klanker/sessions/fork", body={"workspace": "default", "source_session": "ses_none"})
     mgmt._dispatch(h_missing, "POST")
@@ -161,6 +170,31 @@ def test_session_git_diff_and_cap(authed_ws):
     mgmt._dispatch(h_big, "GET")
     assert h_big.status == 200
     assert h_big.json_body["diff_truncated"] is True
+
+
+def test_workspace_git_without_session(authed_ws):
+    _, _, wd = authed_ws
+
+    h_none = _Handler("/v1/klanker/git?workspace=default")
+    mgmt._dispatch(h_none, "GET")
+    assert h_none.status == 200
+    assert h_none.json_body["is_git"] is False
+    assert h_none.json_body["dirty_files"] == []
+
+    _init_git_repo(wd)
+    (wd / "app.py").write_text("print('workspace')\n", encoding="utf-8")
+    h = _Handler("/v1/klanker/git?workspace=default&file=app.py")
+    mgmt._dispatch(h, "GET")
+    assert h.status == 200
+    assert h.json_body["is_git"] is True
+    assert h.json_body["branch"]
+    assert any(d["path"] == "app.py" for d in h.json_body["dirty_files"])
+    assert "+print('workspace')" in h.json_body["diff"]
+    assert h.json_body["diff_truncated"] is False
+
+    h_esc = _Handler("/v1/klanker/git?workspace=default&file=../nope.py")
+    mgmt._dispatch(h_esc, "GET")
+    assert h_esc.error is not None and h_esc.error[0] == 403
 
 
 def test_bg_routes_stats_and_doctor_no_secrets(authed_ws, monkeypatch):

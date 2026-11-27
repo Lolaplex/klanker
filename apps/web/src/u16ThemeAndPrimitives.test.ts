@@ -165,9 +165,13 @@ describe("modal primitive consolidation", () => {
   });
 
   it("the three tab bars consume ui/Tabs", () => {
-    for (const f of ["SettingsPanel", "WorkspaceModal", "WorkspacePane"]) {
-      const src = readFileSync(`src/components/${f}.tsx`, "utf-8");
-      assert.ok(src.includes('from "./ui/Tabs"'), `${f} does not use ui/Tabs`);
+    for (const [path, needle] of [
+      ["src/components/SettingsPanel.tsx", 'from "./ui/Tabs"'],
+      ["src/components/WorkspaceModal.tsx", 'from "./ui/Tabs"'],
+      ["src/components/workbench/WorkbenchRail.tsx", 'from "../ui/Tabs"'],
+    ] as const) {
+      const src = readFileSync(path, "utf-8");
+      assert.ok(src.includes(needle), `${path} does not use ui/Tabs`);
     }
   });
 

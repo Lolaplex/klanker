@@ -37,12 +37,12 @@ function CodeFence({ children }: { children?: React.ReactNode }) {
     return <MermaidBlock source={text} />;
   }
   return (
-    <div className="my-2 overflow-hidden rounded-md border border-strong bg-main">
+    <div className="my-2 overflow-hidden rounded-md border border-strong bg-main font-mono">
       <div className="flex items-center justify-between gap-2 border-b border-strong pl-3">
         <span className="truncate text-[10px] uppercase tracking-wider text-ink-muted">{lang || "code"}</span>
         <CopyButton text={text} label="Copy code" borderless className="mr-1" />
       </div>
-      <pre className="select-text overflow-x-auto p-3 text-[12px] leading-relaxed">{children}</pre>
+      <pre className="select-text overflow-x-auto p-3 font-mono text-[12px] leading-relaxed">{children}</pre>
     </div>
   );
 }
@@ -59,7 +59,7 @@ const MD_PROPS: Options = {
 
 export const MarkdownMessage = React.memo(function MarkdownMessage({ text }: { text: string }) {
   return (
-    <div className="klanker-md select-text min-w-0 break-words">
+    <div className="klanker-md select-text min-w-0 break-words font-sans text-[14px] leading-[1.65]">
       {/* Raw HTML is escaped by react-markdown. Do not add rehype-raw. */}
       <Markdown {...MD_PROPS}>{text}</Markdown>
     </div>

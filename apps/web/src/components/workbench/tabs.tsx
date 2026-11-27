@@ -10,6 +10,7 @@ import {
   getDoctorReport,
   getSessionGit,
   getUsageStats,
+  getWorkspaceGit,
   grepWorkbenchFiles,
   killBgSession,
   listApprovalAllowlist,
@@ -60,10 +61,14 @@ function StateLine({ loading, error, empty }: { loading: boolean; error: string;
 }
 
 export function ChangesTab({ instance, workspace, session, openDetail, notify }: Props) {
-  const load = useCallback(() => getSessionGit(instance, workspace, session), [instance, workspace, session]);
+  const gitStatus = useCallback(
+    (file = "") => session ? getSessionGit(instance, workspace, session, file) : getWorkspaceGit(instance, workspace, file),
+    [instance, workspace, session]
+  );
+  const load = useCallback(() => gitStatus(), [gitStatus]);
   const { data, error, loading, reload } = useAsync<SessionGitStatus>(load, [load]);
   if (!data) return <StateLine loading={loading} error={error} />;
-  if (!data.is_git) return <div className="p-4 text-ink-dim">session worktree is not a git repository</div>;
+  if (!data.is_git) return <div className="p-4 text-ink-dim">{session ? "session worktree" : "workspace"} is not a git repository</div>;
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b border-subtle px-3 py-2">
@@ -79,7 +84,7 @@ export function ChangesTab({ instance, workspace, session, openDetail, notify }:
             key={`${f.status}:${f.path}`}
             type="button"
             onClick={() => {
-              void getSessionGit(instance, workspace, session, f.path)
+              void gitStatus(f.path)
                 .then((d) => openDetail({ title: f.path, body: d.diff, diff: d.diff, truncated: d.diff_truncated }))
                 .catch((e) => notify(`diff: ${errText(e)}`, "error"));
             }}

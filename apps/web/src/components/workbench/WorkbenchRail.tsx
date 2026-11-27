@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import { PatchDiff } from "@pierre/diffs/react";
 import type { KlankerInstance } from "../../types/klanker";
 import { useThemeMode } from "../../theme";
+import { shortId } from "../../wsShare";
 import { Tabs } from "../ui/Tabs";
 import type { WorkbenchDetail, WorkbenchTabId } from "./types";
 import { BgTab, ChangesTab, DataTab, FilesTab, TracesTab } from "./tabs";
@@ -24,6 +25,7 @@ export function WorkbenchRail({
   instance,
   workspace,
   session,
+  sessionTitle,
   onClose,
   notify,
   width = 420,
@@ -36,6 +38,7 @@ export function WorkbenchRail({
   instance: KlankerInstance;
   workspace: string;
   session: string;
+  sessionTitle?: string;
   onClose: () => void;
   notify: (message: string, kind?: "info" | "success" | "error") => void;
   width?: number;
@@ -68,6 +71,7 @@ export function WorkbenchRail({
     if (activate) setTab("detail");
   };
   const tabProps = { instance, workspace, session, openDetail, notify };
+  const sessionLabel = session ? (sessionTitle?.trim() && sessionTitle.trim() !== session ? sessionTitle.trim() : shortId(session)) : "";
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
@@ -103,7 +107,7 @@ export function WorkbenchRail({
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-subtle px-3">
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-[0.2em] text-ink-dim">workbench</div>
-          <div className="truncate text-[11px] text-ink-primary">{workspace || "default"}{session ? ` · ${session}` : ""}</div>
+          <div className="truncate text-[11px] text-ink-primary" title={session || undefined}>{workspace || "default"}{sessionLabel ? ` · ${sessionLabel}` : ""}</div>
         </div>
         <button type="button" onClick={onClose} aria-label="Close workbench" className="inline-flex h-8 w-8 items-center justify-center rounded-md text-ink-dim hover:bg-hover hover:text-ink-primary">
           <X className="h-4 w-4" />
@@ -111,7 +115,7 @@ export function WorkbenchRail({
       </div>
       <Tabs value={tab} onValueChange={(v) => setTab(v as WorkbenchTabId)} ariaLabel="Workbench sections" tabs={TABS} tabClassName="px-2.5 py-2 text-[11px] shrink-0 whitespace-nowrap text-ink-muted hover:text-ink-primary data-[selected]:text-ink-primary border-b-2 border-transparent data-[selected]:border-accent cursor-pointer outline-none focus-visible:text-ink-primary -mb-px" />
       <div key={`${instance.id}:${workspace}`} className="min-h-0 flex-1 overflow-hidden">
-        {tab === "changes" && (session ? <ChangesTab {...tabProps} openDetail={openDetail} notify={notify} /> : <div className="p-4 text-ink-dim">open a session to inspect its git worktree</div>)}
+        {tab === "changes" && <ChangesTab {...tabProps} openDetail={openDetail} notify={notify} />}
         {tab === "files" && <FilesTab {...tabProps} openDetail={openDetail} notify={notify} />}
         {tab === "traces" && <TracesTab {...tabProps} openDetail={openDetail} notify={notify} />}
         {tab === "bg" && <BgTab {...tabProps} openDetail={openDetail} notify={notify} />}

@@ -31,6 +31,27 @@ class TestFork(unittest.TestCase):
                 self.assertEqual({e.result for e in forked}, {"m1", "m2"})
                 self.assertEqual(len(store.get_events_for_session("ses_other")), 1)
 
+    def test_fork_through_message_truncates_at_content_event(self):
+        from agents_traces.models import TraceEvent
+        from agents_traces.store import TraceStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"AGENTS_TRACES_DIR": tmp}):
+                store = TraceStore()
+                store.append(TraceEvent(session="ses_src", type="message", result="m1"))
+                store.append(TraceEvent(session="ses_src", type="tool_call", result="tool"))
+                store.append(TraceEvent(session="ses_src", type="message", result="m2"))
+
+                from klanker.fork import fork_session
+
+                sid = fork_session("ses_src", through_message=1)
+                forked = store.get_events_for_session(sid)
+                self.assertEqual([e.result for e in forked], ["m1"])
+                with self.assertRaises(ValueError):
+                    fork_session("ses_src", through_message=3)
+                with self.assertRaises(ValueError):
+                    fork_session("ses_src", through_message=0)
+
     def test_fork_unknown_session(self):
         from klanker.fork import fork_session
 

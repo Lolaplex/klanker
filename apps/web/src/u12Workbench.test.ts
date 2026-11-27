@@ -14,6 +14,7 @@ import {
   getDoctorReport,
   getSessionGit,
   getUsageStats,
+  getWorkspaceGit,
   grepWorkbenchFiles,
   killBgSession,
   listApprovalAllowlist,
@@ -122,6 +123,7 @@ describe("U14 workbench wire contracts", () => {
       await deleteSkill(inst, "alpha", "review");
       await listApprovalAllowlist(inst, "alpha");
       await deleteApprovalAllowlistPattern(inst, "alpha", "git status");
+      await getWorkspaceGit(inst, "alpha", "src/a.ts");
       const u = fx.calls.map((c) => c.url.replace("http://127.0.0.1:8787", ""));
       assert.equal(u[0], "/v1/klanker/sessions/ses_1/git?workspace=alpha&file=src%2Fa.ts");
       assert.equal(u[1], "/v1/klanker/files?workspace=alpha&path=src");
@@ -148,6 +150,7 @@ describe("U14 workbench wire contracts", () => {
       assert.equal(u[17], "/v1/approvals/allowlist?workspace=alpha");
       assert.equal(fx.calls[18].init?.method, "DELETE");
       assert.equal(u[18], "/v1/approvals/allowlist?workspace=alpha&pattern=git+status");
+      assert.equal(u[19], "/v1/klanker/git?workspace=alpha&file=src%2Fa.ts");
       assert.ok(!fx.calls.some((c) => c.url.includes("undefined")), "no undefined query/path segment");
     } finally {
       fx.restore();
@@ -156,15 +159,16 @@ describe("U14 workbench wire contracts", () => {
 });
 
 describe("workbench rail shell", () => {
-  it("renders all six areas and the empty-session changes state", async () => {
+  it("renders all six areas and the workspace-level empty changes state", async () => {
     const fx = stubFetch(() => ({ ok: true }));
     const r = await renderInDom(React.createElement(WorkbenchRail, { instance: inst, workspace: "alpha", session: "", onClose: () => {}, notify: () => {} }));
     try {
+      await flush(40);
       const html = r.html();
       for (const label of ["Changes", "Files", "Traces", "Terminal", "Memory", "Detail"]) {
         assert.ok(html.includes(label) || html.includes(label.replace("&", "&amp;")), `${label} tab missing`);
       }
-      assert.ok(html.includes("open a session to inspect its git worktree"), "empty session guidance missing");
+      assert.ok(html.includes("workspace is not a git repository"), "workspace git fallback missing");
       assert.ok(html.includes("workbench-rail"), "rail test id missing");
     } finally {
       r.unmount();
