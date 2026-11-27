@@ -131,10 +131,32 @@ export interface DiscoveredPeer {
   version?: string;
 }
 
+/** Rich approval preview contract (U02 — agents-relay sanitize_preview). */
+export type ApprovalPreview =
+  | {
+      kind: "command";
+      argv: string[];
+      cwd?: string;
+      risk?: "low" | "medium" | "high";
+    }
+  | {
+      kind: "diff";
+      path: string;
+      old_text?: string;
+      new_text?: string;
+      unified?: string;
+      truncated?: boolean;
+      binary?: boolean;
+      error?: string;
+    };
+
 export interface PendingApproval {
   id: string;
   tool: string;
   summary: string;
+  /** Rich review payload served by U02-capable relays; absent on older
+   *  spokes — the banner falls back to summary || tool. */
+  preview?: ApprovalPreview;
   /** Owning workspace when the relay serves it (remote asks mirror into
    *  the same /v1/approvals feed — klanker#148/#152). */
   workspace?: string;

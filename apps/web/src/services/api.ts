@@ -1388,8 +1388,10 @@ export const api = {
     }
   },
 
-  async resolveApproval(inst: KlankerInstance, approvalId: string, allow: boolean): Promise<void> {
-    await jsonReq(inst, `/v1/approvals/${encodeURIComponent(approvalId)}`, { allow });
+  async resolveApproval(inst: KlankerInstance, approvalId: string, allow: boolean, remember = false): Promise<void> {
+    // remember=true is the "Allow always" wire flag (U02) — the relay
+    // persists the rule so matching future asks skip the prompt.
+    await jsonReq(inst, `/v1/approvals/${encodeURIComponent(approvalId)}`, remember ? { allow, remember: true } : { allow });
   },
 
   // --- auto-recall (workspace config on the serving relay) -----------------

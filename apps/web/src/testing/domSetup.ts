@@ -10,6 +10,7 @@ const KEYS = [
   "window", "document", "HTMLElement", "Node", "Element", "navigator",
   "customElements", "DocumentFragment", "MutationObserver", "getComputedStyle",
   "requestAnimationFrame", "cancelAnimationFrame", "ResizeObserver",
+  "CSSStyleSheet", "ShadowRoot", "Document", "Range", "Selection", "SVGElement", "XMLSerializer", "DOMParser",
 ] as const;
 
 for (const key of KEYS) {
@@ -21,5 +22,14 @@ for (const key of KEYS) {
     configurable: true,
     writable: true,
   });
+}
+// jsdom lacks ResizeObserver entirely — @pierre/diffs constructs one.
+class ResizeObserverPolyfill {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+if (typeof (globalThis as Record<string, unknown>).ResizeObserver !== "function") {
+  Object.defineProperty(globalThis, "ResizeObserver", { value: ResizeObserverPolyfill, configurable: true, writable: true });
 }
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true, writable: true });

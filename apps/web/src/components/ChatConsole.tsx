@@ -6,6 +6,7 @@ import { chatToJson, chatToMarkdown, downloadText, exportStem } from "../chatExp
 import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow } from "../types/klanker";
 import { CopyButton } from "./CopyButton";
 import { ThinkingAccordion } from "./ThinkingAccordion";
+import { ApprovalReview } from "./ApprovalReview";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { Popover } from "./ui/Popover";
@@ -64,7 +65,7 @@ interface ChatConsoleProps {
   pending: PendingApproval | null;
   deciding: boolean;
   decideError: string | null;
-  onDecide: (allow: boolean) => void;
+  onDecide: (allow: boolean, remember?: boolean) => void;
 }
 
 export const ChatConsole: React.FC<ChatConsoleProps> = ({
@@ -331,38 +332,13 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       </div>
 
       {pending && (
-        <div className="mx-3 mt-3 border border-[#262626] bg-[#0a0a0a] rounded p-3">
-          <div className="text-[10px] uppercase tracking-wider text-[#737373]">
-            Approval
-            {remoteApprovalLabel && (
-              <span className="normal-case"> · remote turn on {remoteApprovalLabel} paused — decide here to resume</span>
-            )}
-          </div>
-          <div className="mt-1 text-white whitespace-pre-wrap break-words select-text">
-            {pending.summary || pending.tool}
-          </div>
-          {decideError && (
-            <div className="mt-1 text-[11px] text-[#a3a3a3] break-words">{decideError}</div>
-          )}
-          <div className="mt-2 flex items-center space-x-2">
-            <button
-              type="button"
-              disabled={deciding}
-              onClick={() => onDecide(false)}
-              className="inline-flex h-11 items-center px-4 bg-[#141414] hover:bg-[#1f1f1f] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white transition-colors disabled:opacity-50"
-            >
-              Deny
-            </button>
-            <button
-              type="button"
-              disabled={deciding}
-              onClick={() => onDecide(true)}
-              className="inline-flex h-11 items-center px-4 bg-white hover:bg-[#e5e5e5] disabled:bg-[#262626] disabled:text-[#525252] text-black rounded text-[11px] transition-colors"
-            >
-              Allow
-            </button>
-          </div>
-        </div>
+        <ApprovalReview
+          pending={pending}
+          deciding={deciding}
+          decideError={decideError}
+          remoteApprovalLabel={remoteApprovalLabel}
+          onDecide={onDecide}
+        />
       )}
 
       {/* Message List */}
