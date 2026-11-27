@@ -46,9 +46,9 @@ export function useSidebarTree(args: {
   setWsHosts: React.Dispatch<React.SetStateAction<Record<string, WorkspaceHosts>>>;
   treePersonas: Record<string, PersonaRow[]>;
   setTreePersonas: React.Dispatch<React.SetStateAction<Record<string, PersonaRow[]>>>;
-  serverSessions: Record<string, { id: string; goal?: string; title?: string; host?: string }[]>;
+  serverSessions: Record<string, { id: string; goal?: string; title?: string; host?: string; branch?: string; repo?: string; wip_unpushed?: boolean; last_active?: string }[]>;
   setServerSessions: React.Dispatch<
-    React.SetStateAction<Record<string, { id: string; goal?: string; title?: string; host?: string }[]>>
+    React.SetStateAction<Record<string, { id: string; goal?: string; title?: string; host?: string; branch?: string; repo?: string; wip_unpushed?: boolean; last_active?: string }[]>>
   >;
   sessionTitles: Record<string, string>;
   setSessionTitles: React.Dispatch<React.SetStateAction<Record<string, string>>>;
@@ -68,7 +68,7 @@ export function useSidebarTree(args: {
   const [treePersonas, setTreePersonas] = useState<Record<string, PersonaRow[]>>({});
   const [personaCounts, setPersonaCounts] = useState<Record<string, Record<string, WsInboxPersona>>>({});
   const [serverSessions, setServerSessions] = useState<
-    Record<string, { id: string; goal?: string; title?: string; host?: string }[]>
+    Record<string, { id: string; goal?: string; title?: string; host?: string; branch?: string; repo?: string; wip_unpushed?: boolean; last_active?: string }[]>
   >({});
   // Session titles keyed "ws persona session": prefetched eagerly, cached in localStorage.
   const [sessionTitles, setSessionTitles] = useState<Record<string, string>>(() => {
@@ -281,6 +281,10 @@ export function useSidebarTree(args: {
             : sessionTitles[titleKey(ws, persona, i.session)] || remote?.title || remote?.goal || "new chat",
           pending: !remote,
           host: sessionHostPill(remote?.host, i.session, hosts) || undefined,
+          branch: remote?.branch,
+          repo: remote?.repo,
+          wip_unpushed: remote?.wip_unpushed,
+          last_active: remote?.last_active,
         };
       });
     const covered = new Set(localRows.map((r) => r.session));
@@ -292,6 +296,10 @@ export function useSidebarTree(args: {
         label: sessionTitles[titleKey(ws, persona, s.id)] || s.title || s.goal || "…",
         pending: false,
         host: sessionHostPill(s.host, s.id, hosts) || undefined,
+        branch: s.branch,
+        repo: s.repo,
+        wip_unpushed: s.wip_unpushed,
+        last_active: s.last_active,
       }));
     return [...localRows, ...remoteRows];
   };

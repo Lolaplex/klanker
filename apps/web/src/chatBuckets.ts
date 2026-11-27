@@ -59,7 +59,7 @@ export function mintSessionId(): string {
 
 export function clipTitle(text: string): string {
   const t = text.trim();
-  return t.length > 22 ? `${t.slice(0, 22)}…` : t;
+  return t.length > 80 ? `${t.slice(0, 80)}…` : t;
 }
 
 export const EMPTY_BUCKET: ChatBucket = { openId: "", items: [] };

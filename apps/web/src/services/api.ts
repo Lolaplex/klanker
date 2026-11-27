@@ -473,6 +473,21 @@ export async function notifyWhenUnfocused(
   } catch {}
 }
 
+function filterPendingApprovals(
+  rows: PendingApproval[],
+  opts?: { session?: string; device?: string }
+): PendingApproval[] {
+  const session = (opts?.session || "").trim();
+  const device = (opts?.device || "").trim();
+  if (!session && !device) return rows;
+  return rows.filter((a) => {
+    if (a.session && session && a.session !== session) return false;
+    if (a.session && !session && !(device && a.device === device)) return false;
+    if (a.device && device && a.device !== device) return false;
+    return true;
+  });
+}
+
 export const api = {
   // --- settings (localStorage) -------------------------------------------
 
@@ -1064,7 +1079,7 @@ export const api = {
     inst: KlankerInstance,
     workspace: string,
     persona: string
-  ): Promise<{ id: string; goal?: string; title?: string; host?: string; created_at?: string; last_active?: string }[]> {
+  ): Promise<{ id: string; goal?: string; title?: string; host?: string; created_at?: string; last_active?: string; branch?: string; repo?: string; wip_unpushed?: boolean }[]> {
     try {
       const r = await req<{ sessions?: WireRow[] }>(
         inst,
@@ -1076,6 +1091,9 @@ export const api = {
         goal: wstr(s.goal),
         title: wstr(s.title),
         host: wstr(s.host),
+        branch: wstr(s.branch),
+        repo: wstr(s.repo),
+        wip_unpushed: s.wip_unpushed === true,
         created_at: wstr(s.created_at),
         last_active: wstr(s.last_active) || wstr(s.updated_at),
       }));
@@ -1467,20 +1485,28 @@ export const api = {
         headers: headers(inst),
       });
       const rows = r.approvals || [];
-      const session = (opts?.session || "").trim();
-      const device = (opts?.device || "").trim();
-      if (!session && !device) return rows[0] ?? null;
-      const match = rows.find((a) => {
-        if (a.session && session && a.session !== session) return false;
-        // Draft chat (no session yet): a session-scoped row only matches
-        // when the deciding device agrees — the draft minted that session.
-        if (a.session && !session && !(device && a.device === device)) return false;
-        if (a.device && device && a.device !== device) return false;
-        return true;
-      });
-      return match ?? null;
+      return filterPendingApprovals(rows, opts)[0] ?? null;
     } catch {
       return null;
+    }
+  },
+
+  /** All currently matching approval rows. The UI consumes them as a strict
+   *  FIFO queue — deciding row 1 re-polls and row 2 becomes visible. */
+  async pendingApprovals(
+    inst: KlankerInstance,
+    workspaceId = "",
+    opts?: { session?: string; device?: string }
+  ): Promise<PendingApproval[]> {
+    try {
+      const ws = workspaceId.trim();
+      const q = ws ? `?workspace=${encodeURIComponent(ws)}` : "";
+      const r = await req<{ approvals?: PendingApproval[] }>(inst, `/v1/approvals${q}`, {
+        headers: headers(inst),
+      });
+      return filterPendingApprovals(r.approvals || [], opts);
+    } catch {
+      return [];
     }
   },
 

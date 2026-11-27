@@ -1,16 +1,12 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ArrowUp, Bot, User, Square, Paperclip, RotateCcw, X } from "lucide-react";
+import { ArrowUp, Bot, User, Paperclip, RotateCcw, X } from "lucide-react";
 import { shouldSubmitOnEnter, focusWithoutScroll } from "../chatUi";
 import { splitThinking } from "../thinkingParse";
-import { chatToJson, chatToMarkdown, downloadText, exportStem } from "../chatExport";
 import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow } from "../types/klanker";
 import { CopyButton } from "./CopyButton";
 import { ThinkingAccordion } from "./ThinkingAccordion";
 import { ApprovalReview } from "./ApprovalReview";
 import { MarkdownMessage } from "./MarkdownMessage";
-import { ProviderModelPicker } from "./ProviderModelPicker";
-import { Popover } from "./ui/Popover";
-import { HostPicker } from "./HostPicker";
 import type { HostBinding, HostRow } from "../hostPicker";
 
 export interface OutAttachment {
@@ -70,35 +66,30 @@ interface ChatConsoleProps {
   deciding: boolean;
   decideError: string | null;
   onDecide: (allow: boolean, remember?: boolean) => void;
+  /** Rich workspace-aware empty state rendered instead of the fallback. */
+  emptyState?: React.ReactNode;
+  /** FIFO approval queue position (`1/N`) for the visible row. */
+  approvalQueue?: { index: number; total: number };
 }
 
 export const ChatConsole: React.FC<ChatConsoleProps> = ({
   instance,
-  title,
   speakerName,
   messages,
   input,
   onInput,
   onSendMessage,
-  onStop,
   isLoading,
   remoteActive,
   sendHold,
   streamStatus,
-  sessionLabel,
-  providers = [],
-  pick,
-  onPick,
-  favorites = [],
-  onStar,
-  providersStale = false,
-  providersDisabled = false,
-  host = null,
   remoteApprovalLabel = null,
   pending,
   deciding,
   decideError,
   onDecide,
+  emptyState,
+  approvalQueue,
 }) => {
   const [files, setFiles] = useState<OutAttachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -253,94 +244,16 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const regenerate = () => {
     onSendMessage("/retry", undefined, { command: true, reuseAssistant: true });
   };
-  const [exportOpen, setExportOpen] = useState(false);
   const streamingBubble = isLoading && last?.role === "klanker";
   const displaySpeaker = speakerName || instance.name;
-  const headlineTitle = title || instance.name;
-  const sessionText = sessionLabel || "new";
-  const exportSessionLabel = `${headlineTitle} · ${sessionText}`;
 
   return (
     <div className="flex-1 flex flex-col bg-main overflow-hidden font-mono text-xs">
-      {/* Console Top Toolbar — right-side controls only. The workspace >
-          persona · chat breadcrumb already lives in the app Header; a
-          second left-side copy here was pure duplication (klanker#158 U03). */}
-      <div className="min-h-11 bg-surface border-b border-strong flex items-center justify-end px-3 text-ink-muted select-none touch-none">
-        <div className="flex items-center space-x-2">
-          {messages.length > 0 && (
-            <Popover
-              open={exportOpen}
-              onOpenChange={setExportOpen}
-              widthClass="w-32"
-              trigger={
-                <button
-                  type="button"
-                  title="Export this chat"
-                  className="bg-surface border border-strong hover:border-strong rounded-md px-2 py-1.5 text-[11px] text-ink-primary hover:text-ink-primary outline-none cursor-pointer"
-                >
-                  export
-                </button>
-              }
-            >
-              <div className="flex flex-col py-1">
-                {(["md", "json"] as const).map((fmt) => (
-                  <button
-                    key={fmt}
-                    type="button"
-                    onClick={() => {
-                      setExportOpen(false);
-                      const doc = {
-                        agent: headlineTitle,
-                        speaker: displaySpeaker,
-                        session: exportSessionLabel,
-                        messages,
-                      };
-                      const stem = exportStem(exportSessionLabel || "chat");
-                      if (fmt === "md") downloadText(`${stem}.md`, chatToMarkdown(doc), "text/markdown");
-                      else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
-                    }}
-                    aria-label={`Export as .${fmt}`}
-                    className="px-3 py-1.5 text-left text-ink-secondary hover:bg-hover hover:text-ink-primary"
-                  >
-                    .{fmt}
-                  </button>
-                ))}
-              </div>
-            </Popover>
-          )}
-          {host && (
-            <HostPicker
-              rows={host.rows}
-              binding={host.binding}
-              switching={host.switching}
-              note={host.note}
-              onSwitch={host.onSwitch}
-            />
-          )}
-          {onPick && (
-            <ProviderModelPicker
-              providers={providers}
-              favorites={favorites}
-              stale={providersStale}
-              disabled={providersDisabled}
-              pick={pick ?? { provider: "", model: "" }}
-              onPick={onPick}
-              onStar={(p, star) => onStar?.(p, star)}
-            />
-          )}
-          {isLoading && (
-            <button
-              onClick={onStop}
-              title="Stop this run"
-              className="inline-flex items-center gap-1 px-2 py-1.5 border border-strong rounded-md hover:border-accent hover:text-ink-primary transition-colors"
-            >
-              <Square className="w-3 h-3" />
-              <span>stop</span>
-            </button>
-          )}
+      {pending && approvalQueue && approvalQueue.total > 1 && (
+        <div className="border-b border-strong bg-surface px-3 py-1 text-center text-[10px] uppercase tracking-wider text-ink-muted">
+          approval {approvalQueue.index} of {approvalQueue.total}
         </div>
-      </div>
-
+      )}
       {pending && (
         <ApprovalReview
           pending={pending}
@@ -360,7 +273,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         }}
         className="flex-1 overflow-y-auto overscroll-y-contain p-4 space-y-4 select-text"
       >
-        {messages.length === 0 ? (
+        <div className="mx-auto w-full max-w-3xl space-y-4">
+        {messages.length === 0 && emptyState ? (
+          emptyState
+        ) : messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6 text-ink-dim">
             <div className="w-12 h-12 border border-strong rounded-full flex items-center justify-center mb-3">
               <Bot className="w-6 h-6 text-ink-muted" />
@@ -399,6 +315,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
           </div>
         )}
 
+        </div>
       </div>
 
       {/* Input Area */}

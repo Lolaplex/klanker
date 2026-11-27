@@ -30,3 +30,4 @@ Klanker's monochrome web workbench components are implemented in this repository
 - **Agents-Anywhere** (https://github.com/anywhere-labs/Agents-Anywhere) — Apache-2.0 License — `@base-ui/react` wrapper patterns and streaming tool-timeline ergonomics.
 - **DeepSeek Chat Demo** (https://github.com/deepseek-ai/chat-demo) — MIT License, Copyright (c) 2026 DeepSeek — KaTeX/Mermaid chat rendering, collapsible reasoning accordion, attachment paste/drop and regenerate ergonomics.
 - **Tuxee** (https://github.com/agent0ai/tuxee) — MIT License, Copyright (c) 2025 Agent Zero, s.r.o — lightweight file browser and terminal workbench UX.
+- **openpoke** (https://github.com/shlokkhemani/openpoke) — MIT License — first-run onboarding starter-prompt cards.
