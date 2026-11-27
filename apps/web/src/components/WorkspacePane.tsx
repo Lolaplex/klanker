@@ -95,7 +95,7 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
   };
 
   return (
-    <aside className="w-80 md:w-96 shrink-0 border-l border-[#262626] bg-[#0a0a0a] flex flex-col font-mono text-xs min-h-0">
+    <aside className="fixed inset-0 z-50 md:static md:z-auto w-full md:w-96 shrink-0 border-l border-[#262626] bg-[#0a0a0a] flex flex-col font-mono text-xs min-h-0">
       <div className="flex items-center justify-between px-3 py-2 border-b border-[#262626]">
         <span className="text-white uppercase tracking-wider truncate">
           store · {workspaceId || "default"}

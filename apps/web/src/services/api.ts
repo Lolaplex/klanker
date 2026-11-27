@@ -1745,6 +1745,26 @@ export const api = {
     return localRelayJson<HostInfo>("/v1/host", "PATCH", { host_label: label });
   },
 
+  /** POST /v1/providers/secret — write a provider key into the host secret
+   *  vault (U01 contract). One-way: the API never reads secrets back, so
+   *  the UI must clear the input after save and rely on key_configured. */
+  async setProviderSecret(inst: KlankerInstance, keyEnv: string, value: string): Promise<{ ok: boolean }> {
+    return jsonReq<{ ok: boolean }>(inst, "/v1/providers/secret", { key_env: keyEnv, value });
+  },
+
+  /** Tauri-native folder picker — desktop only (caps.spawn). Resolves null
+   *  when the user cancels or the shell is a plain browser. */
+  async pickFolder(title = "Choose folder"): Promise<string | null> {
+    if (!caps.spawn) return null;
+    try {
+      const dir = await (window as unknown as { __TAURI__: { core: { invoke: (c: string, a?: Record<string, unknown>) => Promise<string | null> } } })
+        .__TAURI__.core.invoke("plugin:dialog|open", { options: { directory: true, title } });
+      return typeof dir === "string" && dir ? dir : null;
+    } catch {
+      return null;
+    }
+  },
+
   async fetchHubLinks(): Promise<HubLink[]> {
     const r = await localRelayJson<{ links?: HubLink[] }>("/v1/hub/links");
     return r.links || [];

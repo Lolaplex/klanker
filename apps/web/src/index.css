@@ -237,3 +237,38 @@
   max-width: 100%;
   overflow-x: auto;
 }
+
+/* Dark monochrome checkboxes (klanker#160 U05): zero native white OS
+   boxes — a flat dark box with a white checkmark drawn in css. */
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 0.875rem;
+  height: 0.875rem;
+  flex-shrink: 0;
+  border: 1px solid #525252;
+  border-radius: 2px;
+  background-color: #0a0a0a;
+  cursor: pointer;
+  position: relative;
+  vertical-align: middle;
+}
+input[type="checkbox"]:checked {
+  background-color: #ffffff;
+  border-color: #ffffff;
+}
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.5px;
+  width: 5px;
+  height: 8px;
+  border: solid #000000;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+input[type="checkbox"]:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

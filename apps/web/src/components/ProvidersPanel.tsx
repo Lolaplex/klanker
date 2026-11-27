@@ -7,6 +7,13 @@ import { dialogs } from "../services/dialogs";
 const inputClass =
   "w-full bg-[#121212] border border-[#262626] focus:border-[#525252] rounded-xl px-3 py-3 md:py-2.5 text-white outline-none text-base md:text-sm";
 
+/** Test fixtures (echo/scripted kinds) are dev scaffolding — hidden
+ *  unless the operator explicitly opts in (klanker#160 U05). */
+export function visibleProviderRows(rows: ProviderRow[], showTest: boolean): ProviderRow[] {
+  if (showTest) return rows;
+  return rows.filter((row) => row.kind !== "echo" && row.kind !== "scripted");
+}
+
 /** Host-scoped provider setup — Zed-style rows over /v1/providers.
  *  Providers belong to the instance's host: keys live in the host vault,
  *  acp agents spawn by manifest command, env rows are read-only here. */
@@ -35,6 +42,13 @@ export function ProvidersPanel({
     command: "",
   });
   const [busy, setBusy] = useState(false);
+  // Test fixtures (echo/scripted) are dev scaffolding — hidden unless the
+  // operator explicitly asks (klanker#160 U05).
+  const [showTestProviders, setShowTestProviders] = useState(false);
+  // Inline secret write: one-way into the host vault, never echoed back.
+  const [keyTarget, setKeyTarget] = useState("");
+  const [keyValue, setKeyValue] = useState("");
+  const [keyNote, setKeyNote] = useState<Record<string, string>>({});
 
   const load = useCallback(() => {
     void api.listProviders(instance).then((r) => {
@@ -115,6 +129,23 @@ export function ProvidersPanel({
       key_env: row.key_env || "LLM_API_KEY",
       model: row.model || "",
     });
+  };
+
+  const setKey = async (row: ProviderRow) => {
+    const value = keyValue.trim();
+    const keyEnv = (row.key_env || "").trim();
+    if (!value || !keyEnv) return;
+    try {
+      await api.setProviderSecret(instance, keyEnv, value);
+      // One-way write: clear the input immediately, rely on the refreshed
+      // key_configured flag — the secret is never rendered back (klanker#160).
+      setKeyValue("");
+      setKeyTarget("");
+      setKeyNote((prev) => ({ ...prev, [row.name]: "key saved to host vault" }));
+      load();
+    } catch (e) {
+      setKeyNote((prev) => ({ ...prev, [row.name]: `key: ${e instanceof Error ? e.message : e}` }));
+    }
   };
 
   const statusOf = (row: ProviderRow): { text: string; cls: string } => {
@@ -225,8 +256,7 @@ export function ProvidersPanel({
           {form.kind !== "acp-agent" && (
             <p className="text-[10px] text-[#525252]">
               Keys live in the host secret vault under the env name above — set
-              it via <code className="text-[#737373]">agents-workspace secrets set LLM_API_KEY</code>,
-              never in this app.
+              the value on the row after saving (one-way write, never echoed back).
             </p>
           )}
           <button
@@ -242,13 +272,24 @@ export function ProvidersPanel({
 
       {note && <p className="text-[11px] text-[#a3a3a3]">{note}</p>}
 
-      {rows.length === 0 ? (
+      {rows.some((r) => r.kind === "echo" || r.kind === "scripted") && (
+        <label className="flex items-center gap-1.5 text-[10px] text-[#737373]">
+          <input
+            type="checkbox"
+            checked={showTestProviders}
+            onChange={(e) => setShowTestProviders(e.target.checked)}
+          />
+          Show test providers
+        </label>
+      )}
+
+      {visibleProviderRows(rows, showTestProviders).length === 0 ? (
         <div className="flex flex-col items-center py-6 text-[#525252]">
           <div className="w-9 h-9 border border-[#262626] rounded-full flex items-center justify-center mb-2 text-[11px]">∅</div>
           <p className="text-[11px]">no providers on this host</p>
         </div>
       ) : (
-        rows.map((row) => {
+        visibleProviderRows(rows, showTestProviders).map((row) => {
           const st = statusOf(row);
           const deletable = row.source === "file";
           // Every row is editable: POST same name writes a file manifest
@@ -264,6 +305,22 @@ export function ProvidersPanel({
                       <span className="shrink-0 px-1.5 py-0.5 rounded border border-[#262626] text-[10px] text-[#737373]">
                         {row.kind}
                       </span>
+                    )}
+                    {row.auth_required && (
+                      <span className="shrink-0 px-1.5 py-0.5 rounded border border-amber-600 text-[10px] text-amber-500">
+                        needs key / login
+                      </span>
+                    )}
+                    {row.key_env && row.source !== "env" && (
+                      row.key_configured ? (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded border border-emerald-700 text-[10px] text-emerald-400">
+                          key set
+                        </span>
+                      ) : (
+                        <span className="shrink-0 px-1.5 py-0.5 rounded border border-amber-600 text-[10px] text-amber-500">
+                          no key
+                        </span>
+                      )
                     )}
                   </div>
                   <div className="mt-0.5 text-[10px] text-[#525252] truncate">
@@ -302,6 +359,42 @@ export function ProvidersPanel({
                 </div>
               </div>
               {st.text && <div className={`mt-1.5 text-[10px] ${st.cls}`}>{st.text}</div>}
+              {row.key_env && row.source !== "env" && (
+                keyTarget === row.name ? (
+                  <div className="mt-1.5 flex items-center gap-1">
+                    <input
+                      type="password"
+                      autoFocus
+                      value={keyValue}
+                      onChange={(e) => setKeyValue(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void setKey(row);
+                        if (e.key === "Escape") { setKeyTarget(""); setKeyValue(""); }
+                      }}
+                      placeholder={`${row.key_env} value`}
+                      aria-label={`Set API key for ${row.name}`}
+                      className="flex-1 bg-[#121212] border border-[#262626] focus:border-white rounded px-2 py-1 text-white outline-none text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void setKey(row)}
+                      disabled={!keyValue.trim()}
+                      className="shrink-0 px-2 py-1 border border-[#262626] rounded text-[10px] text-[#a3a3a3] hover:text-white disabled:opacity-40"
+                    >
+                      save
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setKeyTarget(row.name); setKeyValue(""); }}
+                    className="mt-1.5 text-[10px] text-[#737373] hover:text-white underline underline-offset-2"
+                  >
+                    Set API key
+                  </button>
+                )
+              )}
+              {keyNote[row.name] && <div className="mt-1 text-[10px] text-[#737373]">{keyNote[row.name]}</div>}
             </div>
           );
         })
