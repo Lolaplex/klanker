@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Inline GenUI cards (klanker#165 U10): assistant messages render fenced ```openui programs through a lazily loaded OpenUI island with the curated chat component catalog, raw-code fallback for malformed or unsafe DSL, a whitelisted two-way action bridge (conversation/form prompts, verified http(s) links, detail-view events), and no duplicated theme provider. The main web bundle now keeps the OpenUI runtime in an async chunk instead of eagerly loading it.
+
+### Added
 - Workspace-first sidebar IA (klanker#150): the sidebar roots on workspaces — never devices — with a per-workspace sync badge (`local` / `synced N hosts` / `hub` / `offline`), persona rows carrying role + unread/handoff counts from `GET /v1/workspaces/<ws>/inbox`, and session rows showing `session:title` plus a bound-host pill resolved from `/v1/workspaces/<ws>/hosts` bindings and live leases. Chat buckets, selection and titles re-key from `klanker.chats.<inst> <ws> <persona>` to `klanker.ws.chats.<ws> <persona>` with a one-time lossless boot migration (every instance's copy unions into one bucket, richer history wins collisions, unparseable keys are kept). Turn busy/hold state keys `${ws}::${session}` so parallel sessions in one bucket never lock each other. Header headlines `Workspace > Persona` + chat title; the status pill opens the devices panel.
 
 ### Added

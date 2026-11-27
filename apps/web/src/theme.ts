@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { createTheme } from "@openuidev/react-ui";
-import type { Theme } from "@openuidev/react-ui";
+import { createTheme } from "@openuidev/react-ui/ThemeProvider";
+import type { Theme } from "@openuidev/react-ui/ThemeProvider";
 
 // Theme mode (klanker#170 U16): "dark" is the klanker default, "light" is
 // the inverted white mode, "system" follows the OS. Persisted to

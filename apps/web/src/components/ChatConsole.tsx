@@ -45,6 +45,10 @@ interface ChatConsoleProps {
   sendHold: boolean;
   streamStatus?: string | null;
   sessionLabel?: string;
+  /** Explicit workspace/persona ids for GenUI + power-composer wiring. When
+   *  absent the legacy `title` format (`workspace · persona`) is parsed. */
+  workspace?: string;
+  persona?: string;
   providers?: ChatProviderRow[];
   pick?: ChatPick;
   onPick?: (p: ChatPick) => void;
@@ -86,6 +90,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   sendHold,
   streamStatus,
   sessionLabel,
+  workspace,
+  persona,
   providers = [],
   pick,
   onPick,
@@ -259,6 +265,17 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const headlineTitle = title || instance.name;
   const sessionText = sessionLabel || "new";
   const exportSessionLabel = `${headlineTitle} · ${sessionText}`;
+  const titleParts = headlineTitle.split(" · ");
+  const wsId = workspace || titleParts[0]?.trim() || "default";
+  const personaId = persona || titleParts[1]?.trim() || "default";
+  const genui = {
+    actionContext: {
+      session: sessionLabel && sessionLabel !== "new" ? sessionLabel : "",
+      workspace: wsId,
+      persona: personaId,
+      sendPrompt: (text: string) => onSendMessage(text),
+    },
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-main overflow-hidden font-mono text-xs">
@@ -379,6 +396,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               thinking={streamingBubble && m.id === last?.id && !m.content}
               streaming={streamingBubble && m.id === last?.id}
               streamStatus={streamingBubble && m.id === last?.id ? streamStatus : undefined}
+              genui={{ ...genui, streaming: streamingBubble && m.id === last?.id }}
               onRegenerate={i === lastAssistantIdx && !isLoading ? regenerate : undefined}
             />
           ))
@@ -489,6 +507,7 @@ const MessageBubble = React.memo(function MessageBubble({
   thinking,
   streaming = false,
   streamStatus = null,
+  genui,
   onRegenerate,
 }: {
   message: ChatMessage;
@@ -501,6 +520,7 @@ const MessageBubble = React.memo(function MessageBubble({
    *  as a subtle activity line under streaming markdown (klanker#169
    *  U15 — the empty-bubble gate used to hide this entirely). */
   streamStatus?: string | null;
+  genui?: import("./MarkdownMessage").MarkdownGenUiContext;
   /** Latest assistant answer only: hover control resends the preceding
    *  user message (klanker#163 U08). */
   onRegenerate?: () => void;
@@ -577,7 +597,7 @@ const MessageBubble = React.memo(function MessageBubble({
           ) : null}
           {message.role === "klanker" && message.content ? (
             thinkSplit?.thinking && !thinkSplit.body && thinkSplit.thinkingOpen ? null : (
-              <MarkdownMessage text={thinkSplit ? thinkSplit.body : message.content} />
+              <MarkdownMessage text={thinkSplit ? thinkSplit.body : message.content} genui={genui} />
             )
           ) : (
             <div className="whitespace-pre-wrap break-words">

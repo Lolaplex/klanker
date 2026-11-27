@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { ThemeProvider } from "@openuidev/react-ui";
+import { ThemeProvider } from "@openuidev/react-ui/ThemeProvider";
 import { useThemeMode, applyResolvedMode, klankerOpenUiDark, klankerOpenUiLight } from "./theme";
 
 /**
