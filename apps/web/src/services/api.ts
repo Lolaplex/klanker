@@ -2106,6 +2106,24 @@ export const api = {
   },
 };
 
+/** Minimal authenticated transport primitives for feature-specific services.
+ *  Domain helpers belong in those services; api.ts exposes only routing/auth. */
+export async function apiRequest<T = unknown>(
+  inst: KlankerInstance,
+  path: string,
+  init: RequestInit = {}
+): Promise<T> {
+  return req<T>(inst, path, init);
+}
+
+export async function apiJson<T = unknown>(inst: KlankerInstance, path: string, body: object): Promise<T> {
+  return jsonReq<T>(inst, path, body);
+}
+
+export async function apiFetch(inst: KlankerInstance, path: string, init: RequestInit = {}): Promise<Response> {
+  return authedFetch(inst, base(inst) + path, init);
+}
+
 export interface ServeStatus {
   state: "running" | "starting" | "stopped" | "lost" | "not_found" | string;
   pid?: number;

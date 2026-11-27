@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ArrowUp, Bot, User, Paperclip, RotateCcw, X } from "lucide-react";
+import { Bot, User, Paperclip, RotateCcw } from "lucide-react";
 import { shouldSubmitOnEnter, focusWithoutScroll } from "../chatUi";
 import { splitThinking } from "../thinkingParse";
 import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow } from "../types/klanker";
@@ -8,6 +8,11 @@ import { ThinkingAccordion } from "./ThinkingAccordion";
 import { ApprovalReview } from "./ApprovalReview";
 import { MarkdownMessage } from "./MarkdownMessage";
 import type { HostBinding, HostRow } from "../hostPicker";
+import { api } from "../services/api";
+import { forkSession } from "../services/streamExtrasApi";
+import { TURN_EVENT_NAME, type TurnEvent } from "../turnStream";
+import { PowerComposer } from "./PowerComposer";
+import { applyLiveTurnEvent, stepsFromSessionEvents, ToolTimeline, usageFromTurnEvent, type TimelineStep, type UsageStats } from "./ToolTimeline";
 
 export interface OutAttachment {
   data: string;
@@ -41,6 +46,11 @@ interface ChatConsoleProps {
   sendHold: boolean;
   streamStatus?: string | null;
   sessionLabel?: string;
+  /** Explicit workspace/persona ids for power-composer and session-event
+   *  wiring. When absent the legacy `title` format (`workspace · persona`)
+   *  is parsed. */
+  workspace?: string;
+  persona?: string;
   providers?: ChatProviderRow[];
   pick?: ChatPick;
   onPick?: (p: ChatPick) => void;
@@ -74,6 +84,7 @@ interface ChatConsoleProps {
 
 export const ChatConsole: React.FC<ChatConsoleProps> = ({
   instance,
+  title,
   speakerName,
   messages,
   input,
@@ -83,6 +94,11 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   remoteActive,
   sendHold,
   streamStatus,
+  sessionLabel,
+  workspace,
+  persona,
+  providers = [],
+  pick,
   remoteApprovalLabel = null,
   pending,
   deciding,
@@ -96,6 +112,13 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const listRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const imageCacheRef = useRef(new Map<string, string>());
+  const [timelineSteps, setTimelineSteps] = useState<TimelineStep[]>([]);
+  const [usage, setUsage] = useState<UsageStats>({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
+  const [liveThought, setLiveThought] = useState("");
+  const [showJump, setShowJump] = useState(false);
+  const liveQueueRef = useRef<TurnEvent[]>([]);
+  const liveRafRef = useRef(0);
 
   const scrollToBottom = () => {
     const el = listRef.current;
@@ -124,6 +147,51 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     return () => ro.disconnect();
   }, []);
 
+  const activeSession = sessionLabel && sessionLabel !== "new" ? sessionLabel : "";
+  const titleParts = (title || instance.name).split(" · ");
+  const wsId = workspace || titleParts[0]?.trim() || "default";
+  const personaId = persona || titleParts[1]?.trim() || "default";
+
+  useEffect(() => {
+    setTimelineSteps([]);
+    setUsage({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
+    setLiveThought("");
+  }, [activeSession, workspace, persona, instance.id]);
+
+  useEffect(() => {
+    const flush = () => {
+      liveRafRef.current = 0;
+      const batch = liveQueueRef.current.splice(0);
+      for (const ev of batch) {
+        setTimelineSteps((cur) => applyLiveTurnEvent(cur, ev));
+        setUsage((cur) => usageFromTurnEvent(cur, ev));
+        if (ev.type === "thought" && ev.text) setLiveThought((cur) => `${cur}${cur ? "\n" : ""}${ev.text}`);
+      }
+    };
+    const listener = (event: Event) => {
+      liveQueueRef.current.push((event as CustomEvent<TurnEvent>).detail);
+      if (!liveRafRef.current) liveRafRef.current = requestAnimationFrame(flush);
+    };
+    window.addEventListener(TURN_EVENT_NAME, listener);
+    return () => {
+      window.removeEventListener(TURN_EVENT_NAME, listener);
+      if (liveRafRef.current) cancelAnimationFrame(liveRafRef.current);
+      liveRafRef.current = 0;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!activeSession) return;
+    let dead = false;
+    void api.sessionEvents(instance, wsId, personaId, activeSession).then((events) => {
+      if (!dead && events) setTimelineSteps((live) => {
+        const historical = stepsFromSessionEvents(events);
+        return live.some((s) => s.status === "running") ? live : historical;
+      });
+    });
+    return () => { dead = true; };
+  }, [instance, activeSession, wsId, personaId, isLoading]);
+
   useEffect(() => {
     const focus = () => focusWithoutScroll(textareaRef.current);
     window.addEventListener("klanker:focus-composer", focus);
@@ -151,6 +219,18 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     stickRef.current = true;
     scrollToBottom();
     const typed = input.trim();
+    if (files.length === 0 && typed === "/fork" && sessionLabel) {
+      void forkSession(instance, { workspace: wsId, source_session: sessionLabel }).then((r) => {
+        window.dispatchEvent(new CustomEvent("klanker:open-detail", { detail: { params: { session: r.session }, session: r.session, workspace: r.workspace } }));
+      });
+      onInput("");
+      return;
+    }
+    if (files.length === 0 && typed === "/clear") {
+      window.dispatchEvent(new CustomEvent("klanker:clear-chat", { detail: { session: sessionLabel || "" } }));
+      onInput("");
+      return;
+    }
     // Trace commands never become user bubbles (klanker#169 U15).
     if (files.length === 0 && SLASH_COMMAND.test(typed)) {
       onSendMessage(typed, undefined, { command: true, reuseAssistant: typed === "/retry" });
@@ -168,11 +248,9 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       const r = new FileReader();
       r.onload = () => {
         const raw = String(r.result || "");
-        resolve({
-          data: raw.includes(",") ? raw.split(",", 2)[1] : raw,
-          mime: f.type || undefined,
-          name: f.name,
-        });
+        const data = raw.includes(",") ? raw.split(",", 2)[1] : raw;
+        if ((f.type || "").startsWith("image/") && f.name) imageCacheRef.current.set(f.name, raw);
+        resolve({ data, mime: f.type || undefined, name: f.name });
       };
       r.onerror = () => reject(r.error);
       r.readAsDataURL(f);
@@ -201,12 +279,10 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     void addFiles(picked);
   };
 
-  const [dragOver, setDragOver] = useState(false);
   const onDrop = (e: React.DragEvent<HTMLFormElement>) => {
     const picked = Array.from(e.dataTransfer?.files || []);
     if (!picked.length) return;
     e.preventDefault();
-    setDragOver(false);
     void addFiles(picked);
   };
 
@@ -248,7 +324,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const displaySpeaker = speakerName || instance.name;
 
   return (
-    <div className="flex-1 flex flex-col bg-main overflow-hidden font-mono text-xs">
+    <div className="relative flex-1 flex flex-col bg-main overflow-hidden font-mono text-xs">
       {pending && approvalQueue && approvalQueue.total > 1 && (
         <div className="border-b border-strong bg-surface px-3 py-1 text-center text-[10px] uppercase tracking-wider text-ink-muted">
           approval {approvalQueue.index} of {approvalQueue.total}
@@ -270,10 +346,12 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         onScroll={(e) => {
           const el = e.currentTarget;
           stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          setShowJump(!stickRef.current);
         }}
         className="flex-1 overflow-y-auto overscroll-y-contain p-4 space-y-4 select-text"
       >
         <div className="mx-auto w-full max-w-3xl space-y-4">
+        <ToolTimeline steps={timelineSteps} usage={usage} />
         {messages.length === 0 && emptyState ? (
           emptyState
         ) : messages.length === 0 ? (
@@ -295,6 +373,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               thinking={streamingBubble && m.id === last?.id && !m.content}
               streaming={streamingBubble && m.id === last?.id}
               streamStatus={streamingBubble && m.id === last?.id ? streamStatus : undefined}
+              liveThought={m.id === last?.id ? liveThought : ""}
+              imageFor={(name) => imageCacheRef.current.get(name) || null}
               onRegenerate={i === lastAssistantIdx && !isLoading ? regenerate : undefined}
             />
           ))
@@ -318,84 +398,34 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         </div>
       </div>
 
-      {/* Input Area */}
-      <div className="composer touch-none px-3 pt-3 bg-main border-t border-strong md:min-h-[73px] md:p-3 md:flex md:items-center">
-        <form
-          onSubmit={handleSubmit}
-          onDragOver={(e) => {
-            if (e.dataTransfer?.types?.includes("Files")) {
-              e.preventDefault();
-              setDragOver(true);
-            }
-          }}
-          onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
-          }}
-          onDrop={onDrop}
-          className={`w-full flex flex-col min-h-12 bg-elevated border focus-within:border-strong rounded-md transition-colors ${
-            dragOver ? "border-accent" : "border-strong"
-          }`}
-        >
-          {files.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
-              {files.map((f, i) => (
-                <span
-                  key={`${f.name}-${i}`}
-                  className="inline-flex items-center gap-1.5 pl-2 pr-1 py-1 bg-hover border border-strong rounded-md text-[11px] text-ink-secondary"
-                >
-                  <Paperclip className="w-3.5 h-3.5 shrink-0" />
-                  <span className="max-w-[160px] truncate">{f.name || "file"}</span>
-                  <button
-                    type="button"
-                    onClick={() => setFiles((cur) => cur.filter((_, j) => j !== i))}
-                    className="inline-flex h-5 w-5 min-h-0 min-w-0 items-center justify-center rounded-md hover:bg-hover hover:text-ink-primary"
-                    aria-label={`Remove ${f.name || "attachment"}`}
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="flex items-stretch gap-0.5 pl-1 pr-[5px] min-h-[46px]">
-            <input
-              ref={fileRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={onPickFiles}
-            />
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              title="Attach files"
-              aria-label="Attach files"
-              className="inline-flex w-11 min-h-0 min-w-0 shrink-0 items-center justify-center text-ink-muted hover:text-ink-primary transition-colors"
-            >
-              <Paperclip className="w-4 h-4" />
-            </button>
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={input}
-              onChange={(e) => onInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onPaste={onPaste}
-              placeholder={`Message ${displaySpeaker}...`}
-              className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-ink-primary outline-none resize-none overscroll-y-contain font-mono text-base leading-snug placeholder-ink-dim md:text-sm"
-            />
-            <button
-              type="submit"
-              disabled={(!input.trim() && files.length === 0) || isLoading || sendHold}
-              title="Send"
-              aria-label="Send message"
-              className="self-center inline-flex h-11 w-11 md:h-9 md:w-9 shrink-0 items-center justify-center rounded-md bg-accent hover:bg-accent-hover disabled:bg-hover disabled:text-ink-dim text-accent-ink transition-colors"
-            >
-              <ArrowUp className="w-4 h-4" />
-            </button>
-          </div>
-        </form>
-      </div>
+      {showJump ? (
+        <button type="button" onClick={() => { stickRef.current = true; scrollToBottom(); setShowJump(false); }} className="absolute bottom-24 right-5 z-30 rounded-full border border-strong bg-elevated px-3 py-1.5 text-[10px] text-ink-secondary shadow-lg hover:bg-hover hover:text-ink-primary">
+          jump to latest
+        </button>
+      ) : null}
+      <PowerComposer
+        instance={instance}
+        input={input}
+        onInput={onInput}
+        onSubmit={handleSubmit}
+        onKeyDown={handleKeyDown}
+        onPaste={onPaste}
+        onPickFiles={onPickFiles}
+        onDrop={onDrop}
+        files={files}
+        setFiles={setFiles}
+        textareaRef={textareaRef}
+        fileRef={fileRef}
+        isLoading={isLoading}
+        sendHold={sendHold}
+        displaySpeaker={displaySpeaker}
+        session={activeSession}
+        workspace={wsId}
+        persona={personaId}
+        usage={usage}
+        providers={providers}
+        pickProvider={pick?.provider}
+      />
     </div>
   );
 };
@@ -406,6 +436,8 @@ const MessageBubble = React.memo(function MessageBubble({
   thinking,
   streaming = false,
   streamStatus = null,
+  liveThought = "",
+  imageFor,
   onRegenerate,
 }: {
   message: ChatMessage;
@@ -418,6 +450,8 @@ const MessageBubble = React.memo(function MessageBubble({
    *  as a subtle activity line under streaming markdown (klanker#169
    *  U15 — the empty-bubble gate used to hide this entirely). */
   streamStatus?: string | null;
+  liveThought?: string;
+  imageFor?: (name: string) => string | null;
   /** Latest assistant answer only: hover control resends the preceding
    *  user message (klanker#163 U08). */
   onRegenerate?: () => void;
@@ -483,14 +517,14 @@ const MessageBubble = React.memo(function MessageBubble({
                   key={`${name}-${i}`}
                   className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-hover border border-strong rounded-md text-[10px] text-ink-secondary"
                 >
-                  <Paperclip className="w-3 h-3 shrink-0" />
+                  {imageFor?.(name) ? <img src={imageFor(name) || ""} alt={name} className="h-8 w-8 rounded border border-subtle object-cover" /> : <Paperclip className="w-3 h-3 shrink-0" />}
                   <span className="max-w-[180px] truncate">{name}</span>
                 </span>
               ))}
             </div>
           ) : null}
-          {thinkSplit?.thinking ? (
-            <ThinkingAccordion thinking={thinkSplit.thinking} streaming={streaming && thinkSplit.thinkingOpen} />
+          {thinkSplit?.thinking || liveThought ? (
+            <ThinkingAccordion thinking={[thinkSplit?.thinking, liveThought].filter(Boolean).join(String.fromCharCode(10))} streaming={streaming && (thinkSplit?.thinkingOpen || !!liveThought)} />
           ) : null}
           {message.role === "klanker" && message.content ? (
             thinkSplit?.thinking && !thinkSplit.body && thinkSplit.thinkingOpen ? null : (
