@@ -6,6 +6,7 @@ import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow }
 import { CopyButton } from "./CopyButton";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { Popover } from "./ui/Popover";
 import { HostPicker } from "./HostPicker";
 import type { HostBinding, HostRow } from "../hostPicker";
 
@@ -197,6 +198,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   };
 
   const last = messages[messages.length - 1];
+  const [exportOpen, setExportOpen] = useState(false);
   const streamingBubble = isLoading && last?.role === "klanker";
   const displaySpeaker = speakerName || instance.name;
   const headlineTitle = title || instance.name;
@@ -211,30 +213,45 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       <div className="min-h-11 bg-[#0a0a0a] border-b border-[#262626] flex items-center justify-end px-3 text-[#737373] select-none touch-none">
         <div className="flex items-center space-x-2">
           {messages.length > 0 && (
-            <select
-              value=""
-              onChange={(e) => {
-                const fmt = e.target.value;
-                e.target.value = "";
-                if (fmt !== "md" && fmt !== "json") return;
-                const doc = {
-                  agent: headlineTitle,
-                  speaker: displaySpeaker,
-                  session: exportSessionLabel,
-                  messages,
-                };
-                const stem = exportStem(exportSessionLabel || "chat");
-                if (fmt === "md") downloadText(`${stem}.md`, chatToMarkdown(doc), "text/markdown");
-                else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
-              }}
-              title="Export this chat"
-              style={{ colorScheme: "dark" }}
-              className="bg-[#0a0a0a] border border-[#262626] hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] text-[#d4d4d4] focus:text-white focus:border-white outline-none cursor-pointer"
+            <Popover
+              open={exportOpen}
+              onOpenChange={setExportOpen}
+              widthClass="w-32"
+              trigger={
+                <button
+                  type="button"
+                  title="Export this chat"
+                  className="bg-[#0a0a0a] border border-[#262626] hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] text-[#d4d4d4] hover:text-white outline-none cursor-pointer"
+                >
+                  export
+                </button>
+              }
             >
-              <option value="">export</option>
-              <option value="md">.md</option>
-              <option value="json">.json</option>
-            </select>
+              <div className="flex flex-col py-1">
+                {(["md", "json"] as const).map((fmt) => (
+                  <button
+                    key={fmt}
+                    type="button"
+                    onClick={() => {
+                      setExportOpen(false);
+                      const doc = {
+                        agent: headlineTitle,
+                        speaker: displaySpeaker,
+                        session: exportSessionLabel,
+                        messages,
+                      };
+                      const stem = exportStem(exportSessionLabel || "chat");
+                      if (fmt === "md") downloadText(`${stem}.md`, chatToMarkdown(doc), "text/markdown");
+                      else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
+                    }}
+                    aria-label={`Export as .${fmt}`}
+                    className="px-3 py-1.5 text-left text-[#a3a3a3] hover:bg-[#181818] hover:text-white"
+                  >
+                    .{fmt}
+                  </button>
+                ))}
+              </div>
+            </Popover>
           )}
           {host && (
             <HostPicker

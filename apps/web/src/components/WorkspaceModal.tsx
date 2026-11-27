@@ -3,6 +3,7 @@ import { FolderOpen, Plus, QrCode, X } from "lucide-react";
 import type { HubDevice, KlankerInstance, WorkspaceHosts, WorkspaceRow } from "../types/klanker";
 import { api, caps } from "../services/api";
 import { buildPolicyPatch, deviceRoleBadge, mergeDeviceRows, shortId, type RepoEditRow } from "../wsShare";
+import { Select } from "./ui/Select";
 import { WsInviteCard } from "./WsInviteCard";
 import { WsSkillsRoutinesTab, WsMemoryTab, WsJobsTracesTab } from "./WsManageTabs";
 
@@ -289,12 +290,17 @@ export const WorkspaceModal: React.FC<Props> = ({
               </label>
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>approval mode</span>
-                <select className={inputClass} style={{ colorScheme: "dark" }} value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)}>
-                  <option value="">inherit (host default)</option>
-                  <option value="off">off</option>
-                  <option value="ask">ask</option>
-                  <option value="strict">strict</option>
-                </select>
+                <Select
+                  value={approvalMode}
+                  onChange={setApprovalMode}
+                  ariaLabel="approval mode"
+                  options={[
+                    { value: "", label: "inherit (host default)" },
+                    { value: "off", label: "off" },
+                    { value: "ask", label: "ask" },
+                    { value: "strict", label: "strict" },
+                  ]}
+                />
               </label>
               <label className="flex items-center gap-2">
                 <input
@@ -326,20 +332,19 @@ export const WorkspaceModal: React.FC<Props> = ({
             <>
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>sync policy</span>
-                <select
-                  style={{ colorScheme: "dark" }}
-                  className={inputClass}
+                <Select
                   value={syncPolicy}
-                  onChange={(e) => {
+                  onChange={(v) => {
                     policyDirty.current = true;
-                    setSyncPolicy(e.target.value);
+                    setSyncPolicy(v);
                   }}
-                  aria-label="sync policy"
-                >
-                  <option value="local">local only — never leaves this host</option>
-                  <option value="synced">synced — members below receive updates</option>
-                  <option value="shared">shared — synced + open member join</option>
-                </select>
+                  ariaLabel="sync policy"
+                  options={[
+                    { value: "local", label: "local only — never leaves this host" },
+                    { value: "synced", label: "synced — members below receive updates" },
+                    { value: "shared", label: "shared — synced + open member join" },
+                  ]}
+                />
               </label>
               {syncPolicy === "local" && !freezeWarning && (
                 <p className="text-[10px] text-[#525252]">
@@ -398,37 +403,33 @@ export const WorkspaceModal: React.FC<Props> = ({
 
                   <label className="flex flex-col gap-1">
                     <span className={labelClass}>default host — where sessions execute</span>
-                    <select
-                      style={{ colorScheme: "dark" }}
-                      className={inputClass}
+                    <Select
                       value={defaultHost}
-                      onChange={(e) => setDefaultHost(e.target.value)}
-                      aria-label="default host"
-                    >
-                      <option value="">this host (local)</option>
-                      {deviceRows
-                        .filter((d) => checkedHosts.has(d.device_id) || d.member)
-                        .map((d) => (
-                          <option key={d.device_id} value={d.device_id}>
-                            {d.label || shortId(d.device_id)}
-                            {d.label && d.label !== d.device_id ? ` (${shortId(d.device_id)})` : ""}
-                          </option>
-                        ))}
-                    </select>
+                      onChange={setDefaultHost}
+                      ariaLabel="default host"
+                      options={[
+                        { value: "", label: "this host (local)" },
+                        ...deviceRows
+                          .filter((d) => checkedHosts.has(d.device_id) || d.member)
+                          .map((d) => ({
+                            value: d.device_id,
+                            label: `${d.label || shortId(d.device_id)}${d.label && d.label !== d.device_id ? ` (${shortId(d.device_id)})` : ""}`,
+                          })),
+                      ]}
+                    />
                   </label>
 
                   <label className="flex flex-col gap-1">
                     <span className={labelClass}>execution failover</span>
-                    <select
-                      style={{ colorScheme: "dark" }}
-                      className={inputClass}
+                    <Select
                       value={failover}
-                      onChange={(e) => setFailover(e.target.value)}
-                      aria-label="execution failover"
-                    >
-                      <option value="none">none — refuse loudly when the bound host is offline</option>
-                      <option value="standby">standby — a member may take over after failover</option>
-                    </select>
+                      onChange={setFailover}
+                      ariaLabel="execution failover"
+                      options={[
+                        { value: "none", label: "none — refuse loudly when the bound host is offline" },
+                        { value: "standby", label: "standby — a member may take over after failover" },
+                      ]}
+                    />
                   </label>
 
                   <div className="flex flex-col gap-1">
@@ -447,16 +448,16 @@ export const WorkspaceModal: React.FC<Props> = ({
                             placeholder="slug (org/app)"
                             aria-label={`repo ${i + 1} slug`}
                           />
-                          <select
-                            style={{ colorScheme: "dark" }}
-                            className={`${inputClass} w-28 shrink-0`}
+                          <Select
+                            className="w-28 shrink-0"
                             value={r.checkout_mode}
-                            onChange={(e) => setRepo(i, { checkout_mode: e.target.value === "shared" ? "shared" : "worktree" })}
-                            aria-label={`repo ${i + 1} checkout mode`}
-                          >
-                            <option value="worktree">worktree</option>
-                            <option value="shared">shared</option>
-                          </select>
+                            onChange={(v) => setRepo(i, { checkout_mode: v === "shared" ? "shared" : "worktree" })}
+                            ariaLabel={`repo ${i + 1} checkout mode`}
+                            options={[
+                              { value: "worktree", label: "worktree" },
+                              { value: "shared", label: "shared" },
+                            ]}
+                          />
                           <button
                             type="button"
                             onClick={() => setRepos((prev) => prev.filter((_, j) => j !== i))}
