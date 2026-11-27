@@ -21,7 +21,7 @@ export function useApprovals(args: {
   pending: PendingApproval | null;
   deciding: boolean;
   decideError: string | null;
-  handleDecide: (allow: boolean) => Promise<void>;
+  handleDecide: (allow: boolean, remember?: boolean) => Promise<void>;
   refresh: () => void;
   reset: () => void;
 } {
@@ -79,14 +79,14 @@ export function useApprovals(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instId, workspaceId, status?.state, refreshTick]);
 
-  const handleDecide = async (allow: boolean) => {
+  const handleDecide = async (allow: boolean, remember = false) => {
     const inst = activeInstance;
     if (!inst || !pending || deciding) return;
     const approvalId = pending.id;
     setDeciding(true);
     setDecideError(null);
     try {
-      await api.resolveApproval(inst, approvalId, allow);
+      await api.resolveApproval(inst, approvalId, allow, remember);
       pollSeq.current += 1;
       if (activeIdRef.current === inst.id) setPending(null);
     } catch (e: unknown) {

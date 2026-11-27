@@ -1248,7 +1248,7 @@ export function App() {
                     pending={approvals.pending}
                     deciding={approvals.deciding}
                     decideError={approvals.decideError}
-                    onDecide={(allow) => void approvals.handleDecide(allow)}
+                    onDecide={(allow, remember) => void approvals.handleDecide(allow, remember)}
                   />
                 </div>
                 {storeOpen && storeSupported && (
