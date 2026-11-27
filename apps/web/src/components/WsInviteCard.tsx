@@ -95,7 +95,7 @@ export const WsInviteCard: React.FC<WsInviteCardProps> = ({ ws, ttlSec = 60 }) =
       {invite && secondsLeft > 0 && view ? (
         <>
           {qrData && (
-            <div className="self-center p-2 bg-white rounded">
+            <div className="self-center p-2 bg-accent rounded-md">
               <svg
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox={`0 0 ${qrData.total} ${qrData.total}`}
@@ -110,28 +110,28 @@ export const WsInviteCard: React.FC<WsInviteCardProps> = ({ ws, ttlSec = 60 }) =
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-2 bg-[#121212] border border-[#262626] rounded px-3 py-2">
-            <span className="text-white tracking-widest text-sm">{view.code}</span>
+          <div className="flex items-center justify-between gap-2 bg-elevated border border-strong rounded-md px-3 py-2">
+            <span className="text-ink-primary tracking-widest text-sm">{view.code}</span>
             <button
               type="button"
               onClick={() => {
                 void navigator.clipboard?.writeText(view.code).then(() => setCopied(true)).catch(() => {});
               }}
-              className="px-2 py-1 border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white"
+              className="px-2 py-1 border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary"
             >
               {copied ? "copied" : "copy"}
             </button>
           </div>
 
           {view.link && (
-            <div className="flex items-center justify-between gap-2 bg-[#121212] border border-[#262626] rounded px-3 py-2">
-              <span className="text-[#737373] truncate text-[11px]">{view.link}</span>
+            <div className="flex items-center justify-between gap-2 bg-elevated border border-strong rounded-md px-3 py-2">
+              <span className="text-ink-muted truncate text-[11px]">{view.link}</span>
               <button
                 type="button"
                 onClick={() => {
                   void navigator.clipboard?.writeText(view.link).then(() => setCopiedLink(true)).catch(() => {});
                 }}
-                className="px-2 py-1 border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white shrink-0"
+                className="px-2 py-1 border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary shrink-0"
               >
                 {copiedLink ? "copied" : "copy link"}
               </button>
@@ -145,17 +145,17 @@ export const WsInviteCard: React.FC<WsInviteCardProps> = ({ ws, ttlSec = 60 }) =
           )}
 
           <div className="flex flex-col gap-1">
-            <div className="flex justify-between text-[11px] text-[#737373]">
+            <div className="flex justify-between text-[11px] text-ink-muted">
               <span>single-use invite expires</span>
               <span>{secondsLeft}s</span>
             </div>
-            <div className="w-full h-1 bg-[#171717] rounded overflow-hidden">
-              <div className="h-full bg-white transition-all duration-1000" style={{ width: `${pct}%` }} />
+            <div className="w-full h-1 bg-hover rounded-md overflow-hidden">
+              <div className="h-full bg-accent transition-all duration-1000" style={{ width: `${pct}%` }} />
             </div>
           </div>
         </>
       ) : (
-        <div className="py-4 text-center text-[#737373]">
+        <div className="py-4 text-center text-ink-muted">
           {busy ? "creating ws invite…" : invite ? "renewing…" : "invite expired"}
         </div>
       )}
@@ -164,7 +164,7 @@ export const WsInviteCard: React.FC<WsInviteCardProps> = ({ ws, ttlSec = 60 }) =
         type="button"
         disabled={busy}
         onClick={() => void mint()}
-        className="inline-flex items-center justify-center gap-1.5 py-2 border border-[#262626] rounded bg-[#141414] hover:bg-[#1f1f1f] text-white disabled:opacity-50"
+        className="inline-flex items-center justify-center gap-1.5 py-2 border border-strong rounded-md bg-elevated hover:bg-hover text-ink-primary disabled:opacity-50"
       >
         <RefreshCw className="w-3.5 h-3.5" />
         new invite

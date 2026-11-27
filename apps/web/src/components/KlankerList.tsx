@@ -50,13 +50,13 @@ const badgeClass = (kind: WsBadgeKind): string => {
   const base = "shrink-0 inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px]";
   switch (kind) {
     case "hub":
-      return `${base} text-white`;
+      return `${base} text-ink-primary`;
     case "synced":
-      return `${base} text-[#a3a3a3]`;
+      return `${base} text-ink-secondary`;
     case "offline":
       return `${base} text-red-400`;
     default:
-      return `${base} text-[#525252]`;
+      return `${base} text-ink-dim`;
   }
 };
 
@@ -158,27 +158,27 @@ export const KlankerList: React.FC<KlankerListProps> = ({
     open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />;
 
   return (
-    <aside className="h-full w-[80vw] max-w-72 md:w-60 shrink-0 flex flex-col border-r border-[#262626] bg-[#000000] select-none">
-      <div className="h-12 shrink-0 flex items-center px-3 border-b border-[#262626] font-mono text-xs font-semibold tracking-wider text-white">
+    <aside className="h-full w-[80vw] max-w-72 md:w-60 shrink-0 flex flex-col border-r border-strong bg-main select-none">
+      <div className="h-12 shrink-0 flex items-center px-3 border-b border-strong font-mono text-xs font-semibold tracking-wider text-ink-primary">
         <KlankerMark size={20} className="mr-2 shrink-0" />
         <span>KLANKER</span>
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain">
         <div className="px-3 pt-3 pb-1 flex items-center justify-between">
-          <span className="font-mono text-[10px] uppercase tracking-wider text-[#525252]">workspaces</span>
+          <span className="font-mono text-[10px] uppercase tracking-wider text-ink-dim">workspaces</span>
           <button
             type="button"
             onClick={onNewWorkspace}
             title="New workspace"
             aria-label="New workspace"
-            className="inline-flex h-6 w-6 items-center justify-center text-[#525252] hover:text-white transition-colors"
+            className="inline-flex h-6 w-6 items-center justify-center text-ink-dim hover:text-ink-primary transition-colors"
           >
             <Plus className="w-3 h-3" />
           </button>
         </div>
         {workspaces.length === 0 && (
-          <p className="px-3 py-2 text-[#525252] font-mono text-[11px]">no workspaces yet — create one.</p>
+          <p className="px-3 py-2 text-ink-dim font-mono text-[11px]">no workspaces yet — create one.</p>
         )}
         {workspaces.map((w) => {
           const wsOpen = openWs.has(w.id);
@@ -189,25 +189,25 @@ export const KlankerList: React.FC<KlankerListProps> = ({
               {/* Action buttons ride an absolute overlay: 0px reserved in
                   flex flow when not hovered, so the title keeps the full
                   row width (klanker#158 U03). Touch keeps them visible. */}
-              <div className="relative flex items-center hover:bg-[#181818] transition-colors">
+              <div className="relative flex items-center hover:bg-hover transition-colors">
                 <button
                   type="button"
                   onClick={() => toggleWs(w.id)}
                   className={`flex-1 min-w-0 min-h-11 md:min-h-8 text-left pl-3 pr-2 py-1.5 flex items-center gap-1 font-mono text-[11px] transition-colors ${
-                    selWs === w.id ? "text-white" : "text-[#a3a3a3]"
+                    selWs === w.id ? "text-ink-primary" : "text-ink-secondary"
                   }`}
                 >
                   {chevron(wsOpen)}
                   <span className="truncate">{w.label || w.id}</span>
                   <SyncBadge badge={badge} />
                 </button>
-                <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center rounded bg-black/85 opacity-100 md:hidden md:group-hover:flex md:group-focus-within:flex">
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center rounded-md bg-black/85 opacity-100 md:hidden md:group-hover:flex md:group-focus-within:flex">
                   <button
                     type="button"
                     onClick={() => onWorkspaceSettings(w.id)}
                     title="Share / workspace settings"
                     aria-label="Workspace settings"
-                    className="inline-flex h-8 w-8 items-center justify-center text-[#525252] hover:text-white transition-colors"
+                    className="inline-flex h-8 w-8 items-center justify-center text-ink-dim hover:text-ink-primary transition-colors"
                   >
                     <Settings2 className="w-3 h-3" />
                   </button>
@@ -216,7 +216,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                     onClick={() => onDeleteWorkspace(w.id)}
                     title="Archive workspace"
                     aria-label="Archive workspace"
-                    className="inline-flex h-8 w-8 items-center justify-center text-[#525252] hover:text-white transition-colors"
+                    className="inline-flex h-8 w-8 items-center justify-center text-ink-dim hover:text-ink-primary transition-colors"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -230,38 +230,38 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                     const sessions = sessionRowsOf(w.id, p.id);
                     return (
                       <div key={p.id} className="group/persona">
-                        <div className="relative flex items-center hover:bg-[#181818] transition-colors">
+                        <div className="relative flex items-center hover:bg-hover transition-colors">
                           <button
                             type="button"
                             onClick={() => togglePersona(w.id, p.id)}
                             className={`flex-1 min-w-0 min-h-11 md:min-h-8 text-left pl-6 pr-2 py-1.5 flex items-center gap-1 font-mono text-[11px] transition-colors ${
-                              selPersona === p.id && selWs === w.id ? "text-white" : "text-[#a3a3a3]"
+                              selPersona === p.id && selWs === w.id ? "text-ink-primary" : "text-ink-secondary"
                             }`}
                           >
                             {chevron(pOpen)}
                             <span className="truncate">{p.name || p.id}</span>
                             {p.role && (
-                              <span className="shrink-0 text-[9px] uppercase tracking-wider text-[#525252]">
+                              <span className="shrink-0 text-[9px] uppercase tracking-wider text-ink-dim">
                                 {p.role}
                               </span>
                             )}
                           </button>
                           {(p.unread ?? 0) > 0 && (
                             <span
-                              className="shrink-0 min-w-4 px-1 text-center rounded-full bg-white text-black text-[9px] font-mono"
+                              className="shrink-0 min-w-4 px-1 text-center rounded-full bg-accent text-accent-ink text-[9px] font-mono"
                               title="open/running handoffs"
                             >
                               {p.unread}
                             </span>
                           )}
-                          <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center rounded bg-black/85 opacity-100 md:hidden md:group-hover/persona:flex md:group-focus-within/persona:flex">
+                          <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center rounded-md bg-black/85 opacity-100 md:hidden md:group-hover/persona:flex md:group-focus-within/persona:flex">
                             {onEditPersona && (
                               <button
                                 type="button"
                                 onClick={() => onEditPersona(w.id, p.id)}
                                 title="Edit persona"
                                 aria-label={`Edit persona ${p.name || p.id}`}
-                                className="inline-flex h-8 w-8 items-center justify-center text-[#525252] hover:text-white transition-colors"
+                                className="inline-flex h-8 w-8 items-center justify-center text-ink-dim hover:text-ink-primary transition-colors"
                               >
                                 <Pencil className="w-3 h-3" />
                               </button>
@@ -271,7 +271,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                               onClick={() => onDeletePersona(w.id, p.id)}
                               title="Archive persona"
                               aria-label="Archive persona"
-                              className="inline-flex h-8 w-8 items-center justify-center text-[#525252] hover:text-white transition-colors"
+                              className="inline-flex h-8 w-8 items-center justify-center text-ink-dim hover:text-ink-primary transition-colors"
                             >
                               <X className="w-3 h-3" />
                             </button>
@@ -282,7 +282,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                             <button
                               type="button"
                               onClick={() => onNewChat(w.id, p.id)}
-                              className="min-h-11 md:min-h-8 w-full text-left pl-9 pr-2 py-1.5 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
+                              className="min-h-11 md:min-h-8 w-full text-left pl-9 pr-2 py-1.5 font-mono text-[11px] text-ink-muted hover:bg-hover hover:text-ink-primary transition-colors"
                             >
                               new chat
                             </button>
@@ -292,7 +292,7 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                 <div
                                   key={s.chatId}
                                   className={`group relative flex items-center transition-colors ${
-                                    chatSelected ? "bg-[#141414]" : "hover:bg-[#181818]"
+                                    chatSelected ? "bg-elevated" : "hover:bg-hover"
                                   }`}
                                 >
                                   <button
@@ -300,13 +300,13 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                     onClick={() => onSelectChat(w.id, p.id, s.chatId)}
                                     title={s.session}
                                     className={`flex-1 min-w-0 min-h-11 md:min-h-8 text-left pl-9 pr-1 py-1.5 font-mono text-[11px] flex items-center gap-1 transition-colors ${
-                                      chatSelected ? "text-white" : "text-[#a3a3a3]"
+                                      chatSelected ? "text-ink-primary" : "text-ink-secondary"
                                     }`}
                                   >
                                     <span className="truncate">{s.label}</span>
                                     {s.host && (
                                       <span
-                                        className="shrink-0 max-w-[76px] truncate px-1.5 py-0.5 rounded-full border border-[#262626] text-[9px] uppercase tracking-wider text-[#737373]"
+                                        className="shrink-0 max-w-[76px] truncate px-1.5 py-0.5 rounded-full border border-strong text-[9px] uppercase tracking-wider text-ink-muted"
                                         title={`bound host: ${s.host}`}
                                       >
                                         @{s.host}
@@ -314,15 +314,15 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                                     )}
                                   </button>
                                   <div
-                                    className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center rounded bg-black/85 opacity-100 md:hidden md:group-hover:flex md:group-focus-within:flex`}
+                                    className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center rounded-md bg-black/85 opacity-100 md:hidden md:group-hover:flex md:group-focus-within:flex`}
                                   >
                                     <button
                                       type="button"
                                       onClick={() => onDeleteChat(w.id, p.id, s)}
                                       title="Delete session"
                                       aria-label="Delete session"
-                                      className={`inline-flex h-8 w-8 items-center justify-center hover:text-white transition-colors ${
-                                        chatSelected ? "text-[#a3a3a3]" : "text-[#525252]"
+                                      className={`inline-flex h-8 w-8 items-center justify-center hover:text-ink-primary transition-colors ${
+                                        chatSelected ? "text-ink-secondary" : "text-ink-dim"
                                       }`}
                                     >
                                       <X className="w-3 h-3" />
@@ -337,12 +337,12 @@ export const KlankerList: React.FC<KlankerListProps> = ({
                     );
                   })}
                   {personas === undefined && (
-                    <div className="pl-6 py-0.5 font-mono text-[11px] text-[#525252]">…</div>
+                    <div className="pl-6 py-0.5 font-mono text-[11px] text-ink-dim">…</div>
                   )}
                   <button
                     type="button"
                     onClick={() => onNewPersona(w.id)}
-                    className="flex min-h-11 md:min-h-8 w-full items-center gap-1 text-left pl-6 pr-2 py-1.5 font-mono text-[11px] text-[#737373] hover:bg-[#181818] hover:text-white transition-colors"
+                    className="flex min-h-11 md:min-h-8 w-full items-center gap-1 text-left pl-6 pr-2 py-1.5 font-mono text-[11px] text-ink-muted hover:bg-hover hover:text-ink-primary transition-colors"
                   >
                     <Plus className="w-3 h-3" /> persona
                   </button>

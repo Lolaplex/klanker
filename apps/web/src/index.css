@@ -54,18 +54,97 @@
   color: #e5e5e5;
 }
 
+/* Inverted white mode retint (klanker#170 U16): the same semantic slots,
+   dark ink on light paper. */
+[data-theme="light"] .klanker-md .katex,
+[data-theme="light"] .klanker-md code[class*="language-"],
+[data-theme="light"] .klanker-md pre[class*="language-"] {
+  color: #262626;
+}
+[data-theme="light"] .klanker-md .token.comment,
+[data-theme="light"] .klanker-md .token.prolog,
+[data-theme="light"] .klanker-md .token.cdata {
+  color: #a3a3a3;
+}
+[data-theme="light"] .klanker-md .token.keyword,
+[data-theme="light"] .klanker-md .token.tag,
+[data-theme="light"] .klanker-md .token.important {
+  color: #000000;
+}
+[data-theme="light"] .klanker-md .token.string,
+[data-theme="light"] .klanker-md .token.char,
+[data-theme="light"] .klanker-md .token.attr-value,
+[data-theme="light"] .klanker-md .token.regex {
+  color: #525252;
+}
+[data-theme="light"] .klanker-md .token.function,
+[data-theme="light"] .klanker-md .token.class-name,
+[data-theme="light"] .klanker-md .token.selector,
+[data-theme="light"] .klanker-md .token.attr-name {
+  color: #262626;
+}
+[data-theme="light"] .klanker-md .token.operator,
+[data-theme="light"] .klanker-md .token.punctuation {
+  color: #737373;
+}
+[data-theme="light"] .klanker-md .token.number,
+[data-theme="light"] .klanker-md .token.boolean,
+[data-theme="light"] .klanker-md .token.constant {
+  color: #171717;
+}
+
 @layer base {
-  :root {
+  /* Klanker semantic monochrome tokens (klanker#170 U16). Dark is the
+     default; [data-theme="light"] inverts the same semantic slots. Zero
+     hue anywhere — every shade is pure neutral. */
+  :root, [data-theme="dark"] {
     --bg-main: #000000;
-    --bg-card: #0a0a0a;
-    --bg-surface: #121212;
-    --border-dim: #262626;
-    --border-strong: #404040;
-    --ink-high: #ffffff;
-    --ink-mid: #a3a3a3;
-    --ink-low: #525252;
+    --bg-surface: #0a0a0a;
+    --bg-elevated: #141414;
+    --bg-hover: #1a1a1a;
+    --border-subtle: #1f1f1f;
+    --border-strong: #333333;
+    --ink-primary: #ffffff;
+    --ink-secondary: #a3a3a3;
+    --ink-muted: #737373;
+    --ink-dim: #525252;
+    --accent: #ffffff;
+    --accent-ink: #000000;
+    --accent-hover: #e5e5e5;
+    --danger: #ef4444;
+    --warn: #f59e0b;
+    --success: #10b981;
+    /* legacy aliases — converging consumers read the semantic slots */
+    --bg-card: var(--bg-surface);
+    --border-dim: var(--border-strong);
+    --ink-high: var(--ink-primary);
+    --ink-mid: var(--ink-secondary);
+    --ink-low: var(--ink-dim);
     --sab: env(safe-area-inset-bottom, 0px);
     --kb-dur: 0.42s;
+    color-scheme: dark;
+  }
+
+  [data-theme="light"] {
+    --bg-main: #ffffff;
+    --bg-surface: #f7f7f7;
+    --bg-elevated: #efefef;
+    --bg-hover: #e5e5e5;
+    --border-subtle: #e5e5e5;
+    --border-strong: #c8c8c8;
+    --ink-primary: #000000;
+    --ink-secondary: #525252;
+    --ink-muted: #737373;
+    --ink-dim: #a3a3a3;
+    --accent: #000000;
+    --accent-ink: #ffffff;
+    --accent-hover: #333333;
+    --danger: #b91c1c;
+    --warn: #b45309;
+    --success: #047857;
+    --sab: env(safe-area-inset-bottom, 0px);
+    --kb-dur: 0.42s;
+    color-scheme: light;
   }
 
   [data-kb="open"] {
@@ -165,13 +244,12 @@
   }
 
 
-  /* 44px minimum touch targets wherever the primary input cannot hover.
-     Inline anchors are unaffected: min-* has no effect on inline boxes. */
+  /* The global 44px min-width/min-height touch rule is gone (klanker#170
+     U16): it collapsed inline remove-icons and small checkboxes. Touch
+     sizing is explicit now via the .touch-target utility where the
+     surface actually needs it. */
   @media (hover: none) {
-    button,
-    [role="button"],
-    select,
-    input {
+    .touch-target {
       min-height: 44px;
       min-width: 44px;
     }
@@ -207,16 +285,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #000000;
+  background: var(--bg-main);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #262626;
+  background: var(--border-strong);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #404040;
+  background: var(--ink-muted);
 }
 
 .klanker-md {
@@ -259,9 +337,9 @@
 }
 
 .klanker-md blockquote {
-  border-left: 2px solid #333333;
+  border-left: 2px solid var(--border-strong);
   padding-left: 0.75rem;
-  color: #a3a3a3;
+  color: var(--ink-secondary);
 }
 
 .klanker-md h1,
@@ -271,14 +349,14 @@
 }
 
 .klanker-md :not(pre) > code {
-  background: #141414;
+  background: var(--bg-elevated);
   border-radius: 4px;
   padding: 0.1em 0.35em;
 }
 
 .klanker-md th,
 .klanker-md td {
-  border: 1px solid #262626;
+  border: 1px solid var(--border-strong);
   padding: 0.25rem 0.5rem;
   text-align: left;
 }
@@ -298,16 +376,16 @@ input[type="checkbox"] {
   width: 0.875rem;
   height: 0.875rem;
   flex-shrink: 0;
-  border: 1px solid #525252;
+  border: 1px solid var(--ink-dim);
   border-radius: 2px;
-  background-color: #0a0a0a;
+  background-color: var(--bg-surface);
   cursor: pointer;
   position: relative;
   vertical-align: middle;
 }
 input[type="checkbox"]:checked {
-  background-color: #ffffff;
-  border-color: #ffffff;
+  background-color: var(--accent);
+  border-color: var(--accent);
 }
 input[type="checkbox"]:checked::after {
   content: "";
@@ -316,7 +394,7 @@ input[type="checkbox"]:checked::after {
   top: 0.5px;
   width: 5px;
   height: 8px;
-  border: solid #000000;
+  border: solid var(--accent-ink);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
 }

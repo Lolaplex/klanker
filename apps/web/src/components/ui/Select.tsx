@@ -37,22 +37,22 @@ export function Select({
     >
       <BaseSelect.Trigger
         aria-label={ariaLabel}
-        className={`w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none flex items-center justify-between gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        className={`w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none flex items-center justify-between gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
       >
         <BaseSelect.Value placeholder={placeholder} />
-        <BaseSelect.Icon className="text-[#525252]">
+        <BaseSelect.Icon className="text-ink-dim">
           <ChevronDown className="w-3 h-3" />
         </BaseSelect.Icon>
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
         <BaseSelect.Positioner className="z-[70]" sideOffset={4}>
-          <BaseSelect.Popup className="min-w-40 max-h-64 overflow-y-auto border border-[#262626] bg-[#0a0a0a] rounded-md shadow-lg font-mono text-xs py-1 outline-none">
+          <BaseSelect.Popup className="min-w-40 max-h-64 overflow-y-auto border border-strong bg-surface rounded-md shadow-lg font-mono text-xs py-1 outline-none">
             {options.map((o) => (
               <BaseSelect.Item
                 key={o.value}
                 value={o.value}
                 disabled={o.disabled}
-                className="flex items-center gap-2 px-2 py-1.5 min-h-8 text-[#a3a3a3] data-[highlighted]:bg-[#181818] data-[highlighted]:text-white data-[selected]:text-white cursor-pointer outline-none data-[disabled]:opacity-40 data-[disabled]:cursor-not-allowed"
+                className="flex items-center gap-2 px-2 py-1.5 min-h-8 text-ink-secondary data-[highlighted]:bg-hover data-[highlighted]:text-ink-primary data-[selected]:text-ink-primary cursor-pointer outline-none data-[disabled]:opacity-40 data-[disabled]:cursor-not-allowed"
               >
                 <BaseSelect.ItemIndicator className="w-4 shrink-0">
                   <Check className="w-3.5 h-3.5" />

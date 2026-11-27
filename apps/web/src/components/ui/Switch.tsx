@@ -21,9 +21,9 @@ export function Switch({
       onCheckedChange={onCheckedChange}
       disabled={disabled}
       aria-label={ariaLabel}
-      className="inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-[#262626] bg-[#121212] px-0.5 cursor-pointer transition-colors data-[checked]:bg-white data-[checked]:border-white disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:border-white"
+      className="inline-flex h-5 w-9 shrink-0 items-center rounded-full border border-strong bg-elevated px-0.5 cursor-pointer transition-colors data-[checked]:bg-accent data-[checked]:border-accent disabled:opacity-50 disabled:cursor-not-allowed outline-none focus-visible:border-accent"
     >
-      <BaseSwitch.Thumb className="block h-3.5 w-3.5 rounded-full bg-[#737373] transition-transform data-[checked]:translate-x-4 data-[checked]:bg-black" />
+      <BaseSwitch.Thumb className="block h-3.5 w-3.5 rounded-full bg-ink-muted transition-transform data-[checked]:translate-x-4 data-[checked]:bg-main" />
     </BaseSwitch.Root>
   );
 }

@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Radar, X } from "lucide-react";
+import { Radar } from "lucide-react";
 import { DiscoveredPeer, KlankerInstance } from "../types/klanker";
 import { api } from "../services/api";
 import {parseBareCode, parsePairInput, relayMountError, deviceConnectLabel } from "../pairLink";
+import { Dialog } from "./ui/Dialog";
 
 interface NewKlankerModalProps {
   isOpen: boolean;
@@ -212,18 +213,10 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="modal-card flex flex-col bg-[#0a0a0a] border border-[#262626] w-full max-w-sm rounded-lg shadow-2xl overflow-hidden font-mono text-xs">
-        <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
-          <span className="text-white font-semibold tracking-wider">CONNECT</span>
-          <button type="button" onClick={close} className="inline-flex h-11 w-11 items-center justify-center text-[#737373] hover:text-white transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
+    <Dialog open onClose={close} title="CONNECT">
         <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 space-y-4">
           <form onSubmit={(e) => void connect(e)} className="space-y-2">
-            <label className="text-[11px] text-[#737373] uppercase tracking-wider block">
+            <label className="text-[11px] text-ink-muted uppercase tracking-wider block">
               {pickedPeer ? `invite code for ${pickedPeer.hostname}` : "connect to hub / pair device"}
             </label>
             <input
@@ -233,7 +226,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
               placeholder={pickedPeer ? "XXXX-XXXX" : "https://host/#pair=… or CODE@host"}
               value={pairInput}
               onChange={(e) => setPairInput(e.target.value)}
-              className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+              className="w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
             />
             <input
               type="text"
@@ -241,26 +234,26 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
               placeholder="device name — how the hub lists this machine"
               value={deviceName}
               onChange={(e) => setDeviceName(e.target.value)}
-              className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+              className="w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
             />
             {pickedPeer && (
-              <p className="text-[10px] text-[#525252]">
+              <p className="text-[10px] text-ink-dim">
                 mint an invite on {pickedPeer.endpoint.replace(/^https?:\/\//, "")} (Devices → + Pair device), then type it here.
               </p>
             )}
-            {note && <p className="text-[11px] text-[#a3a3a3]">{note}</p>}
+            {note && <p className="text-[11px] text-ink-secondary">{note}</p>}
             {error && <p className="text-[11px] text-red-500">{error}</p>}
             <button
               type="submit"
               disabled={busy}
-              className="w-full min-h-9 px-4 py-1.5 bg-white hover:bg-[#e5e5e5] text-black font-semibold rounded transition-colors disabled:opacity-50"
+              className="w-full min-h-9 px-4 py-1.5 bg-accent hover:bg-accent-hover text-accent-ink font-semibold rounded-md transition-colors disabled:opacity-50"
             >
               {busy ? "connecting…" : "Connect"}
             </button>
           </form>
 
-          <div className="border border-[#262626] rounded p-2">
-            <div className="px-1 pb-1 text-[10px] uppercase tracking-wider text-[#525252]">Nearby Tailscale devices</div>
+          <div className="border border-strong rounded-md p-2">
+            <div className="px-1 pb-1 text-[10px] uppercase tracking-wider text-ink-dim">Nearby Tailscale devices</div>
             {offers && offers.length > 0 ? (
               <div className="space-y-1">
                 {offers.map((peer) => (
@@ -268,20 +261,20 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
                     key={peer.endpoint}
                     type="button"
                     onClick={() => pick(peer)}
-                    className={`w-full text-left min-h-9 px-2 py-1.5 rounded transition-colors ${
+                    className={`w-full text-left min-h-9 px-2 py-1.5 rounded-md transition-colors ${
                       pickedPeer?.endpoint === peer.endpoint
-                        ? "bg-[#1f1f1f] text-white"
-                        : "text-[#a3a3a3] hover:bg-[#141414] hover:text-white"
+                        ? "bg-hover text-ink-primary"
+                        : "text-ink-secondary hover:bg-elevated hover:text-ink-primary"
                     }`}
                   >
                     {peer.hostname}
-                    <span className="text-[#525252]"> {peer.endpoint.replace(/^https?:\/\//, "")}</span>
+                    <span className="text-ink-dim"> {peer.endpoint.replace(/^https?:\/\//, "")}</span>
                   </button>
                 ))}
               </div>
             ) : (
               <div className="flex items-center justify-center min-h-9 py-1" aria-label="Scanning for peers">
-                <Radar className="w-4 h-4 text-[#525252] animate-pulse" />
+                <Radar className="w-4 h-4 text-ink-dim animate-pulse" />
               </div>
             )}
           </div>
@@ -289,69 +282,69 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
           <button
             type="button"
             onClick={() => setAdvanced((v) => !v)}
-            className="text-[10px] text-[#525252] hover:text-[#a3a3a3] uppercase tracking-wider"
+            className="text-[10px] text-ink-dim hover:text-ink-secondary uppercase tracking-wider"
           >
             {advanced ? "− hide ops remote" : "+ advanced / ops remote"}
           </button>
 
           {advanced && (
-            <div className="space-y-3 border border-[#262626] rounded p-2.5">
-              <p className="text-[10px] text-[#525252]">
+            <div className="space-y-3 border border-strong rounded-md p-2.5">
+              <p className="text-[10px] text-ink-dim">
                 legacy direct mount — for relays without hub channel support. Pair links redeem
                 straight into a stored remote; the manual form mounts a url+secret.
               </p>
               <form onSubmit={(e) => void connectDirect(e)} className="space-y-2">
-                <label className="text-[11px] text-[#737373] uppercase tracking-wider block">remote pair link / code</label>
+                <label className="text-[11px] text-ink-muted uppercase tracking-wider block">remote pair link / code</label>
                 <input
                   type="text"
                   placeholder="https://host/#pair=… or CODE@host"
                   value={advPairInput}
                   onChange={(e) => setAdvPairInput(e.target.value)}
-                  className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+                  className="w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
                 />
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full min-h-9 px-4 py-1.5 bg-[#1f1f1f] hover:bg-[#262626] text-white rounded transition-colors disabled:opacity-50"
+                  className="w-full min-h-9 px-4 py-1.5 bg-hover hover:bg-hover text-ink-primary rounded-md transition-colors disabled:opacity-50"
                 >
                   {busy ? "pairing…" : "Pair remote"}
                 </button>
               </form>
-              <form onSubmit={handleManual} className="space-y-3 border-t border-[#262626] pt-3">
+              <form onSubmit={handleManual} className="space-y-3 border-t border-strong pt-3">
                 <div>
-                  <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Name</label>
+                  <label className="text-[11px] text-ink-muted uppercase tracking-wider block mb-1">Name</label>
                   <input
                     type="text"
                     required
                     placeholder="Name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+                    className="w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Relay URL</label>
+                  <label className="text-[11px] text-ink-muted uppercase tracking-wider block mb-1">Relay URL</label>
                   <input
                     type="text"
                     placeholder="https://relay.example.com"
                     value={url}
                     onChange={(e) => setUrl(e.target.value)}
-                    className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+                    className="w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-[#737373] uppercase tracking-wider block mb-1">Instance secret</label>
+                  <label className="text-[11px] text-ink-muted uppercase tracking-wider block mb-1">Instance secret</label>
                   <input
                     type="password"
                     placeholder="RELAY_SECRET of that instance"
                     value={secret}
                     onChange={(e) => setSecret(e.target.value)}
-                    className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+                    className="w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
                   />
                 </div>
                 <button
                   type="submit"
-                  className="w-full min-h-9 px-4 py-1.5 bg-[#1f1f1f] hover:bg-[#262626] text-white rounded transition-colors"
+                  className="w-full min-h-9 px-4 py-1.5 bg-hover hover:bg-hover text-ink-primary rounded-md transition-colors"
                 >
                   Add manually
                 </button>
@@ -359,7 +352,6 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

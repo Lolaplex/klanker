@@ -30,7 +30,7 @@ export function Popover({
       <BasePopover.Portal>
         <BasePopover.Positioner className="z-[70]" sideOffset={4} align={align} side={side}>
           <BasePopover.Popup
-            className={`${widthClass} border border-[#262626] bg-[#0a0a0a] rounded-md shadow-lg font-mono text-xs outline-none`}
+            className={`${widthClass} border border-strong bg-surface rounded-md shadow-lg font-mono text-xs outline-none`}
           >
             {children}
           </BasePopover.Popup>

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Plus, RefreshCw, X } from "lucide-react";
 import type { KlankerInstance, StoreItem, StorePaneResult } from "../types/klanker";
 import { api } from "../services/api";
+import { Tabs } from "./ui/Tabs";
 
 type TabKind = "event" | "task" | "note" | "decision";
 const TABS: readonly { id: TabKind; label: string }[] = [
@@ -95,16 +96,16 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
   };
 
   return (
-    <aside className="fixed inset-0 z-50 md:static md:z-auto w-full md:w-96 shrink-0 border-l border-[#262626] bg-[#0a0a0a] flex flex-col font-mono text-xs min-h-0">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-[#262626]">
-        <span className="text-white uppercase tracking-wider truncate">
+    <aside className="fixed inset-0 z-50 md:static md:z-auto w-full md:w-96 shrink-0 border-l border-strong bg-surface flex flex-col font-mono text-xs min-h-0">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-strong">
+        <span className="text-ink-primary uppercase tracking-wider truncate">
           store · {workspaceId || "default"}
         </span>
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => void loadItems()}
-            className="p-1 text-[#737373] hover:text-white"
+            className="p-1 text-ink-muted hover:text-ink-primary"
             aria-label="Refresh store"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -112,7 +113,7 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1 text-[#737373] hover:text-white"
+            className="p-1 text-ink-muted hover:text-ink-primary"
             aria-label="Close workspace pane"
           >
             <X className="w-4 h-4" />
@@ -120,35 +121,27 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
         </div>
       </div>
 
-      <div className="grid grid-cols-4 border-b border-[#262626] bg-[#000000]">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={`py-2 text-[11px] border-b-2 transition-colors ${
-              tab === t.id ? "border-white text-white" : "border-transparent text-[#737373] hover:text-[#d4d4d4]"
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as typeof tab)}
+        ariaLabel="workspace pane sections"
+        tabs={TABS.map((t) => ({ value: t.id, label: t.label }))}
+      />
 
       {tab !== "decision" && (
-        <form onSubmit={(e) => void quickAdd(e)} className="p-2.5 border-b border-[#262626] flex flex-col gap-1.5">
+        <form onSubmit={(e) => void quickAdd(e)} className="p-2.5 border-b border-strong flex flex-col gap-1.5">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={`new ${tab} title…`}
-            className="bg-[#121212] border border-[#262626] rounded px-2 py-1 text-white outline-none focus:border-[#525252]"
+            className="bg-elevated border border-strong rounded-md px-2 py-1 text-ink-primary outline-none focus:border-strong"
           />
           {tab === "event" && (
             <input
               value={when}
               onChange={(e) => setWhen(e.target.value)}
               placeholder="2026-12-01T09:00:00Z (optional)"
-              className="bg-[#121212] border border-[#262626] rounded px-2 py-1 text-white outline-none focus:border-[#525252]"
+              className="bg-elevated border border-strong rounded-md px-2 py-1 text-ink-primary outline-none focus:border-strong"
             />
           )}
           {tab === "note" && (
@@ -156,13 +149,13 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
               value={bodyText}
               onChange={(e) => setBodyText(e.target.value)}
               placeholder="note body…"
-              className="bg-[#121212] border border-[#262626] rounded px-2 py-1 text-white outline-none focus:border-[#525252]"
+              className="bg-elevated border border-strong rounded-md px-2 py-1 text-ink-primary outline-none focus:border-strong"
             />
           )}
           <button
             type="submit"
             disabled={saving || !title.trim()}
-            className="inline-flex items-center justify-center gap-1 py-1 bg-[#141414] hover:bg-[#1f1f1f] border border-[#262626] rounded text-white disabled:opacity-40"
+            className="inline-flex items-center justify-center gap-1 py-1 bg-elevated hover:bg-hover border border-strong rounded-md text-ink-primary disabled:opacity-40"
           >
             <Plus className="w-3 h-3" />
             add {tab}
@@ -170,24 +163,24 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
         </form>
       )}
 
-      {error && <div className="px-3 py-1.5 text-red-500 border-b border-[#262626]">{error}</div>}
+      {error && <div className="px-3 py-1.5 text-red-500 border-b border-strong">{error}</div>}
 
-      <div className="flex-1 overflow-y-auto divide-y divide-[#171717]">
+      <div className="flex-1 overflow-y-auto divide-y divide-subtle">
         {loading && items.length === 0 ? (
-          <div className="p-4 text-[#525252]">loading…</div>
+          <div className="p-4 text-ink-dim">loading…</div>
         ) : items.length === 0 ? (
-          <div className="p-4 text-[#525252]">no {tab} records</div>
+          <div className="p-4 text-ink-dim">no {tab} records</div>
         ) : (
           items.map((item) => {
             const label = String(item.attrs?.title || item.attrs?.name || item.attrs?.body || item.id);
             const meta = String(item.attrs?.when || item.attrs?.status || item.ts || "");
             return (
-              <div key={item.id} className="p-2.5 flex flex-col gap-1 hover:bg-[#111111]">
+              <div key={item.id} className="p-2.5 flex flex-col gap-1 hover:bg-hover">
                 <div className="flex items-start justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => void inspectItem(item.id, tab === "event" || tab === "task" ? "ical" : "markdown")}
-                    className="text-left text-white hover:underline truncate flex-1"
+                    className="text-left text-ink-primary hover:underline truncate flex-1"
                   >
                     {label}
                   </button>
@@ -197,14 +190,14 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
                         key={fmt}
                         type="button"
                         onClick={() => void inspectItem(item.id, fmt)}
-                        className="px-1 py-0.5 text-[10px] border border-[#262626] rounded text-[#737373] hover:text-white"
+                        className="px-1 py-0.5 text-[10px] border border-strong rounded-md text-ink-muted hover:text-ink-primary"
                       >
                         {fmt}
                       </button>
                     ))}
                   </div>
                 </div>
-                {meta && <div className="text-[11px] text-[#737373] truncate">{meta}</div>}
+                {meta && <div className="text-[11px] text-ink-muted truncate">{meta}</div>}
               </div>
             );
           })
@@ -212,12 +205,12 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
       </div>
 
       {preview && (
-        <div className="border-t border-[#262626] bg-[#000000] p-2.5 flex flex-col gap-1.5 max-h-60">
-          <div className="flex items-center justify-between text-[11px] text-[#a3a3a3]">
+        <div className="border-t border-strong bg-main p-2.5 flex flex-col gap-1.5 max-h-60">
+          <div className="flex items-center justify-between text-[11px] text-ink-secondary">
             <span className="truncate">
               {preview.entity} · {previewTarget}
             </span>
-            <button type="button" onClick={() => setPreview(null)} className="text-[#525252] hover:text-white">
+            <button type="button" onClick={() => setPreview(null)} className="text-ink-dim hover:text-ink-primary">
               close
             </button>
           </div>
@@ -226,10 +219,10 @@ export const WorkspacePane: React.FC<WorkspacePaneProps> = ({
               sandbox=""
               srcDoc={preview.content}
               title="Store HTML projection preview"
-              className="w-full h-40 bg-white border border-[#262626] rounded"
+              className="w-full h-40 bg-accent border border-strong rounded-md"
             />
           ) : (
-            <pre className="text-[11px] text-[#d4d4d4] whitespace-pre-wrap overflow-y-auto max-h-40">
+            <pre className="text-[11px] text-ink-primary whitespace-pre-wrap overflow-y-auto max-h-40">
               {preview.content}
             </pre>
           )}

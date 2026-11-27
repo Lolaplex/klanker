@@ -123,15 +123,15 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
 
   if (pairPrompt) {
     return (
-      <div className="fixed inset-0 flex items-center justify-center bg-[#000000] text-white font-sans p-4">
+      <div className="fixed inset-0 flex items-center justify-center bg-main text-ink-primary font-sans p-4">
         <div className="w-80 flex flex-col gap-3 font-mono text-xs">
-          <div className="text-[#a3a3a3] tracking-widest uppercase">KLANKER</div>
-          <div className="text-white">pair device or web login?</div>
-          <p className="text-[#737373] leading-relaxed">
+          <div className="text-ink-secondary tracking-widest uppercase">KLANKER</div>
+          <div className="text-ink-primary">pair device or web login?</div>
+          <p className="text-ink-muted leading-relaxed">
             This link {pairPrompt.ws ? (
-              <>joins workspace <span className="text-white">{pairPrompt.ws}</span> — it pairs a <span className="text-white">device</span>, not a browser.</>
+              <>joins workspace <span className="text-ink-primary">{pairPrompt.ws}</span> — it pairs a <span className="text-ink-primary">device</span>, not a browser.</>
             ) : (
-              <>carries a <span className="text-white">{pairPrompt.mode || "device"}</span> pairing token — it pairs a device, not a browser.</>
+              <>carries a <span className="text-ink-primary">{pairPrompt.mode || "device"}</span> pairing token — it pairs a device, not a browser.</>
             )}{" "}
             It is single-use: redeeming it on the wrong surface consumes it.
           </p>
@@ -141,7 +141,7 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
               const inviteUrl = fullInviteUrl(window.location.origin, pairPrompt.hash);
               void navigator.clipboard?.writeText(inviteUrl).then(() => setPairCopied(true)).catch(() => {});
             }}
-            className="border border-[#262626] px-3 py-2 text-left hover:bg-[#171717]"
+            className="border border-strong px-3 py-2 text-left hover:bg-hover"
           >
             {pairCopied ? "invite copied — paste it in the app's Connect flow" : "copy invite for the app — Connect → pair device"}
           </button>
@@ -149,7 +149,7 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
             type="button"
             disabled={loginBusy}
             onClick={() => redeem(pairPrompt.token)}
-            className="border border-[#262626] px-3 py-2 hover:bg-[#171717] disabled:opacity-50"
+            className="border border-strong px-3 py-2 hover:bg-hover disabled:opacity-50"
           >
             {loginBusy ? "…" : "web login — redeem here (consumes the link)"}
           </button>
@@ -159,7 +159,7 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
               setPairPrompt(null);
               setLoginBusy(false);
             }}
-            className="text-[#525252] hover:text-white text-left"
+            className="text-ink-dim hover:text-ink-primary text-left"
           >
             dismiss — plain token login
           </button>
@@ -170,30 +170,30 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
   }
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center bg-[#000000] text-white font-sans">
+    <div className="fixed inset-0 flex items-center justify-center bg-main text-ink-primary font-sans">
       {auth === "needed" ? (
         <form onSubmit={submitLogin} className="w-72 flex flex-col gap-3 font-mono text-xs">
-          <div className="text-[#a3a3a3] tracking-widest uppercase">KLANKER</div>
+          <div className="text-ink-secondary tracking-widest uppercase">KLANKER</div>
           <input
             type="password"
             value={loginToken}
             onChange={(e) => setLoginToken(e.target.value)}
             placeholder="relay web token"
             autoFocus
-            className="bg-[#0a0a0a] border border-[#262626] px-3 py-2 outline-none focus:border-[#525252]"
+            className="bg-surface border border-strong px-3 py-2 outline-none focus:border-strong"
           />
           {loginError && <div className="text-red-500">{loginError}</div>}
           {cookieWarning && <div className="text-amber-500">{cookieWarning}</div>}
           <button
             type="submit"
             disabled={loginBusy}
-            className="border border-[#262626] px-3 py-2 hover:bg-[#171717] disabled:opacity-50"
+            className="border border-strong px-3 py-2 hover:bg-hover disabled:opacity-50"
           >
             {loginBusy ? "..." : "unlock"}
           </button>
         </form>
       ) : (
-        <div className="text-[#525252] font-mono text-xs">…</div>
+        <div className="text-ink-dim font-mono text-xs">…</div>
       )}
     </div>
   );

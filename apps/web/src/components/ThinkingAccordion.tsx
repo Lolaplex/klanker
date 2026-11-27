@@ -37,22 +37,22 @@ export function ThinkingAccordion({
   const secs = elapsed === null ? null : (elapsed / 1000).toFixed(1);
 
   return (
-    <div className="mb-2 overflow-hidden rounded border border-[#1f1f1f] bg-black">
+    <div className="mb-2 overflow-hidden rounded-md border border-subtle bg-main">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label="Toggle thinking"
-        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[10px] uppercase tracking-wider text-[#737373] hover:text-white transition-colors"
+        className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[10px] uppercase tracking-wider text-ink-muted hover:text-ink-primary transition-colors"
       >
         {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
         <span>thinking{streaming ? "…" : ""}</span>
-        {secs !== null && <span className="text-[#525252] normal-case">{secs}s</span>}
+        {secs !== null && <span className="text-ink-dim normal-case">{secs}s</span>}
       </button>
       {open && (
         <div
           ref={bodyRef}
-          className="max-h-48 overflow-y-auto border-t border-[#1f1f1f] px-3 py-2 text-[11px] leading-relaxed text-[#737373] whitespace-pre-wrap break-words"
+          className="max-h-48 overflow-y-auto border-t border-subtle px-3 py-2 text-[11px] leading-relaxed text-ink-muted whitespace-pre-wrap break-words"
         >
           {thinking}
         </div>

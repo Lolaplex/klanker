@@ -3,22 +3,20 @@ import { ArrowRight, Plus, RefreshCw } from "lucide-react";
 import type { HubLease, InboxTask, KlankerInstance, WsInbox } from "../types/klanker";
 import { api } from "../services/api";
 import { Select } from "./ui/Select";
+import { inputClass, labelClass } from "./ui/inputClass";
 
-const inputClass =
-  "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
-const labelClass = "text-[10px] uppercase tracking-wider text-[#525252]";
 
 const STATUS_STYLE: Record<string, string> = {
-  open: "border-white text-white",
-  pending: "border-white text-white",
+  open: "border-accent text-ink-primary",
+  pending: "border-accent text-ink-primary",
   running: "border-amber-500 text-amber-500",
-  done: "border-[#404040] text-[#737373]",
+  done: "border-strong text-ink-muted",
   failed: "border-red-500 text-red-500",
 };
 
 export function statusPill(status: string): { text: string; cls: string } {
   const key = (status || "open").toLowerCase();
-  return { text: key, cls: STATUS_STYLE[key] || "border-[#404040] text-[#737373]" };
+  return { text: key, cls: STATUS_STYLE[key] || "border-strong text-ink-muted" };
 }
 
 /**
@@ -143,7 +141,7 @@ export function WsInboxTab({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] uppercase tracking-wider text-[#525252]">
+        <span className="text-[10px] uppercase tracking-wider text-ink-dim">
           {totalOpen > 0 ? `${totalOpen} open handoff${totalOpen === 1 ? "" : "s"}` : "team inbox"}
         </span>
         <div className="flex items-center gap-1.5">
@@ -152,14 +150,14 @@ export function WsInboxTab({
             onClick={() => void load()}
             title="Refresh inbox"
             aria-label="Refresh inbox"
-            className="inline-flex h-7 w-7 items-center justify-center rounded border border-[#262626] text-[#737373] hover:text-white"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-strong text-ink-muted hover:text-ink-primary"
           >
             <RefreshCw className="w-3 h-3" />
           </button>
           <button
             type="button"
             onClick={() => setComposeOpen((v) => !v)}
-            className="inline-flex h-7 items-center gap-1 px-2 rounded border border-[#262626] text-[11px] text-[#a3a3a3] hover:text-white hover:bg-[#141414]"
+            className="inline-flex h-7 items-center gap-1 px-2 rounded-md border border-strong text-[11px] text-ink-secondary hover:text-ink-primary hover:bg-elevated"
           >
             <Plus className="w-3 h-3" /> new handoff
           </button>
@@ -167,7 +165,7 @@ export function WsInboxTab({
       </div>
 
       {composeOpen && (
-        <div className="flex flex-col gap-2 border border-[#1f1f1f] rounded p-2.5">
+        <div className="flex flex-col gap-2 border border-subtle rounded-md p-2.5">
           <label className="flex flex-col gap-1">
             <span className={labelClass}>to persona</span>
             <Select
@@ -201,7 +199,7 @@ export function WsInboxTab({
               type="button"
               disabled={busy || !handoffTitle.trim() || personas.length === 0}
               onClick={() => void createHandoff()}
-              className="px-3 py-1.5 border border-white rounded bg-white text-black hover:bg-[#e5e5e5] disabled:opacity-50 text-[11px]"
+              className="px-3 py-1.5 border border-accent rounded-md bg-accent text-accent-ink hover:bg-accent-hover disabled:opacity-50 text-[11px]"
             >
               {busy ? "sending…" : "send handoff"}
             </button>
@@ -210,10 +208,10 @@ export function WsInboxTab({
       )}
 
       {note && <div className="text-red-500 text-[11px] break-words">{note}</div>}
-      {loading && <p className="text-[10px] text-[#525252]">loading inbox…</p>}
+      {loading && <p className="text-[10px] text-ink-dim">loading inbox…</p>}
 
       {!loading && rows.length === 0 && (
-        <p className="text-[11px] text-[#525252]">
+        <p className="text-[11px] text-ink-dim">
           no handoffs yet — personas pass work to each other here.
         </p>
       )}
@@ -226,9 +224,9 @@ export function WsInboxTab({
           const reply = task?.reply_summary?.trim();
           const target = row.to || task?.owner || "";
           return (
-            <div key={`${row.task || "row"}-${row.at || i}`} className="border border-[#1a1a1a] rounded p-2.5 flex flex-col gap-1.5">
+            <div key={`${row.task || "row"}-${row.at || i}`} className="border border-subtle rounded-md p-2.5 flex flex-col gap-1.5">
               <div className="flex items-center gap-2 min-w-0">
-                <span className="text-white truncate flex-1 text-[12px]">{row.title || task?.title || "(untitled)"}</span>
+                <span className="text-ink-primary truncate flex-1 text-[12px]">{row.title || task?.title || "(untitled)"}</span>
                 {running && wsLeased && (
                   <span
                     className="shrink-0 px-1.5 py-0.5 rounded-full border border-amber-500 text-[9px] uppercase tracking-wider text-amber-500"
@@ -241,14 +239,14 @@ export function WsInboxTab({
                   {pill.text}
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-[10px] text-[#737373] min-w-0">
+              <div className="flex items-center gap-1.5 text-[10px] text-ink-muted min-w-0">
                 <span className="truncate">{personaName(row.from || "?")}</span>
                 <ArrowRight className="w-3 h-3 shrink-0" />
                 <span className="truncate">{personaName(target || "?")}</span>
-                {row.at && <span className="shrink-0 text-[#525252]">· {row.at.slice(0, 16).replace("T", " ")}</span>}
+                {row.at && <span className="shrink-0 text-ink-dim">· {row.at.slice(0, 16).replace("T", " ")}</span>}
               </div>
               {reply && (
-                <p className="text-[11px] text-[#a3a3a3] whitespace-pre-wrap break-words line-clamp-2">
+                <p className="text-[11px] text-ink-secondary whitespace-pre-wrap break-words line-clamp-2">
                   {reply.slice(0, 200)}
                 </p>
               )}
@@ -257,7 +255,7 @@ export function WsInboxTab({
                   <button
                     type="button"
                     onClick={() => onOpenChat(workspace, target)}
-                    className="px-2 py-1 border border-[#262626] rounded text-[10px] text-[#a3a3a3] hover:text-white hover:bg-[#141414]"
+                    className="px-2 py-1 border border-strong rounded-md text-[10px] text-ink-secondary hover:text-ink-primary hover:bg-elevated"
                     aria-label={`Open chat with ${personaName(target)}`}
                   >
                     open chat
@@ -271,7 +269,7 @@ export function WsInboxTab({
                       setHandoffPeer(personas.find((p) => p.id !== target)?.id || "");
                       setHandoffTaskNote("");
                     }}
-                    className="px-2 py-1 border border-[#262626] rounded text-[10px] text-[#a3a3a3] hover:text-white hover:bg-[#141414]"
+                    className="px-2 py-1 border border-strong rounded-md text-[10px] text-ink-secondary hover:text-ink-primary hover:bg-elevated"
                     aria-label={`Handoff task ${row.title || row.task} to a peer`}
                   >
                     handoff &amp; wake
@@ -279,7 +277,7 @@ export function WsInboxTab({
                 )}
               </div>
               {handoffTask === row.task && row.task && (
-                <div className="flex items-end gap-1.5 border-t border-[#1f1f1f] pt-1.5">
+                <div className="flex items-end gap-1.5 border-t border-subtle pt-1.5">
                   <label className="flex flex-col gap-1 w-36 shrink-0">
                     <span className={labelClass}>to peer</span>
                     <Select
@@ -305,7 +303,7 @@ export function WsInboxTab({
                     type="button"
                     disabled={busy || !handoffPeer}
                     onClick={() => void wakeHandoff(row.task as string, target || row.from || "")}
-                    className="shrink-0 px-2.5 py-1.5 border border-white rounded bg-white text-black hover:bg-[#e5e5e5] disabled:opacity-50 text-[10px]"
+                    className="shrink-0 px-2.5 py-1.5 border border-accent rounded-md bg-accent text-accent-ink hover:bg-accent-hover disabled:opacity-50 text-[10px]"
                     aria-label="Send handoff and wake the peer"
                   >
                     {busy ? "waking…" : "wake"}

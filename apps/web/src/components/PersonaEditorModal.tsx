@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { X } from "lucide-react";
 import type { KlankerInstance } from "../types/klanker";
 import { api } from "../services/api";
+import { inputClass, labelClass } from "./ui/inputClass";
+import { Dialog } from "./ui/Dialog";
+import { Switch } from "./ui/Switch";
 
-const inputClass =
-  "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
-const labelClass = "text-[10px] uppercase tracking-wider text-[#525252]";
 
 interface Props {
   instance: KlankerInstance;
@@ -33,14 +32,6 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
 
   useEffect(() => {
     void api
@@ -82,19 +73,9 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div
-        className="w-full max-w-md bg-[#0a0a0a] border border-[#262626] rounded-lg font-mono text-xs flex flex-col max-h-[90vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#262626] shrink-0">
-          <div className="text-white tracking-wider uppercase truncate">persona · {persona}</div>
-          <button type="button" onClick={onClose} className="text-[#525252] hover:text-white" aria-label="Close">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+    <Dialog open onClose={onClose} title={<>persona · {persona}</>}>
         <div className="p-4 flex flex-col gap-3 overflow-y-auto">
-          {!loaded && !note && <p className="text-[10px] text-[#525252]">loading manifest…</p>}
+          {!loaded && !note && <p className="text-[10px] text-ink-dim">loading manifest…</p>}
           <label className="flex flex-col gap-1">
             <span className={labelClass}>name</span>
             <input
@@ -125,21 +106,13 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
               aria-label="persona system prompt"
             />
           </label>
-          <div className="flex gap-3">
-            <label className="inline-flex items-center gap-2 text-[11px] text-[#a3a3a3] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={acceptsMessages}
-                onChange={(e) => setAcceptsMessages(e.target.checked)}
-              />
+          <div className="flex gap-4">
+            <label className="inline-flex items-center gap-2 text-[11px] text-ink-secondary cursor-pointer">
+              <Switch checked={acceptsMessages} onCheckedChange={setAcceptsMessages} ariaLabel="accepts messages" />
               accepts messages
             </label>
-            <label className="inline-flex items-center gap-2 text-[11px] text-[#a3a3a3] cursor-pointer">
-              <input
-                type="checkbox"
-                checked={allowPeers}
-                onChange={(e) => setAllowPeers(e.target.checked)}
-              />
+            <label className="inline-flex items-center gap-2 text-[11px] text-ink-secondary cursor-pointer">
+              <Switch checked={allowPeers} onCheckedChange={setAllowPeers} ariaLabel="allow peer handoffs" />
               allow peer handoffs
             </label>
           </div>
@@ -158,7 +131,7 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 border border-[#262626] rounded text-[#a3a3a3] hover:text-white hover:bg-[#141414]"
+              className="px-3 py-1.5 border border-strong rounded-md text-ink-secondary hover:text-ink-primary hover:bg-elevated"
             >
               cancel
             </button>
@@ -166,13 +139,12 @@ export const PersonaEditorModal: React.FC<Props> = ({ instance, workspace, perso
               type="button"
               onClick={() => void save()}
               disabled={busy || !loaded}
-              className="px-3 py-1.5 border border-white rounded bg-white text-black hover:bg-[#e5e5e5] disabled:opacity-50"
+              className="px-3 py-1.5 border border-accent rounded-md bg-accent text-accent-ink hover:bg-accent-hover disabled:opacity-50"
             >
               {busy ? "saving…" : "save"}
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </Dialog>
   );
 };

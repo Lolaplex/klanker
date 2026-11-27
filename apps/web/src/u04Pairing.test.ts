@@ -1,7 +1,28 @@
+import "./testing/domSetup.ts";
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { createRoot } from "react-dom/client";
+import { act } from "react";
+
+// ui/Dialog portals never render in static SSR markup — modal assertions
+// mount into jsdom (klanker#170 U16).
+async function renderInDom(el: React.ReactElement): Promise<{ html: () => string; unmount: () => void }> {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(el);
+  });
+  return {
+    html: () => document.body.innerHTML,
+    unmount: () => {
+      act(() => root.unmount());
+      host.remove();
+    },
+  };
+}
 import { PairModal, PairMintedBlock } from "./components/PairModal.tsx";
 import { DevicesPanel } from "./components/DevicesPanel.tsx";
 import { Header } from "./components/Header.tsx";
@@ -23,29 +44,31 @@ const inst: KlankerInstance = {
 } as unknown as KlankerInstance;
 
 // jsdom-less shell: components touch window/localStorage at render time.
-Object.defineProperty(globalThis, "window", {
-  value: {
-    location: { hostname: "localhost", host: "localhost:8787", origin: "http://localhost:8787" },
-    matchMedia: undefined,
-  },
-  configurable: true,
-});
-
 describe("PairModal layer-1 tabs", () => {
   const renderModal = () =>
-    renderToStaticMarkup(React.createElement(PairModal, { instance: inst, onClose: () => {} } as never));
+    renderInDom(React.createElement(PairModal, { instance: inst, onClose: () => {} } as never));
 
-  it("renders exactly two tabs — Device/Desktop and Browser/PWA", () => {
-    const html = renderModal();
-    assert.ok(html.includes("Device / Desktop"), "device tab missing");
-    assert.ok(html.includes("Browser / PWA"), "browser tab missing");
-    assert.ok(!html.includes("share ws"), "share ws tab must be gone — layer 2 lives in workspace settings");
+  it("renders exactly two tabs — Device/Desktop and Browser/PWA", async () => {
+    const r = await renderModal();
+    try {
+      const html = r.html();
+      assert.ok(html.includes("Device / Desktop"), "device tab missing");
+      assert.ok(html.includes("Browser / PWA"), "browser tab missing");
+      assert.ok(!html.includes("share ws"), "share ws tab must be gone — layer 2 lives in workspace settings");
+    } finally {
+      r.unmount();
+    }
   });
 
-  it("titles itself Pair device, not pair · instance", () => {
-    const html = renderModal();
-    assert.ok(html.includes("Pair device"), "title missing");
-    assert.ok(!html.includes("pair ·"), "legacy instance-scoped title still present");
+  it("titles itself Pair device, not pair · instance", async () => {
+    const r = await renderModal();
+    try {
+      const html = r.html();
+      assert.ok(html.includes("Pair device"), "title missing");
+      assert.ok(!html.includes("pair ·"), "legacy instance-scoped title still present");
+    } finally {
+      r.unmount();
+    }
   });
 });
 
@@ -130,8 +153,8 @@ describe("NewKlankerModal redeem side", () => {
     assert.equal(deviceConnectLabel("", null), "");
   });
 
-  it("renders the device name input and Nearby Tailscale devices title", () => {
-    const html = renderToStaticMarkup(
+  it("renders the device name input and Nearby Tailscale devices title", async () => {
+    const r = await renderInDom(
       React.createElement(NewKlankerModal, {
         isOpen: true,
         onClose: () => {},
@@ -139,8 +162,13 @@ describe("NewKlankerModal redeem side", () => {
         onConnected: () => {},
       } as never)
     );
-    assert.ok(html.includes("device name"), "device name input missing");
-    assert.ok(html.includes("Nearby Tailscale devices"), "tailscale discovery title missing");
+    try {
+      const html = r.html();
+      assert.ok(html.includes("device name"), "device name input missing");
+      assert.ok(html.includes("Nearby Tailscale devices"), "tailscale discovery title missing");
+    } finally {
+      r.unmount();
+    }
   });
 });
 
@@ -193,7 +221,7 @@ describe("WorkspaceModal sharing tab layer-2 gating", () => {
     }) as unknown as WorkspaceRow;
 
   const renderSettings = (policy: string) =>
-    renderToStaticMarkup(
+    renderInDom(
       React.createElement(WorkspaceModal, {
         instance: inst,
         workspace: ws(policy),
@@ -203,30 +231,45 @@ describe("WorkspaceModal sharing tab layer-2 gating", () => {
       } as never)
     );
 
-  it("hides sharing controls behind a muted note when sync_policy is local", () => {
-    const html = renderSettings("local");
-    assert.ok(
-      html.includes("Local workspace — data stays on this device only"),
-      "local muted note missing"
-    );
-    assert.ok(!html.includes("Shared devices"), "member checklist must be hidden on local");
-    assert.ok(!html.includes("default host"), "default host must be hidden on local");
-    assert.ok(!html.includes("Invite guest"), "guest invite must be hidden on local");
+  it("hides sharing controls behind a muted note when sync_policy is local", async () => {
+    const r = await renderSettings("local");
+    try {
+      const html = r.html();
+      assert.ok(
+        html.includes("Local workspace — data stays on this device only"),
+        "local muted note missing"
+      );
+      assert.ok(!html.includes("Shared devices"), "member checklist must be hidden on local");
+      assert.ok(!html.includes("default host"), "default host must be hidden on local");
+      assert.ok(!html.includes("Invite guest"), "guest invite must be hidden on local");
+    } finally {
+      r.unmount();
+    }
   });
 
-  it("shows sharing controls when synced", () => {
-    const html = renderSettings("synced");
-    assert.ok(html.includes("Shared devices"), "member checklist missing on synced");
-    assert.ok(html.includes("default host"), "default host missing on synced");
-    assert.ok(html.includes("+ Invite guest to this workspace only"), "guest invite collapsible missing on synced");
+  it("shows sharing controls when synced", async () => {
+    const r = await renderSettings("synced");
+    try {
+      const html = r.html();
+      assert.ok(html.includes("Shared devices"), "member checklist missing on synced");
+      assert.ok(html.includes("default host"), "default host missing on synced");
+      assert.ok(html.includes("+ Invite guest to this workspace only"), "guest invite collapsible missing on synced");
+    } finally {
+      r.unmount();
+    }
   });
 
-  it("never prints sync_hosts or fail-closed jargon", () => {
+  it("never prints sync_hosts or fail-closed jargon", async () => {
     for (const policy of ["local", "synced"]) {
-      const html = renderSettings(policy);
-      assert.ok(!html.includes("sync_hosts"), `sync_hosts jargon on ${policy}`);
-      assert.ok(!html.includes("fail-closed"), `fail-closed jargon on ${policy}`);
-      assert.ok(!html.includes("host_paths.json"), `host_paths.json jargon on ${policy}`);
+      const r = await renderSettings(policy);
+      try {
+        const html = r.html();
+        assert.ok(!html.includes("sync_hosts"), `sync_hosts jargon on ${policy}`);
+        assert.ok(!html.includes("fail-closed"), `fail-closed jargon on ${policy}`);
+        assert.ok(!html.includes("host_paths.json"), `host_paths.json jargon on ${policy}`);
+      } finally {
+        r.unmount();
+      }
     }
   });
 });

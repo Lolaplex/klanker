@@ -66,15 +66,15 @@ export function ProviderModelPicker({
           onClick={() => commit({ provider: row.provider, model: row.model })}
           className={`min-w-0 flex-1 flex items-center gap-2 min-h-9 px-2 py-1.5 text-left ${
             selected
-              ? "bg-[#141414] text-white"
-              : "text-[#a3a3a3] hover:bg-[#181818] hover:text-white"
+              ? "bg-elevated text-ink-primary"
+              : "text-ink-secondary hover:bg-hover hover:text-ink-primary"
           }`}
         >
           <span className="w-4 shrink-0 text-center">{selected && <Check className="w-3.5 h-3.5" />}</span>
           <span className="truncate">
             {showProvider ? (
               <>
-                <span className="text-[#737373]">{row.provider}</span>
+                <span className="text-ink-muted">{row.provider}</span>
                 {" · "}
                 {row.label}
               </>
@@ -88,7 +88,7 @@ export function ProviderModelPicker({
           title={starred ? "unstar" : "star"}
           onClick={() => onStar({ provider: row.provider, model: row.model }, !starred)}
           className={`shrink-0 inline-flex h-9 w-7 items-center justify-center ${
-            starred ? "text-white" : "text-[#3f3f3f] opacity-0 group-hover:opacity-100 hover:text-white"
+            starred ? "text-ink-primary" : "text-ink-dim opacity-0 group-hover:opacity-100 hover:text-ink-primary"
           }`}
         >
           <Star className="w-3.5 h-3.5" fill={starred ? "currentColor" : "none"} />
@@ -110,20 +110,20 @@ export function ProviderModelPicker({
           type="button"
           disabled={disabled}
           title={disabled ? "host offline — cached provider list" : "Model for this chat"}
-          className={`bg-[#0a0a0a] border hover:border-[#525252] rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[190px] truncate ${
+          className={`bg-surface border hover:border-strong rounded-md px-2 py-1.5 text-[11px] outline-none max-w-[190px] truncate ${
             disabled
-              ? "border-[#262626] text-[#525252] cursor-not-allowed"
+              ? "border-strong text-ink-dim cursor-not-allowed"
               : active
-                ? "border-[#525252] text-white cursor-pointer"
-                : "border-[#262626] text-[#a3a3a3] hover:text-white cursor-pointer"
+                ? "border-strong text-ink-primary cursor-pointer"
+                : "border-strong text-ink-secondary hover:text-ink-primary cursor-pointer"
           }`}
         >
-          {stale && <span className="text-[#737373]">⟳ </span>}
+          {stale && <span className="text-ink-muted">⟳ </span>}
           {label}
         </button>
       }
     >
-          <div className="flex items-center gap-1 p-2 border-b border-[#1f1f1f]">
+          <div className="flex items-center gap-1 p-2 border-b border-subtle">
             <input
               ref={inputRef}
               value={filter}
@@ -136,16 +136,16 @@ export function ProviderModelPicker({
                   commitFreeId();
                 }
               }}
-              className="w-full min-w-0 bg-[#121212] border border-[#262626] focus:border-white rounded px-2 py-1.5 text-white outline-none"
+              className="w-full min-w-0 bg-elevated border border-strong focus:border-accent rounded-md px-2 py-1.5 text-ink-primary outline-none"
             />
             <button
               type="button"
               title={grouped ? "flat list" : "group by provider"}
               onClick={() => setGrouped((v) => !v)}
-              className={`shrink-0 inline-flex h-8 w-8 items-center justify-center rounded border ${
+              className={`shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-md border ${
                 grouped
-                  ? "border-white text-white"
-                  : "border-[#262626] text-[#737373] hover:text-white"
+                  ? "border-accent text-ink-primary"
+                  : "border-strong text-ink-muted hover:text-ink-primary"
               }`}
             >
               <Group className="w-3.5 h-3.5" />
@@ -157,7 +157,7 @@ export function ProviderModelPicker({
               type="button"
               onClick={() => commit({ provider: "", model: "" })}
               className={`w-full flex items-center gap-2 min-h-9 px-2 py-1.5 text-left ${
-                !active ? "bg-[#141414] text-white" : "text-[#a3a3a3] hover:bg-[#181818] hover:text-white"
+                !active ? "bg-elevated text-ink-primary" : "text-ink-secondary hover:bg-hover hover:text-ink-primary"
               }`}
             >
               <span className="w-4 shrink-0 text-center">{!active && <Check className="w-3.5 h-3.5" />}</span>
@@ -165,14 +165,14 @@ export function ProviderModelPicker({
             </button>
 
             {stale && (
-              <div className="px-2 py-1 text-[10px] text-[#737373]">
+              <div className="px-2 py-1 text-[10px] text-ink-muted">
                 host offline — last known provider list
               </div>
             )}
 
             {favRows.length > 0 && (
               <>
-                <div className="px-2 pt-2 text-[10px] uppercase tracking-wider text-[#737373]">
+                <div className="px-2 pt-2 text-[10px] uppercase tracking-wider text-ink-muted">
                   favorites
                 </div>
                 {favRows.map((r) => renderRow(r, true))}
@@ -182,9 +182,9 @@ export function ProviderModelPicker({
             {grouped ? (
               groupRows(rows).map((g) => (
                 <div key={g.provider}>
-                  <div className="px-2 pt-2 text-[10px] uppercase tracking-wider text-[#737373] flex items-center gap-2">
+                  <div className="px-2 pt-2 text-[10px] uppercase tracking-wider text-ink-muted flex items-center gap-2">
                     <span className="truncate">{g.provider}</span>
-                    {g.error && <span className="text-[#a3a3a3] normal-case truncate">⚠ {g.error}</span>}
+                    {g.error && <span className="text-ink-secondary normal-case truncate">⚠ {g.error}</span>}
                   </div>
                   {g.rows.map((r) => renderRow(r, false))}
                 </div>
@@ -192,7 +192,7 @@ export function ProviderModelPicker({
             ) : (
               <>
                 {rows.length > 0 && (
-                  <div className="px-2 pt-2 text-[10px] uppercase tracking-wider text-[#737373]">
+                  <div className="px-2 pt-2 text-[10px] uppercase tracking-wider text-ink-muted">
                     models
                   </div>
                 )}
@@ -201,7 +201,7 @@ export function ProviderModelPicker({
             )}
 
             {rows.length === 0 && favRows.length === 0 && (
-              <div className="px-2 py-3 text-[#525252]">
+              <div className="px-2 py-3 text-ink-dim">
                 {filter ? "no match — enter keeps it as a free id" : "no providers"}
               </div>
             )}

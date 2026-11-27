@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { Check, X } from "lucide-react";
+import { Check } from "lucide-react";
 import { DesktopSettings, KlankerInstance } from "../types/klanker";
 import { getPushSubscription, pushSupported, subscribePush, unsubscribePush } from "../push";
 import { api } from "../services/api";
+import { ThemeSwitcher } from "./ui/ThemeSwitcher";
 import { ProvidersPanel } from "./ProvidersPanel";
+import { Dialog } from "./ui/Dialog";
+import { Tabs } from "./ui/Tabs";
+import { Switch } from "./ui/Switch";
 
 interface SettingsPanelProps {
   settings: DesktopSettings;
@@ -170,49 +174,40 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-      <div className="modal-card flex flex-col overflow-hidden bg-[#0a0a0a] border border-[#262626] w-full max-w-md rounded-lg shadow-2xl font-mono text-xs select-text max-h-[90vh]">
-        <div className="shrink-0 px-4 py-3 border-b border-[#262626] flex items-center justify-between">
-          <span className="text-white font-semibold tracking-wider">SETTINGS</span>
-          <button type="button" onClick={onClose} className="inline-flex h-11 w-11 items-center justify-center text-[#737373] hover:text-white transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="shrink-0 px-4 pt-3 flex items-center gap-1.5 flex-wrap">
-          {TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`px-2.5 py-1 border rounded ${
-                tab === t.id ? "border-white text-white" : "border-[#262626] text-[#737373] hover:text-white"
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+    <Dialog open onClose={onClose} title="SETTINGS">
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as typeof tab)}
+          ariaLabel="settings sections"
+          tabs={TABS.map((t) => ({ value: t.id, label: t.label }))}
+        />
 
         {tab === "providers" && (
           instance ? (
             <ProvidersPanel instance={instance} onChanged={onProvidersChanged} />
           ) : (
-            <p className="p-4 text-[10px] text-[#525252]">no instance selected.</p>
+            <p className="p-4 text-[10px] text-ink-dim">no instance selected.</p>
           )
         )}
 
         {tab === "host" && (
           <form onSubmit={save} className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 space-y-4">
             <div>
-              <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Host</div>
+              <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-1">Theme</div>
+              <ThemeSwitcher />
+              <p className="text-[10px] text-ink-dim mt-1">
+                Dark is the klanker default — White inverts the same monochrome slots, System follows the OS.
+              </p>
+            </div>
+            <div>
+              <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-1">Host</div>
               <label className="flex flex-col gap-1">
-                <span className="text-[10px] uppercase tracking-wider text-[#525252]">Host name</span>
+                <span className="text-[10px] uppercase tracking-wider text-ink-dim">Host name</span>
                 <input
                   value={hostLabelDraft}
                   onChange={(e) => setHostLabelDraft(e.target.value)}
                   placeholder="how paired devices see this machine"
-                  className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+                  className="w-full bg-elevated border border-strong focus:border-accent rounded-md px-2.5 py-1.5 text-ink-primary outline-none"
                 />
               </label>
               {hostNote && <p className="text-[10px] text-red-400 mt-1">{hostNote}</p>}
@@ -220,39 +215,31 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
             {desktop && (
               <div>
-                <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Desktop</div>
+                <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-1">Desktop</div>
                 <div className="space-y-1">
-                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={draft.autostart}
-                      onChange={(e) => setDraft({ ...draft, autostart: e.target.checked })}
-                    />
+                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary cursor-pointer">
+                    <Switch checked={draft.autostart} onCheckedChange={(v) => setDraft({ ...draft, autostart: v })} ariaLabel="Launch klanker on login" />
                     Launch klanker on login
                   </label>
-                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={!!draft.hub_mode}
-                      onChange={(e) => setDraft({ ...draft, hub_mode: e.target.checked })}
-                    />
+                  <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary cursor-pointer">
+                    <Switch checked={!!draft.hub_mode} onCheckedChange={(v) => setDraft({ ...draft, hub_mode: v })} ariaLabel="Hub mode — serve on LAN" />
                     Hub mode — serve on LAN (0.0.0.0)
                   </label>
-                  <p className="text-[10px] text-[#525252]">
+                  <p className="text-[10px] text-ink-dim">
                     On: the local serve binds 0.0.0.0 so tailnet/LAN peers can reach the hub. Off: 127.0.0.1 only.
                     Applies to the next spawn/restart.
                   </p>
                 </div>
-                <div className="mt-2 border-t border-[#1f1f1f] pt-2">
+                <div className="mt-2 border-t border-subtle pt-2">
                   <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-[#a3a3a3]">
+                    <span className="text-[11px] text-ink-secondary">
                       App version{appVersion ? `: ${appVersion}` : ""}
                     </span>
                     <button
                       type="button"
                       disabled={updateBusy}
                       onClick={() => void checkUpdate()}
-                      className="inline-flex min-h-7 items-center px-2.5 py-1 bg-[#0a0a0a] border border-[#262626] rounded text-[10px] text-[#a3a3a3] hover:text-white hover:bg-[#141414] disabled:opacity-50"
+                      className="inline-flex min-h-7 items-center px-2.5 py-1 bg-surface border border-strong rounded-md text-[10px] text-ink-secondary hover:text-ink-primary hover:bg-elevated disabled:opacity-50"
                       aria-label="Check for app updates"
                     >
                       {updateBusy ? "checking…" : "check for updates"}
@@ -262,37 +249,33 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                         type="button"
                         disabled={updateBusy}
                         onClick={() => void installUpdate()}
-                        className="inline-flex min-h-7 items-center px-2.5 py-1 bg-white text-black border border-white rounded text-[10px] hover:bg-[#e5e5e5] disabled:opacity-50"
+                        className="inline-flex min-h-7 items-center px-2.5 py-1 bg-accent text-accent-ink border border-accent rounded-md text-[10px] hover:bg-accent-hover disabled:opacity-50"
                         aria-label={`Install update ${updateInfo.version || ""}`}
                       >
                         install {updateInfo.version || "update"}
                       </button>
                     )}
                   </div>
-                  {updateNote && <p className="text-[10px] text-[#525252] mt-1">{updateNote}</p>}
+                  {updateNote && <p className="text-[10px] text-ink-dim mt-1">{updateNote}</p>}
                 </div>
               </div>
             )}
 
             {onToggleVoice && (
               <div>
-                <div className="text-[10px] text-[#737373] uppercase tracking-wider mb-1">Web</div>
-                <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-[#0a0a0a] border border-[#262626] rounded text-[11px] text-[#a3a3a3] hover:text-white cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!voiceEnabled}
-                    onChange={() => onToggleVoice()}
-                  />
+                <div className="text-[10px] text-ink-muted uppercase tracking-wider mb-1">Web</div>
+                <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary cursor-pointer">
+                  <Switch checked={!!voiceEnabled} onCheckedChange={() => onToggleVoice()} ariaLabel="Browser read-aloud" />
                   Browser read-aloud (experimental)
                 </label>
               </div>
             )}
 
             <div className="flex items-center justify-end space-x-2">
-              <button type="button" onClick={onClose} className="inline-flex min-h-9 items-center px-3 py-1.5 text-[#737373] hover:text-white">
+              <button type="button" onClick={onClose} className="inline-flex min-h-9 items-center px-3 py-1.5 text-ink-muted hover:text-ink-primary">
                 Cancel
               </button>
-              <button type="submit" className="inline-flex min-h-9 items-center gap-1 px-4 py-1.5 bg-white hover:bg-[#e5e5e5] text-black font-semibold rounded">
+              <button type="submit" className="inline-flex min-h-9 items-center gap-1 px-4 py-1.5 bg-accent hover:bg-accent-hover text-accent-ink font-semibold rounded-md">
                 <Check className="w-3.5 h-3.5" />
                 Save
               </button>
@@ -308,27 +291,26 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                   type="button"
                   disabled={pushBusy || pushOn === null}
                   onClick={() => void togglePush()}
-                  className={`inline-flex min-h-9 items-center px-3 py-1.5 border rounded text-[11px] transition-colors disabled:opacity-50 ${
+                  className={`inline-flex min-h-9 items-center px-3 py-1.5 border rounded-md text-[11px] transition-colors disabled:opacity-50 ${
                     pushOn
-                      ? "bg-white text-black border-white hover:bg-[#e5e5e5]"
-                      : "bg-[#0a0a0a] border-[#262626] text-[#a3a3a3] hover:bg-[#141414] hover:text-white"
+                      ? "bg-accent text-accent-ink border-accent hover:bg-accent-hover"
+                      : "bg-surface border-strong text-ink-secondary hover:bg-elevated hover:text-ink-primary"
                   }`}
                 >
                   {pushBusy ? "…" : pushOn ? "Push on — disable" : "Enable push on this relay"}
                 </button>
                 {pushOn && !pushNote && (
-                  <p className="text-[10px] text-[#525252]">Push enabled — reminders and approvals reach this device while the app is closed.</p>
+                  <p className="text-[10px] text-ink-dim">Push enabled — reminders and approvals reach this device while the app is closed.</p>
                 )}
-                {pushNote && <p className="text-[10px] text-[#525252]">{pushNote}</p>}
+                {pushNote && <p className="text-[10px] text-ink-dim">{pushNote}</p>}
               </>
             ) : (
-              <p className="text-[10px] text-[#525252]">
+              <p className="text-[10px] text-ink-dim">
                 web push is not available in this browser/context.
               </p>
             )}
           </div>
         )}
-      </div>
-    </div>
+    </Dialog>
   );
 };

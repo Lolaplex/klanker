@@ -41,7 +41,7 @@ export const KlankerMark: React.FC<KlankerMarkProps> = ({ size = 20, className }
       role="img"
       aria-label="Klanker"
     >
-      <rect width="24" height="24" rx="5" fill="#ffffff" />
+      <rect width="24" height="24" rx="5" style={{ fill: "var(--accent)" }} />
       <g transform="rotate(45 12 12)">
         {CELLS.map(([col, row]) => {
           const x = ox + col * pitch;
@@ -55,10 +55,10 @@ export const KlankerMark: React.FC<KlankerMarkProps> = ({ size = 20, className }
                 width={unit}
                 height={unit}
                 rx={unit * 0.3}
-                fill="#000000"
+                style={{ fill: "var(--accent-ink)" }}
               />
-              <circle cx={x + unit * 0.32} cy={cy} r={eye} fill="#ffffff" />
-              <circle cx={x + unit * 0.68} cy={cy} r={eye} fill="#ffffff" />
+              <circle cx={x + unit * 0.32} cy={cy} r={eye} style={{ fill: "var(--accent)" }} />
+              <circle cx={x + unit * 0.68} cy={cy} r={eye} style={{ fill: "var(--accent)" }} />
             </g>
           );
         })}

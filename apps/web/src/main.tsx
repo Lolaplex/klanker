@@ -1,9 +1,18 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+// OpenUI base css loads BEFORE tailwind utilities so utility classes win
+// specificity-free (klanker#170 U16).
+import "@openuidev/react-ui/index.css";
 import App from "./App";
 import { kbDebugEnabled } from "./kbDebug";
 import { migrateLegacyStorage } from "./chatBuckets";
+import { ThemeRoot } from "./ThemeRoot";
+import { bootstrapTheme } from "./theme";
 import "./index.css";
+
+// Apply the persisted/system theme before first paint — no dark flash in
+// light mode, no light flash in dark mode.
+bootstrapTheme();
 
 // One-time workspace-first storage migration (klanker#150): legacy
 // `klanker.chats.<inst> …` buckets, `klanker.sel.*` selection and
@@ -24,7 +33,9 @@ if (
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <ThemeRoot>
+      <App />
+    </ThemeRoot>
   </React.StrictMode>
 );
 

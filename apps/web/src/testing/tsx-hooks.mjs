@@ -15,10 +15,17 @@ const viteRequire = createRequire(vitePkg);
 const esbuild = viteRequire("esbuild");
 
 const isTsx = (spec) => /\.(tsx|jsx)(\?|$)/.test(spec);
+// Stylesheets never execute in node tests (klanker#170 U16): resolve to
+// an empty module so component imports of katex/openui css don't crash
+// the runner.
+const isCss = (spec) => /\.(css|scss|sass|less)(\?|$)/.test(spec);
 const isRelative = (spec) => spec.startsWith("./") || spec.startsWith("../");
 const hasExtension = (spec) => /\.[a-zA-Z]+$/.test(spec.split("?")[0]);
 
 export async function resolve(specifier, context, nextResolve) {
+  if (isCss(specifier)) {
+    return { url: new URL("./empty-css-stub.mjs", import.meta.url).href, format: "module", shortCircuit: true };
+  }
   // Extensionless relative imports inside transpiled components (the web
   // app writes vite-style `../wsTree`): probe the runtime extensions.
   if (isRelative(specifier) && !hasExtension(specifier) && context.parentURL?.startsWith("file:")) {

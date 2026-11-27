@@ -27,15 +27,15 @@ export function Dialog({
         <BaseDialog.Backdrop className="fixed inset-0 z-[60] bg-black/70" />
         <BaseDialog.Viewport className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <BaseDialog.Popup
-            className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-[#0a0a0a] border border-[#262626] rounded-lg font-mono text-xs flex flex-col max-h-[90vh] outline-none`}
+            className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-surface border border-strong rounded-lg font-mono text-xs flex flex-col max-h-[90vh] outline-none`}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-[#262626] shrink-0">
-              <BaseDialog.Title className="text-white tracking-wider uppercase truncate">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-strong shrink-0">
+              <BaseDialog.Title className="text-ink-primary tracking-wider uppercase truncate">
                 {title}
               </BaseDialog.Title>
               <BaseDialog.Close
                 aria-label="Close"
-                className="text-[#525252] hover:text-white cursor-pointer"
+                className="text-ink-dim hover:text-ink-primary cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </BaseDialog.Close>

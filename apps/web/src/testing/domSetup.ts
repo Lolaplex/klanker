@@ -12,6 +12,7 @@ const KEYS = [
   "requestAnimationFrame", "cancelAnimationFrame", "ResizeObserver",
   "CSSStyleSheet", "ShadowRoot", "Document", "Range", "Selection", "SVGElement", "XMLSerializer", "DOMParser",
   "localStorage", "sessionStorage",
+  "KeyboardEvent", "MouseEvent", "Event", "CustomEvent", "FocusEvent", "InputEvent", "PointerEvent",
 ] as const;
 
 for (const key of KEYS) {

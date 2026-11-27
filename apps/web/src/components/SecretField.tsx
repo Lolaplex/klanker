@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { inputClass } from "./ui/inputClass";
 
 interface SecretFieldProps {
   label: string;
@@ -9,20 +10,18 @@ interface SecretFieldProps {
   quiet?: boolean;
 }
 
-const inputClass =
-  "w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none";
 
 export function SecretField({ label, stored, value, onChange, help, quiet }: SecretFieldProps) {
   const [replacing, setReplacing] = useState(false);
   const labelClass = quiet
-    ? "text-[10px] text-[#525252] uppercase tracking-wider"
-    : "text-[10px] text-[#737373] uppercase tracking-wider";
+    ? "text-[10px] text-ink-dim uppercase tracking-wider"
+    : "text-[10px] text-ink-muted uppercase tracking-wider";
 
   return (
     <div>
       <div className="mb-1 flex items-center justify-between gap-2">
         <span className={labelClass}>{label}</span>
-        {stored && !replacing ? <span className="text-[10px] text-[#a3a3a3]">Key set</span> : null}
+        {stored && !replacing ? <span className="text-[10px] text-ink-secondary">Key set</span> : null}
       </div>
       {stored && !replacing ? (
         <button
@@ -31,7 +30,7 @@ export function SecretField({ label, stored, value, onChange, help, quiet }: Sec
             onChange("");
             setReplacing(true);
           }}
-          className="px-2.5 py-1.5 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-[#a3a3a3] hover:text-white"
+          className="px-2.5 py-1.5 bg-surface hover:bg-elevated border border-strong rounded-md text-ink-secondary hover:text-ink-primary"
         >
           Replace
         </button>
@@ -44,7 +43,7 @@ export function SecretField({ label, stored, value, onChange, help, quiet }: Sec
           className={inputClass}
         />
       )}
-      {help ? <p className="mt-1 text-[10px] text-[#525252] leading-snug">{help}</p> : null}
+      {help ? <p className="mt-1 text-[10px] text-ink-dim leading-snug">{help}</p> : null}
     </div>
   );
 }
