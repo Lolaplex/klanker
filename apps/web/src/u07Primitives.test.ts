@@ -5,13 +5,12 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createRoot } from "react-dom/client";
 import { act } from "react";
+import { readFileSync } from "node:fs";
 import { Dialog } from "./components/ui/Dialog.tsx";
 import { Select } from "./components/ui/Select.tsx";
 import { Popover } from "./components/ui/Popover.tsx";
 import { Switch } from "./components/ui/Switch.tsx";
 import { Tabs } from "./components/ui/Tabs.tsx";
-import { ChatConsole } from "./components/ChatConsole.tsx";
-import type { KlankerInstance } from "./types/klanker.ts";
 
 // jsdom render helper — base-ui portals never render in static SSR,
 // so open Dialog/Popover panels need a real (headless) DOM.
@@ -142,35 +141,12 @@ describe("ui/Tabs wrapper", () => {
   });
 });
 
-describe("ChatConsole export menu", () => {
-  const inst = {
-    id: "local",
-    kind: "local",
-    name: "klanker",
-    workspace: "",
-    endpoint: { base_url: "http://127.0.0.1:8787" },
-  } as unknown as KlankerInstance;
-
-  it("renders an export button, never a native select", () => {
-    const html = renderToStaticMarkup(
-      React.createElement(ChatConsole, {
-        instance: inst,
-        title: "alpha · default",
-        speakerName: "nova",
-        messages: [{ role: "klanker", text: "hi" }],
-        input: "",
-        onInput: () => {},
-        onSendMessage: () => {},
-        onStop: () => {},
-        isLoading: false,
-        sendHold: false,
-        pending: null,
-        deciding: false,
-        decideError: null,
-        onDecide: () => {},
-      } as never)
-    );
-    assert.ok(!html.includes("<select"), "native select leaked into ChatConsole");
-    assert.ok(html.includes("export"), "export trigger missing");
+describe("chat export commands", () => {
+  it("lives in the command palette, never a native select", () => {
+    const appSrc = readFileSync("src/App.tsx", "utf-8");
+    assert.ok(!appSrc.includes("<select"), "native select leaked into export flow");
+    assert.ok(appSrc.includes("Export chat as Markdown"), "Markdown export command missing");
+    assert.ok(appSrc.includes("Export chat as JSON"), "JSON export command missing");
+    assert.ok(appSrc.includes("chatToMarkdown") && appSrc.includes("chatToJson"), "export serializers not wired");
   });
 });

@@ -19,6 +19,7 @@ export function useApprovals(args: {
   deviceRef?: MutableRefObject<string>;
 }): {
   pending: PendingApproval | null;
+  pendingCount: number;
   deciding: boolean;
   decideError: string | null;
   handleDecide: (allow: boolean, remember?: boolean) => Promise<void>;
@@ -27,6 +28,7 @@ export function useApprovals(args: {
 } {
   const { activeInstance, status, workspaceId = "", sessionRef, deviceRef } = args;
   const [pending, setPending] = useState<PendingApproval | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
   const [deciding, setDeciding] = useState(false);
   const [decideError, setDecideError] = useState<string | null>(null);
   const [refreshTick, setRefreshTick] = useState(0);
@@ -42,6 +44,7 @@ export function useApprovals(args: {
 
   const reset = () => {
     setPending(null);
+    setPendingCount(0);
     setDecideError(null);
     setDeciding(false);
   };
@@ -54,10 +57,11 @@ export function useApprovals(args: {
     const tick = async () => {
       const mine = ++pollSeq.current;
       try {
-        const next = await api.pendingApproval(inst, workspaceId, {
+        const rows = await api.pendingApprovals(inst, workspaceId, {
           session: sessionRef?.current || "",
           device: deviceRef?.current || "",
         });
+        const next = rows[0] ?? null;
         if (!stop && mine === pollSeq.current) {
           if (next && next.id !== lastNotifiedApprovalRef.current) {
             lastNotifiedApprovalRef.current = next.id;
@@ -65,9 +69,13 @@ export function useApprovals(args: {
             void notifyWhenUnfocused("Klanker needs approval", `${workspaceId ? `${workspaceId} — ` : ""}${tool}`);
           }
           setPending(next);
+          setPendingCount(rows.length);
         }
       } catch {
-        if (!stop && mine === pollSeq.current) setPending(null);
+        if (!stop && mine === pollSeq.current) {
+          setPending(null);
+          setPendingCount(0);
+        }
       }
     };
     void tick();
@@ -88,7 +96,10 @@ export function useApprovals(args: {
     try {
       await api.resolveApproval(inst, approvalId, allow, remember);
       pollSeq.current += 1;
-      if (activeIdRef.current === inst.id) setPending(null);
+      if (activeIdRef.current === inst.id) {
+        setPending(null);
+        setPendingCount((n) => Math.max(0, n - 1));
+      }
     } catch (e: unknown) {
       if (activeIdRef.current === inst.id) {
         setDecideError(e instanceof Error ? e.message : String(e));
@@ -98,5 +109,5 @@ export function useApprovals(args: {
     }
   };
 
-  return { pending, deciding, decideError, handleDecide, refresh, reset };
+  return { pending, pendingCount, deciding, decideError, handleDecide, refresh, reset };
 }

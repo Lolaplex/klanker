@@ -34,4 +34,27 @@ class ResizeObserverPolyfill {
 if (typeof (globalThis as Record<string, unknown>).ResizeObserver !== "function") {
   Object.defineProperty(globalThis, "ResizeObserver", { value: ResizeObserverPolyfill, configurable: true, writable: true });
 }
+if (typeof (globalThis as Record<string, unknown>).matchMedia !== "function") {
+  Object.defineProperty(globalThis, "matchMedia", {
+    value: (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }),
+    configurable: true,
+    writable: true,
+  });
+}
+try {
+  Object.defineProperty((globalThis as { window?: Window }).window || {}, "matchMedia", {
+    value: (globalThis as Record<string, unknown>).matchMedia,
+    configurable: true,
+    writable: true,
+  });
+} catch {}
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { value: true, configurable: true, writable: true });

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Unified web shell navigation (klanker#171): one exact 44px header owns the workspace/persona/chat breadcrumb, host/provider pickers, approval count, command palette, theme, devices, settings and workbench toggle. The sidebar gains search, desktop resize persistence, collapse state, primary new-chat CTA, branch/repo/WIP session metadata, inline title editing and session fork actions. A zero-dependency Ctrl/Cmd+K palette exposes chat navigation, new/fork/export/stop commands, sidebar/workbench/theme toggles and shortcut help; shell notices now use a toast stack, empty chats render workspace-aware onboarding with starter prompts, and the transcript is centered at readable width. Pending approvals are consumed as a FIFO `1/N` queue instead of dropping rows behind the first match.
+
+### Added
 - Workspace-first sidebar IA (klanker#150): the sidebar roots on workspaces — never devices — with a per-workspace sync badge (`local` / `synced N hosts` / `hub` / `offline`), persona rows carrying role + unread/handoff counts from `GET /v1/workspaces/<ws>/inbox`, and session rows showing `session:title` plus a bound-host pill resolved from `/v1/workspaces/<ws>/hosts` bindings and live leases. Chat buckets, selection and titles re-key from `klanker.chats.<inst> <ws> <persona>` to `klanker.ws.chats.<ws> <persona>` with a one-time lossless boot migration (every instance's copy unions into one bucket, richer history wins collisions, unparseable keys are kept). Turn busy/hold state keys `${ws}::${session}` so parallel sessions in one bucket never lock each other. Header headlines `Workspace > Persona` + chat title; the status pill opens the devices panel.
 
 ### Added

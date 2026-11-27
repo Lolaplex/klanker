@@ -1,5 +1,5 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import { X } from "lucide-react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { Square } from "lucide-react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole, type ChatPick } from "./components/ChatConsole";
@@ -60,6 +60,14 @@ import { useSidebarTree } from "./hooks/useSidebarTree";
 import { useChatSync } from "./hooks/useChatSync";
 import { useApprovals } from "./hooks/useApprovals";
 import { useRelayCompat } from "./hooks/useRelayCompat";
+import { HostPicker } from "./components/HostPicker";
+import { ProviderModelPicker } from "./components/ProviderModelPicker";
+import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
+import { ToastStack, type ToastItem } from "./components/ToastStack";
+import { OnboardingEmpty } from "./components/OnboardingEmpty";
+import { chatToJson, chatToMarkdown, downloadText, exportStem } from "./chatExport";
+import { forkSession } from "./services/workbenchApi";
+import { readThemePreference, resolveMode, setThemePreference } from "./theme";
 
 const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false, hub_mode: false };
 
@@ -126,6 +134,14 @@ export function App() {
   // Per-chat host switch (klanker#152): in-flight flag + result note.
   const [hostSwitching, setHostSwitching] = useState(false);
   const [hostNote, setHostNote] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("klanker.sidebar.collapsed") === "1");
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const n = Number(localStorage.getItem("klanker.sidebar.width") || 240);
+    return Number.isFinite(n) ? Math.max(208, Math.min(440, n)) : 240;
+  });
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const { kbBox, idleH } = useKeyboardViewport();
 
@@ -149,6 +165,30 @@ export function App() {
   }, []);
   // Restored messages per session + in-flight title fetches (no refetch spam).
   const evCache = useRef(new Map<string, ChatMessage[]>());
+
+  const pushToast = useCallback((message: string, kind: ToastItem["kind"] = "info") => {
+    const id = crypto.randomUUID();
+    setToasts((prev) => [...prev.slice(-4), { id, kind, message }]);
+  }, []);
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+  useEffect(() => {
+    if (!wsNote) return;
+    pushToast(wsNote, "error");
+    setWsNote(null);
+  }, [wsNote, pushToast]);
+  useEffect(() => {
+    if (!hostNote) return;
+    pushToast(hostNote, hostNote.includes("refused") || hostNote.includes("failed") ? "error" : "info");
+    setHostNote(null);
+  }, [hostNote, pushToast]);
+  useEffect(() => {
+    try { localStorage.setItem("klanker.sidebar.collapsed", sidebarCollapsed ? "1" : "0"); } catch {}
+  }, [sidebarCollapsed]);
+  useEffect(() => {
+    try { localStorage.setItem("klanker.sidebar.width", String(sidebarWidth)); } catch {}
+  }, [sidebarWidth]);
 
   // Bucket key: `${ws} ${persona}` — the primary endpoint fronts every
   // workspace, so chat state is never partitioned per instance (klanker#150).
@@ -1030,6 +1070,133 @@ export function App() {
     }
   };
 
+  const setOpenChatInput = useCallback((v: string) => {
+    if (!selKey) return;
+    setChats((prev) => {
+      const b = normBucket(prev[selKey] ?? EMPTY_BUCKET);
+      const open = b.items.find((i) => i.id === b.openId);
+      if (open) {
+        return {
+          ...prev,
+          [selKey]: { ...b, items: b.items.map((i) => (i.id === open.id ? { ...i, input: v } : i)) },
+        };
+      }
+      const id = crypto.randomUUID();
+      return {
+        ...prev,
+        [selKey]: { openId: id, items: [...b.items, { id, session: "", messages: [], draft: true, input: v }] },
+      };
+    });
+  }, [selKey]);
+
+  const exportOpenChat = useCallback((fmt: "md" | "json") => {
+    if (!messages.length) {
+      pushToast("nothing to export yet", "info");
+      return;
+    }
+    const speaker = tree.personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || activeInstance?.name || "klanker";
+    const session = `${selWs || "default"} · ${selPersona || "default"} · ${openChat?.session || "new"}`;
+    const doc = { agent: activeInstance?.name || "klanker", speaker, session, messages };
+    const stem = exportStem(session || "chat");
+    if (fmt === "md") downloadText(`${stem}.md`, chatToMarkdown(doc), "text/markdown");
+    else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
+    pushToast(`exported chat as .${fmt}`, "success");
+  }, [activeInstance?.name, messages, openChat?.session, pushToast, selPersona, selWs, tree]);
+
+  const forkChat = useCallback((ws: string, persona: string, row: SessionRow) => {
+    const inst0 = activeInstance;
+    if (!inst0 || !row.session) return;
+    void forkSession(inst0, ws, row.session)
+      .then((r) => {
+        pushToast(`forked into ${r.session}`, "success");
+        tree.expandPersona(ws, persona);
+        tree.refreshSessions(ws, persona);
+        selectChat(ws, persona, r.session);
+      })
+      .catch((e) => pushToast(`fork: ${e instanceof Error ? e.message : e}`, "error"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeInstance, pushToast, tree]);
+
+  const renameChat = useCallback((ws: string, persona: string, row: SessionRow, title: string) => {
+    if (!title.trim()) return;
+    const clipped = title.trim();
+    tree.setSessionTitles((prev) => ({ ...prev, [`${ws} ${persona} ${row.session}`]: clipped }));
+    pushToast("chat title updated locally", "success");
+  }, [pushToast, tree]);
+
+  const toggleTheme = useCallback(() => {
+    const pref = readThemePreference();
+    const mode = resolveMode(pref);
+    setThemePreference(mode === "dark" ? "light" : "dark");
+    pushToast(`theme: ${mode === "dark" ? "white" : "dark"}`, "info");
+  }, [pushToast]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      if (key === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      } else if (key === "b") {
+        e.preventDefault();
+        setSidebarCollapsed((v) => !v);
+      } else if (key === "j") {
+        e.preventDefault();
+        setWorkbenchOpen((v) => !v);
+      } else if (key === "n") {
+        e.preventDefault();
+        if (selWsRef.current) newChat(selWsRef.current, selPersonaRef.current || "default");
+      } else if (key === ".") {
+        if (isLoadingTurn) {
+          e.preventDefault();
+          handleStop();
+        }
+      } else if (key === "/") {
+        e.preventDefault();
+        setPaletteOpen(true);
+        pushToast("shortcuts: ⌘/ctrl+k palette · b sidebar · j workbench · n new chat · . stop", "info");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoadingTurn, pushToast]);
+
+  const paletteItems = useMemo<PaletteItem[]>(() => {
+    const rows: PaletteItem[] = [
+      { id: "new-chat", section: "chat", label: "New chat", shortcut: "⌘N", keywords: "create session", run: () => selWs && newChat(selWs, selPersona || "default") },
+      { id: "fork-chat", section: "chat", label: "Fork current chat", keywords: "branch session copy", disabled: !openChat?.session, run: () => openChat?.session && forkChat(selWs, selPersona || "default", { chatId: openChat.id, session: openChat.session, label: headerChatTitle || openChat.session, pending: false }) },
+      { id: "export-md", section: "chat", label: "Export chat as Markdown", keywords: "download transcript md", disabled: messages.length === 0, run: () => exportOpenChat("md") },
+      { id: "export-json", section: "chat", label: "Export chat as JSON", keywords: "download transcript json", disabled: messages.length === 0, run: () => exportOpenChat("json") },
+      { id: "stop-turn", section: "chat", label: "Stop current turn", shortcut: "⌘.", disabled: !isLoadingTurn, run: handleStop },
+      { id: "toggle-sidebar", section: "shell", label: sidebarCollapsed ? "Show sidebar" : "Hide sidebar", shortcut: "⌘B", run: () => setSidebarCollapsed((v) => !v) },
+      { id: "toggle-workbench", section: "shell", label: workbenchOpen ? "Hide workbench" : "Show workbench", shortcut: "⌘J", run: () => setWorkbenchOpen((v) => !v) },
+      { id: "toggle-theme", section: "shell", label: "Toggle dark / white theme", keywords: "light inverted mode", run: toggleTheme },
+      { id: "settings", section: "shell", label: "Open settings", run: openSettings },
+      { id: "devices", section: "shell", label: "Open devices and presence", run: () => setDevicesOpen(true) },
+      { id: "shortcuts", section: "shell", label: "Keyboard shortcuts", shortcut: "⌘/", run: () => pushToast("⌘/ctrl+k palette · b sidebar · j workbench · n new chat · . stop", "info") },
+    ];
+    for (const w of tree.workspaces) {
+      const personas = tree.personasOf(w.id) || [];
+      for (const persona of personas) {
+        for (const row of (tree.sessionRowsOf(w.id, persona.id) || []).slice(0, 8)) {
+          rows.push({
+            id: `open-${w.id}-${persona.id}-${row.chatId}`,
+            section: "chats",
+            label: row.label,
+            hint: `${w.label || w.id} / ${persona.name || persona.id}`,
+            keywords: `${w.id} ${persona.id} ${row.session} ${row.branch || ""} ${row.repo || ""}`,
+            run: () => selectChat(w.id, persona.id, row.chatId),
+          });
+        }
+      }
+    }
+    return rows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tree.workspaces, tree.personasOf, tree.sessionRowsOf, openChat?.id, openChat?.session, messages.length, isLoadingTurn, sidebarCollapsed, workbenchOpen, selWs, selPersona, headerChatTitle, exportOpenChat, forkChat, toggleTheme, pushToast]);
+
   if (inst.auth !== "ok") {
     return <AuthGate auth={inst.auth} />;
   }
@@ -1082,11 +1249,17 @@ export function App() {
           selWs={selWs}
           selPersona={selPersona}
           openChatId={openChat?.id ?? null}
+          width={sidebarWidth}
+          collapsed={sidebarCollapsed}
+          onResize={setSidebarWidth}
+          onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
           onExpandWs={tree.expandWs}
           onExpandPersona={tree.expandPersona}
           onSelectChat={(ws, p, id) => { selectChat(ws, p, id); setNavOpen(false); }}
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
+          onRenameChat={renameChat}
+          onForkChat={forkChat}
           onWorkspaceSettings={(ws) => { setWsModal({ id: ws }); setNavOpen(false); }}
           onDeleteWorkspace={async (ws) => {
             const inst0 = activeInstance;
@@ -1156,24 +1329,54 @@ export function App() {
           onOpenWorkspace={() => selWs && setWsModal({ id: selWs })}
           workspaceUnread={Object.values(tree.personaCounts[selWs] || {}).reduce((n, c) => n + (c.open ?? 0), 0)}
           onOpenNav={() => setNavOpen(true)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onToggleWorkbench={() => setWorkbenchOpen((v) => !v)}
+          workbenchOpen={workbenchOpen}
+          pendingApprovals={approvals.pendingCount}
+          controls={activeInstance ? (
+            <>
+              {wsHosts && hostPickerVisible(wsHosts) && (
+                <HostPicker
+                  rows={hostPickerRows(wsHosts)}
+                  binding={chatHostBinding}
+                  switching={hostSwitching}
+                  note={null}
+                  onSwitch={(id) => void handleSwitchHost(id)}
+                />
+              )}
+              <ProviderModelPicker
+                providers={chatProviders}
+                favorites={chatFavorites}
+                stale={providersStale}
+                disabled={providersDisabled}
+                pick={chatPicks[pickKey] ?? { provider: "", model: "" }}
+                onPick={(p) => {
+                  setChatPicks((prev) => {
+                    const next = { ...prev };
+                    if (p.provider || p.model) next[pickKey] = p;
+                    else delete next[pickKey];
+                    return next;
+                  });
+                  if (activeInstance && chatProviderScope.kind !== "remote") {
+                    void api.setModelPick(activeInstance, selWs, p.provider || "", p.model || "", openChat?.session || "").catch(() => {});
+                  }
+                }}
+                onStar={(p, star) => {
+                  if (activeInstance) void api.starFavorite(activeInstance, p.provider, p.model, star).then(setChatFavorites).catch(() => {});
+                }}
+              />
+              {isLoadingTurn && (
+                <button type="button" onClick={handleStop} title="Stop current turn (Ctrl/⌘ .)" aria-label="Stop current turn" className="inline-flex h-8 items-center gap-1 rounded-md border border-strong bg-surface px-2 text-[11px] font-mono text-ink-secondary hover:bg-elevated hover:text-ink-primary">
+                  <Square className="h-3 w-3" /> stop
+                </button>
+              )}
+            </>
+          ) : undefined}
         />
 
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {activeInstance ? (
             <>
-              {wsNote && (
-                <div className="shrink-0 flex items-center gap-2 px-3 py-1 border-b border-strong bg-surface font-mono text-[11px] text-red-500">
-                  <span className="flex-1 min-w-0 truncate">{wsNote}</span>
-                  <button
-                    type="button"
-                    onClick={() => setWsNote(null)}
-                    aria-label="Dismiss"
-                    className="shrink-0 inline-flex h-5 w-5 items-center justify-center text-ink-muted hover:text-ink-primary"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              )}
               {relayCompat.note && (
                 <div className="shrink-0 px-3 py-1 border-b border-strong bg-surface font-mono text-[11px] text-amber-500 truncate">
                   {relayCompat.note.compat.kind === "stale-local" && (
@@ -1205,24 +1408,7 @@ export function App() {
                     speakerName={tree.personasOf(selWs)?.find((p) => p.id === selPersona)?.name || selPersona || activeInstance.name}
                     messages={messages}
                     input={openChat?.input ?? ""}
-                    onInput={(v) => {
-                      if (!selKey) return;
-                      setChats((prev) => {
-                        const b = normBucket(prev[selKey] ?? EMPTY_BUCKET);
-                        const open = b.items.find((i) => i.id === b.openId);
-                        if (open) {
-                          return {
-                            ...prev,
-                            [selKey]: { ...b, items: b.items.map((i) => (i.id === open.id ? { ...i, input: v } : i)) },
-                          };
-                        }
-                        const id = crypto.randomUUID();
-                        return {
-                          ...prev,
-                          [selKey]: { openId: id, items: [...b.items, { id, session: "", messages: [], draft: true, input: v }] },
-                        };
-                      });
-                    }}
+                    onInput={setOpenChatInput}
                     onSendMessage={handleSendMessage}
                     onStop={handleStop}
                     isLoading={isLoadingTurn}
@@ -1276,6 +1462,27 @@ export function App() {
                           .catch(() => {});
                       }
                     }}
+                    emptyState={(
+                      <OnboardingEmpty
+                        workspace={selWs}
+                        persona={selPersona}
+                        hasWorkspace={Boolean(selWs)}
+                        hasPersona={Boolean(selPersona)}
+                        onPrompt={(text) => {
+                          setOpenChatInput(text);
+                          window.dispatchEvent(new Event("klanker:focus-composer"));
+                        }}
+                        onNewWorkspace={() => tree.workspaces.length === 0 && void dialogs.prompt("new workspace id").then((id) => {
+                          if (id?.trim() && activeInstance) {
+                            void api.createWorkspace(activeInstance, id.trim()).then((wsId) => {
+                              setSelWs(wsId);
+                              return api.listWorkspaces(activeInstance).then(tree.setWorkspaces);
+                            });
+                          }
+                        })}
+                      />
+                    )}
+                    approvalQueue={{ index: 1, total: approvals.pendingCount }}
                     pending={approvals.pending}
                     deciding={approvals.deciding}
                     decideError={approvals.decideError}
@@ -1393,6 +1600,8 @@ export function App() {
       {pairOpen && activeInstance && (
         <PairModal instance={activeInstance} onClose={() => setPairOpen(false)} />
       )}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} items={paletteItems} />
+      <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <DialogHost />
     </div>
   );
