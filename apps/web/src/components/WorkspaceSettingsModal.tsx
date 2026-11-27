@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Plus, QrCode, X } from "lucide-react";
 import type { HubDevice, KlankerInstance, WorkspaceHosts, WorkspaceRow } from "../types/klanker";
 import { api } from "../services/api";
-import { buildPolicyPatch, mergeDeviceRows, type RepoEditRow } from "../wsShare";
+import { buildPolicyPatch, deviceRoleBadge, mergeDeviceRows, shortId, type RepoEditRow } from "../wsShare";
 import { WsInviteCard } from "./WsInviteCard";
 
 const inputClass =
@@ -238,10 +238,11 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                   <option value="shared">shared — synced + open member join</option>
                 </select>
               </label>
-              <p className="text-[10px] text-[#525252]">
-                fail-closed: an unknown/missing policy reads as local and nothing is shared. Synced keeps the workspace
-                flowing to the member devices checked below.
-              </p>
+              {syncPolicy === "local" && !freezeWarning && (
+                <p className="text-[10px] text-[#525252]">
+                  Local workspace — data stays on this device only. Switch to Synced to share with paired devices.
+                </p>
+              )}
               {freezeWarning && (
                 <p className="text-[10px] text-amber-500">
                   switching to local freezes sync — member devices stop receiving updates and keep their last synced copy.
@@ -251,8 +252,9 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                 <p className="text-[10px] text-amber-500">hub offline — member devices are unreachable right now.</p>
               )}
 
+              {syncPolicy !== "local" && (
               <div className="flex flex-col gap-1">
-                <span className={labelClass}>member devices (sync_hosts)</span>
+                <span className={labelClass}>Shared devices</span>
                 {hostsNote && <p className="text-[10px] text-red-500">{hostsNote}</p>}
                 {deviceRows.length === 0 && !hostsNote && (
                   <p className="text-[10px] text-[#525252]">no paired devices — invite one below.</p>
@@ -271,8 +273,10 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                         onChange={() => toggleHost(d.device_id)}
                         aria-label={`sync member ${d.label}`}
                       />
-                      <span className="text-white truncate">{d.label}</span>
-                      <span className="text-[#525252] truncate text-[10px]">{d.device_id}</span>
+                      <span className="text-white truncate">{d.label || shortId(d.device_id)}</span>
+                      {d.label && d.label !== d.device_id && (
+                        <span className="text-[#525252] truncate text-[10px]">{shortId(d.device_id)}</span>
+                      )}
                       <span
                         className={`ml-auto shrink-0 px-1.5 py-0.5 rounded-full border text-[9px] uppercase tracking-wider ${
                           d.online ? "border-white text-white" : "border-[#262626] text-[#737373]"
@@ -281,13 +285,16 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                         {d.online ? "online" : "offline"}
                       </span>
                       <span className="shrink-0 px-1.5 py-0.5 rounded-full border border-[#262626] text-[9px] uppercase tracking-wider text-[#737373]">
-                        {d.role}
+                        {deviceRoleBadge(d.role)}
                       </span>
                     </label>
                   ))}
                 </div>
               </div>
+              )}
 
+              {syncPolicy !== "local" && (
+              <>
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>default host — where sessions execute</span>
                 <select
@@ -302,7 +309,8 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                     .filter((d) => checkedHosts.has(d.device_id) || d.member)
                     .map((d) => (
                       <option key={d.device_id} value={d.device_id}>
-                        {d.label} ({d.device_id})
+                        {d.label || shortId(d.device_id)}
+                        {d.label && d.label !== d.device_id ? ` (${shortId(d.device_id)})` : ""}
                       </option>
                     ))}
                 </select>
@@ -368,7 +376,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                       className={inputClass}
                       value={r.path}
                       onChange={(e) => setRepo(i, { path: e.target.value })}
-                      placeholder="checkout path on this device — stored locally, never synced"
+                      placeholder="checkout path — stays local to this device only"
                       aria-label={`repo ${i + 1} checkout path`}
                     />
                   </div>
@@ -381,8 +389,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                   <Plus className="w-3 h-3" /> add repo
                 </button>
                 <p className="text-[10px] text-[#525252]">
-                  slug + git url + checkout mode sync to members; the checkout path stays on this device (host-local
-                  host_paths.json) and never enters the patch.
+                  slug + git url + checkout mode sync to members. Checkout path stays local to this device only.
                 </p>
               </div>
 
@@ -393,10 +400,12 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
                   className="inline-flex items-center gap-1.5 self-start px-3 py-1.5 border border-[#262626] rounded bg-[#141414] text-white hover:bg-[#1f1f1f]"
                 >
                   <QrCode className="w-3.5 h-3.5" />
-                  {inviteOpen ? "hide invite" : "invite device (QR / code)"}
+                  {inviteOpen ? "hide guest invite" : "+ Invite guest to this workspace only (QR / code)"}
                 </button>
                 {inviteOpen && <WsInviteCard ws={workspace.id} ttlSec={60} />}
               </div>
+              </>
+              )}
             </div>
           )}
 
@@ -413,7 +422,7 @@ export const WorkspaceSettingsModal: React.FC<Props> = ({ instance, workspace, o
               type="button"
               onClick={() => void save()}
               disabled={busy}
-              className="px-3 py-1.5 border border-[#262626] rounded bg-[#141414] text-white hover:bg-[#1f1f1f] disabled:opacity-50"
+              className="px-3 py-1.5 border border-white rounded bg-white text-black hover:bg-[#e5e5e5] disabled:opacity-50"
             >
               {busy ? "saving…" : "save"}
             </button>

@@ -1,5 +1,5 @@
 import React from "react";
-import { Globe, Layers, Menu, Minus, QrCode, Settings, SlidersHorizontal, Square, Volume2, VolumeX, X } from "lucide-react";
+import { Globe, Layers, Menu, Minus, Settings, SlidersHorizontal, Square, Volume2, VolumeX, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
 
 interface HeaderProps {
@@ -20,7 +20,6 @@ interface HeaderProps {
   onOpenSettings: () => void;
   onOpenManage: () => void;
   onOpenNav: () => void;
-  onOpenPair?: () => void;
   showStoreToggle?: boolean;
   storeOpen?: boolean;
   onToggleStore?: () => void;
@@ -64,7 +63,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSettings,
   onOpenManage,
   onOpenNav,
-  onOpenPair,
   showStoreToggle,
   storeOpen,
   onToggleStore,
@@ -116,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
             className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1.5 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
           >
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${pill.dot}`} />
-            <span className="hidden md:inline">{pill.label}</span>
+            <span className="hidden md:inline">Devices · {pill.label}</span>
           </button>
         )}
         {activeInstance && showStoreToggle && onToggleStore && (
@@ -147,17 +145,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             {voiceEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
             <span className="hidden md:inline">Voice</span>
-          </button>
-        )}
-        {activeInstance && onOpenPair && (
-          <button
-            type="button"
-            onClick={onOpenPair}
-            aria-label="Pair device"
-            className="inline-flex h-11 min-w-11 md:h-8 md:min-w-0 items-center justify-center gap-1 px-3 bg-[#0a0a0a] hover:bg-[#141414] border border-[#262626] rounded text-xs font-mono text-[#a3a3a3] hover:text-white transition-colors"
-          >
-            <QrCode className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Pair</span>
           </button>
         )}
         {activeInstance && (

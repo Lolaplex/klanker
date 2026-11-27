@@ -157,3 +157,40 @@ export function resolveInviteUrl(pairUrl: string, baseUrl: string): { url: strin
   const url = raw.startsWith("/") && base ? `${base}${raw}` : raw;
   return { url, loopback: isLoopbackOrigin(url) };
 }
+
+/** Minted-pair link view: the copyable link row / QR payload only exists
+ *  when the minted url actually carries a pair credential. `#kind=remote&pair=…`
+ *  never contains the literal `#pair=` substring — key-only matching, not
+ *  hash-prefix matching (klanker#159 U04 line-86 bug). */
+export function pairLinkView(resolvedUrl: string): { linkUrl: string; loopback: boolean } {
+  const linkUrl = resolvedUrl.includes("pair=") ? resolvedUrl : "";
+  return { linkUrl, loopback: linkUrl ? isLoopbackOrigin(linkUrl) : false };
+}
+
+/** The redeemable invite a user copies out of the pair-confirm prompt:
+ *  origin + the ORIGINAL fragment captured before replaceState cleared it —
+ *  a bare token is not parseable by parsePairInput (klanker#159 U04). */
+export function fullInviteUrl(origin: string, hash: string): string {
+  const o = (origin || "").replace(/\/+$/, "");
+  const h = (hash || "").trim();
+  if (!o || !h) return "";
+  return `${o}/${h.startsWith("#") ? h : `#${h}`}`;
+}
+
+/** via="relay" ops-remote mounts cannot carry browser pairing or
+ *  workspace-member channel sync — refuse those modes with a reason the
+ *  operator can act on (klanker#159 U04). */
+export function relayMountError(mode: string): string | null {
+  if (mode === "web") return "that link pairs a browser — open it on the device itself";
+  if (mode === "ws") return "that link joins a workspace — use the Connect form above, not an ops remote";
+  return null;
+}
+
+/** The label a device registers under on the hub: the operator-typed
+ *  device name wins, the picked tailnet peer hostname is the fallback —
+ *  never empty, so a connect never lists as a bare ip (klanker#159 U04). */
+export function deviceConnectLabel(deviceName: string, peerHostname?: string | null): string {
+  const typed = (deviceName || "").trim();
+  if (typed) return typed;
+  return (peerHostname || "").trim();
+}

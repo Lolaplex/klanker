@@ -676,22 +676,6 @@ export function App() {
 
   // Hub LAN toggle (devices panel): persist the setting then restart the
   // managed serve so the new bind host actually takes effect.
-  const handleToggleHubMode = async (on: boolean) => {
-    await updateSettings((current) => ({ ...current, hub_mode: on }));
-    if (caps.spawn) {
-      try {
-        await api.serveRestart(on);
-        const saved = inst.instancesRef.current.find((i) => i.id === "local");
-        if (saved) {
-          const st = await api.getGatewayStatus(saved);
-          inst.setHerd((prev) => ({ ...prev, local: st }));
-        }
-      } catch (e) {
-        setWsNote(`hub mode: ${e instanceof Error ? e.message : e}`);
-      }
-    }
-  };
-
   const handleCreate = (draft: KlankerInstance) =>
     handleSaveInstance({ ...draft, provider: "" });
 
@@ -1139,7 +1123,6 @@ export function App() {
           onOpenSettings={openSettings}
           onOpenManage={() => setManageOpen(true)}
           onOpenNav={() => setNavOpen(true)}
-          onOpenPair={() => setPairOpen(true)}
           showStoreToggle={storeSupported}
           storeOpen={storeOpen}
           onToggleStore={() => setStoreOpen((o) => !o)}
@@ -1304,9 +1287,7 @@ export function App() {
         <DevicesPanel
           instance={devicesInst}
           status={inst.herd.local ?? null}
-          settings={settings}
           instances={inst.instances}
-          onToggleHubMode={handleToggleHubMode}
           onEditInstance={(i) => {
             setDevicesOpen(false);
             setInstanceSheetInst(i);
@@ -1314,6 +1295,10 @@ export function App() {
           onConnect={() => {
             setDevicesOpen(false);
             setIsNewModalOpen(true);
+          }}
+          onPair={() => {
+            setDevicesOpen(false);
+            setPairOpen(true);
           }}
           onClose={() => setDevicesOpen(false)}
         />
@@ -1371,7 +1356,7 @@ export function App() {
         />
       )}
       {pairOpen && activeInstance && (
-        <PairModal instance={activeInstance} workspace={selWs} onClose={() => setPairOpen(false)} />
+        <PairModal instance={activeInstance} onClose={() => setPairOpen(false)} />
       )}
       <DialogHost />
     </div>

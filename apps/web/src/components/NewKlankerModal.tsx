@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Radar, X } from "lucide-react";
 import { DiscoveredPeer, KlankerInstance } from "../types/klanker";
 import { api } from "../services/api";
-import { parseBareCode, parsePairInput } from "../pairLink";
+import {parseBareCode, parsePairInput, relayMountError, deviceConnectLabel } from "../pairLink";
 
 interface NewKlankerModalProps {
   isOpen: boolean;
@@ -36,6 +36,7 @@ function blankInstance(name: string): KlankerInstance {
 
 export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClose, onSave, onConnected }) => {
   const [pairInput, setPairInput] = useState("");
+  const [deviceName, setDeviceName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -51,6 +52,24 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
   // Scan on open, then keep scanning while the modal is up so peers
   // pop in live. One scan at a time; a failed pass keeps the last good
   // list instead of blanking it.
+  // Prefill the device name from this host's own label — a connect never
+  // registers as "127.0.0.1" on the hub (klanker#159 U04).
+  useEffect(() => {
+    if (!isOpen) return;
+    let stop = false;
+    void api
+      .fetchHostInfo()
+      .then((info) => {
+        if (!stop && info.host_label) {
+          setDeviceName((cur) => cur || info.host_label);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      stop = true;
+    };
+  }, [isOpen]);
+
   useEffect(() => {
     if (!isOpen) return;
     let stop = false;
@@ -121,7 +140,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
       const res = await api.connectHub({
         url: target.origin,
         code: target.credential,
-        label: pickedPeer?.hostname || "",
+        label: deviceConnectLabel(deviceName, pickedPeer?.hostname),
       });
       if (!res.ok) throw new Error(res.error || "hub connect failed");
       onConnected?.();
@@ -149,8 +168,9 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
     try {
       const probe = { ...blankInstance("pair-probe"), endpoint: { base_url: target.origin } };
       const res = await api.redeemPairToken(probe, target.credential);
-      if (res.mode === "web") {
-        throw new Error("that link pairs a browser — open it on the device itself");
+      const mountError = relayMountError(String(res.mode || ""));
+      if (mountError) {
+        throw new Error(mountError);
       }
       if (!res.token) {
         throw new Error("relay returned no token");
@@ -215,6 +235,14 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
               onChange={(e) => setPairInput(e.target.value)}
               className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
             />
+            <input
+              type="text"
+              aria-label="Device name"
+              placeholder="device name — how the hub lists this machine"
+              value={deviceName}
+              onChange={(e) => setDeviceName(e.target.value)}
+              className="w-full bg-[#121212] border border-[#262626] focus:border-white rounded px-2.5 py-1.5 text-white outline-none"
+            />
             {pickedPeer && (
               <p className="text-[10px] text-[#525252]">
                 mint an invite on {pickedPeer.endpoint.replace(/^https?:\/\//, "")} (share sheet → invite device), then type it here.
@@ -232,6 +260,7 @@ export const NewKlankerModal: React.FC<NewKlankerModalProps> = ({ isOpen, onClos
           </form>
 
           <div className="border border-[#262626] rounded p-2">
+            <div className="px-1 pb-1 text-[10px] uppercase tracking-wider text-[#525252]">Nearby Tailscale devices</div>
             {offers && offers.length > 0 ? (
               <div className="space-y-1">
                 {offers.map((peer) => (

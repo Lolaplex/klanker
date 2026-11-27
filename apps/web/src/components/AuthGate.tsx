@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, localInstance } from "../services/api";
-import { classifyPairHash } from "../pairLink";
+import {classifyPairHash, fullInviteUrl } from "../pairLink";
 
 export type AuthState = "checking" | "needed" | "ok";
 
@@ -8,6 +8,10 @@ interface PairPrompt {
   token: string;
   ws: string;
   mode: string;
+  /** Full original `#…` fragment captured before replaceState clears it —
+   *  "copy invite for the app" must copy a link parsePairInput accepts,
+   *  not a bare token nobody can redeem (klanker#159 U04). */
+  hash: string;
 }
 
 /** Same-origin relay token gate. "checking" renders the quiet spinner,
@@ -50,13 +54,14 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
   // workspace invite — burning the single-use token in a browser would
   // mint a device credential nobody holds, so the user picks intent first.
   useEffect(() => {
-    const action = classifyPairHash(window.location.hash);
+    const originalHash = window.location.hash;
+    const action = classifyPairHash(originalHash);
     if (action.kind === "none") return;
     try {
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     } catch {}
     if (action.kind === "confirm") {
-      setPairPrompt({ token: action.token, ws: action.ws, mode: action.mode });
+      setPairPrompt({ token: action.token, ws: action.ws, mode: action.mode, hash: originalHash });
       return;
     }
     let stop = false;
@@ -133,7 +138,8 @@ export function AuthGate({ auth }: { auth: Exclude<AuthState, "ok"> }) {
           <button
             type="button"
             onClick={() => {
-              void navigator.clipboard?.writeText(pairPrompt.token).then(() => setPairCopied(true)).catch(() => {});
+              const inviteUrl = fullInviteUrl(window.location.origin, pairPrompt.hash);
+              void navigator.clipboard?.writeText(inviteUrl).then(() => setPairCopied(true)).catch(() => {});
             }}
             className="border border-[#262626] px-3 py-2 text-left hover:bg-[#171717]"
           >

@@ -253,6 +253,11 @@ export interface HubLink {
 }
 
 /** POST /v1/hub/connect result (200); failures throw with the relay error. */
+export interface HostInfo {
+  host_id: string;
+  host_label: string;
+}
+
 export interface HubConnectResult {
   ok: boolean;
   hub_id?: string;
