@@ -50,6 +50,7 @@ describe("U18 ordered tool timeline projection", () => {
     const html = await htmlOf(React.createElement(ToolTimeline, {
       steps: [{ id: "1", kind: "tool", title: "grep", status: "error", args: "pat", result: "none", error: "exit 2", durationMs: 9 }],
       usage: { tokensIn: 3, tokensOut: 2, costUsd: 0.1, model: "m" },
+      defaultOpen: true,
     }));
     assert.ok(html.includes("tool-timeline"));
     assert.ok(html.includes("grep"));
@@ -88,8 +89,8 @@ describe("U18 power composer contracts", () => {
     assert.ok(pc.includes("refreshProviders"));
     assert.ok(readFileSync("src/services/streamExtrasApi.ts", "utf-8").includes("/v1/providers?refresh=1"));
     assert.ok(pc.includes("transcribeVoice"));
-    assert.ok(pc.includes("speakVoice"));
-    assert.ok(pc.includes("speechSynthesis"), "browser fallback on 503/unconfigured voice");
+    assert.ok(pc.includes("speakText"));
+    assert.ok(readFileSync("src/services/streamExtrasApi.ts", "utf-8").includes("speechSynthesis"), "browser fallback on 503/unconfigured voice");
     assert.ok(pc.includes("data:") && pc.includes("image attachment"), "image thumbnails in composer staging");
     assert.ok(cc.includes("imageCacheRef"), "sent image thumbnail lookup survives attachment clearing");
   });

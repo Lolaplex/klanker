@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Bot, User, Paperclip, RotateCcw } from "lucide-react";
+import { Bot, User, Paperclip, RotateCcw, GitFork, Volume2 } from "lucide-react";
 import { shouldSubmitOnEnter, focusWithoutScroll } from "../chatUi";
 import { splitThinking } from "../thinkingParse";
 import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow } from "../types/klanker";
@@ -9,7 +9,7 @@ import { ApprovalReview } from "./ApprovalReview";
 import { MarkdownMessage } from "./MarkdownMessage";
 import type { HostBinding, HostRow } from "../hostPicker";
 import { api } from "../services/api";
-import { injectSteer } from "../services/streamExtrasApi";
+import { injectSteer, speakText } from "../services/streamExtrasApi";
 import { asSteerEvent, TURN_EVENT_NAME, type TurnEvent } from "../turnStream";
 import { PowerComposer } from "./PowerComposer";
 import { applyLiveTurnEvent, stepsFromSessionEvents, ToolTimeline, usageFromTurnEvent, type TimelineStep, type UsageStats } from "./ToolTimeline";
@@ -361,6 +361,20 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   };
   const streamingBubble = isLoading && last?.role === "klanker";
   const displaySpeaker = speakerName || instance.name;
+  const timelineTargetId = streamingBubble && last ? last.id : lastAssistantIdx >= 0 ? messages[lastAssistantIdx].id : "";
+  const messageOrdinals = new Map<string, number>();
+  let ordinal = 0;
+  for (const m of messages) {
+    if (m.content && (m.role === "user" || m.role === "klanker")) messageOrdinals.set(m.id, ++ordinal);
+  }
+  const forkFrom = (m: ChatMessage) => {
+    const messageIndex = messageOrdinals.get(m.id) || 0;
+    if (!activeSession || !messageIndex) return undefined;
+    return () => window.dispatchEvent(new CustomEvent("klanker:fork-session", {
+      detail: { workspace: wsId, persona: personaId, session: activeSession, message_index: messageIndex },
+    }));
+  };
+  const timelineNode = <ToolTimeline steps={timelineSteps} usage={usage} defaultOpen={isLoading} />;
 
   return (
     <div className="relative flex-1 flex flex-col bg-main overflow-hidden font-mono text-xs">
@@ -400,7 +414,6 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             ))}
           </div>
         ) : null}
-        <ToolTimeline steps={timelineSteps} usage={usage} />
         {messages.length === 0 && emptyState ? (
           emptyState
         ) : messages.length === 0 ? (
@@ -415,20 +428,25 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
           </div>
         ) : (
           messages.map((m, i) => (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              name={displaySpeaker}
-              thinking={streamingBubble && m.id === last?.id && !m.content}
-              streaming={streamingBubble && m.id === last?.id}
-              streamStatus={streamingBubble && m.id === last?.id ? streamStatus : undefined}
-              liveThought={m.id === last?.id ? liveThought : ""}
-              imageFor={(name) => imageCacheRef.current.get(name) || null}
-              onRegenerate={i === lastAssistantIdx && !isLoading ? regenerate : undefined}
-            />
+            <React.Fragment key={m.id}>
+              {m.id === timelineTargetId ? timelineNode : null}
+              <MessageBubble
+                instance={instance}
+                message={m}
+                name={displaySpeaker}
+                thinking={streamingBubble && m.id === last?.id && !m.content}
+                streaming={streamingBubble && m.id === last?.id}
+                streamStatus={streamingBubble && m.id === last?.id ? streamStatus : undefined}
+                liveThought={m.id === last?.id ? liveThought : ""}
+                imageFor={(name) => imageCacheRef.current.get(name) || null}
+                onRegenerate={i === lastAssistantIdx && !isLoading ? regenerate : undefined}
+                onFork={forkFrom(m)}
+              />
+            </React.Fragment>
           ))
         )}
 
+        {!timelineTargetId && messages.length > 0 ? timelineNode : null}
         {(isLoading || (remoteActive && last?.role === "user")) && !streamingBubble && (
           <div className="flex flex-col items-start">
             <div className="flex items-center space-x-1.5 mb-1 text-[10px] text-ink-dim px-1">
@@ -484,6 +502,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 };
 
 const MessageBubble = React.memo(function MessageBubble({
+  instance,
   message,
   name,
   thinking,
@@ -492,7 +511,9 @@ const MessageBubble = React.memo(function MessageBubble({
   liveThought = "",
   imageFor,
   onRegenerate,
+  onFork,
 }: {
+  instance: KlankerInstance;
   message: ChatMessage;
   name: string;
   thinking: boolean;
@@ -508,14 +529,26 @@ const MessageBubble = React.memo(function MessageBubble({
   /** Latest assistant answer only: hover control resends the preceding
    *  user message (klanker#163 U08). */
   onRegenerate?: () => void;
+  onFork?: () => void;
 }) {
   const mine = message.role === "user";
+  const [speaking, setSpeaking] = useState(false);
   // <think> extraction: reasoning sits in a collapsible accordion above
   // the answer body; while streaming an unclosed trailing tag counts too.
   const thinkSplit = !mine && message.content ? splitThinking(message.content) : null;
+  const spokenText = mine ? message.content : thinkSplit ? thinkSplit.body : message.content;
+  const speak = async () => {
+    if (!spokenText.trim() || speaking) return;
+    setSpeaking(true);
+    try {
+      await speakText(instance, spokenText);
+    } finally {
+      setSpeaking(false);
+    }
+  };
   return (
     <div className={`group flex w-full ${mine ? "justify-end" : "justify-start"}`}>
-      <div className={`flex min-w-0 max-w-[85%] flex-col ${mine ? "items-end" : "items-start"}`}>
+      <div className={`flex min-w-0 flex-col ${mine ? "max-w-[85%] items-end" : "w-full max-w-full items-start"}`}>
         <div className="mb-1 flex select-none items-center space-x-1.5 px-1 text-[10px] text-ink-dim">
           {mine ? (
             <>
@@ -536,24 +569,51 @@ const MessageBubble = React.memo(function MessageBubble({
               <span className="text-ink-muted">{message.elapsed_ms}ms</span>
             </>
           ) : null}
-          {message.content ? (
-            <CopyButton
-              text={message.content}
-              label="Copy message"
-              borderless
-              className="!h-5 !w-5 text-ink-dim opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
-            />
-          ) : null}
-          {onRegenerate ? (
-            <button
-              type="button"
-              onClick={onRegenerate}
-              title="Regenerate — resend the previous user message"
-              aria-label="Regenerate response"
-              className="inline-flex !h-5 !w-5 items-center justify-center text-ink-dim hover:text-ink-primary opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
-            >
-              <RotateCcw className="w-3 h-3" />
-            </button>
+          {(message.content || onRegenerate || onFork) ? (
+            <div data-testid="message-actions" className="ml-1 inline-flex shrink-0 items-center gap-0.5 rounded-md border border-subtle bg-surface px-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
+              {message.content ? (
+                <CopyButton
+                  text={message.content}
+                  label="Copy message"
+                  borderless
+                  className="!h-6 !w-6 text-ink-dim [@media(hover:none)]:!h-8 [@media(hover:none)]:!w-8"
+                />
+              ) : null}
+              {onRegenerate ? (
+                <button
+                  type="button"
+                  onClick={onRegenerate}
+                  title="Regenerate — resend the previous user message"
+                  aria-label="Regenerate response"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-ink-dim hover:bg-hover hover:text-ink-primary [@media(hover:none)]:h-8 [@media(hover:none)]:w-8"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                </button>
+              ) : null}
+              {onFork ? (
+                <button
+                  type="button"
+                  onClick={onFork}
+                  title="Fork from here"
+                  aria-label="Fork from here"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-ink-dim hover:bg-hover hover:text-ink-primary [@media(hover:none)]:h-8 [@media(hover:none)]:w-8"
+                >
+                  <GitFork className="w-3 h-3" />
+                </button>
+              ) : null}
+              {spokenText.trim() ? (
+                <button
+                  type="button"
+                  onClick={() => void speak()}
+                  disabled={speaking}
+                  title="Speak message"
+                  aria-label="Speak message"
+                  className="inline-flex h-6 w-6 items-center justify-center rounded text-ink-dim hover:bg-hover hover:text-ink-primary disabled:opacity-40 [@media(hover:none)]:h-8 [@media(hover:none)]:w-8"
+                >
+                  <Volume2 className={`w-3 h-3 ${speaking ? "animate-pulse" : ""}`} />
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
         <div
@@ -584,7 +644,7 @@ const MessageBubble = React.memo(function MessageBubble({
               <MarkdownMessage text={thinkSplit ? thinkSplit.body : message.content} />
             )
           ) : (
-            <div className="whitespace-pre-wrap break-words">
+            <div className="whitespace-pre-wrap break-words font-sans text-[14px] leading-[1.65]">
               {message.content || (thinking ? streamStatus || "thinking..." : "")}
             </div>
           )}

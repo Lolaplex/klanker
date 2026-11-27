@@ -335,6 +335,79 @@ def _git_diff_bounded(repo: Path, rel_posix: str = "") -> tuple[str, bool]:
     return clipped, True
 
 
+def _workspace_git_target(ws: Any) -> Path | None:
+    wd = getattr(ws, "workdir", None)
+    if not wd or not Path(wd).is_dir():
+        return None
+    cand = Path(wd).resolve()
+    rc_git, _, _ = _git_utf8(cand, "rev-parse", "--is-inside-work-tree")
+    return cand if rc_git == 0 else None
+
+
+def _write_git_status(
+    h: Any,
+    target: Path | None,
+    rel_file: str,
+    *,
+    view: dict[str, Any] | None = None,
+    bound: str = "",
+) -> None:
+    view = view or {}
+    if target is None:
+        h._write_json(
+            {
+                "ok": True,
+                "is_git": False,
+                "branch": str(view.get("branch") or ""),
+                "repo": str(view.get("repo") or ""),
+                "worktree": "",
+                "dirty_files": [],
+                "wip_unpushed": bool(view.get("wip_unpushed")),
+                "diff": "",
+                "diff_truncated": False,
+            },
+            200,
+        )
+        return
+    rel_posix = ""
+    if rel_file:
+        from agents_terminal.readonly import ReadonlyError, resolve_path
+
+        try:
+            resolved_file = resolve_path(target, rel_file, follow_final=True)
+            rel_posix = resolved_file.relative_to(target.resolve()).as_posix()
+        except ReadonlyError as exc:
+            st, msg = _readonly_error_status(exc)
+            h.send_error(st, msg)
+            return
+        except ValueError:
+            h.send_error(403, "path escapes git root")
+            return
+    rc_b, branch_out, _ = _git_utf8(target, "rev-parse", "--abbrev-ref", "HEAD")
+    branch = branch_out.strip() if rc_b == 0 else str(view.get("branch") or "")
+    _, status_out, _ = _git_utf8(target, "status", "--porcelain")
+    dirty_files = [
+        {"status": ln[:2].strip(), "path": ln[3:].strip()}
+        for ln in status_out.splitlines()
+        if len(ln) >= 4
+    ]
+    diff_text, diff_truncated = _git_diff_bounded(target, rel_posix)
+    h._write_json(
+        {
+            "ok": True,
+            "is_git": True,
+            "branch": branch,
+            "repo": str(view.get("repo") or ""),
+            "worktree": str(target) if bound else "",
+            "dirty_files": dirty_files,
+            "wip_unpushed": bool(view.get("wip_unpushed")),
+            "diff": diff_text,
+            "diff_truncated": diff_truncated,
+        },
+        200,
+    )
+
+
 def _skill_md_path(ws: Any, name: str) -> tuple[Path | None, int, str]:
     if not _SKILL_NAME_RE.fullmatch(name) or name in (".", ".."):
         status = 403 if name in (".", "..") else 400
@@ -443,6 +516,10 @@ def _get(h: Any, path: str, q: dict[str, str]) -> None:
         report = collect_checks().to_dict()
         h._write_json({"ok": True, **report}, 200)
         return
+    if path == f"{_PREFIX}/git":
+        ws = _resolve_ws(q.get("workspace", ""))
+        _write_git_status(h, _workspace_git_target(ws), (q.get("file") or "").strip())
+        return
     if path == f"{_PREFIX}/stats":
         from agents_traces.stats import compute_stats
         from agents_traces.store import TraceStore
@@ -545,7 +622,7 @@ def _get(h: Any, path: str, q: dict[str, str]) -> None:
         )
         return
     if len(parts) == 6 and parts[1] == "v1" and parts[2] == "klanker" and parts[3] == "sessions" and parts[5] == "git":
-        from .session import InvalidSessionId, _bound_workdir, _inside_root, session_view, validate_session_id
+        from .session import InvalidSessionId, _bound_workdir, _inside_root, _resolved_root, session_view, validate_session_id
 
         sid = parts[4]
         try:
@@ -570,66 +647,18 @@ def _get(h: Any, path: str, q: dict[str, str]) -> None:
             view = {}
             bound = ""
         target: Path | None = None
-        if bound and Path(bound).is_dir() and _inside_root(Path(bound)):
+        bound_used = ""
+        if bound and Path(bound).is_dir() and _inside_root(Path(bound), _resolved_root()):
             target = Path(bound).resolve()
-        elif getattr(ws, "workdir", None) and Path(ws.workdir).is_dir():
-            cand = Path(ws.workdir).resolve()
-            rc_git, _, _ = _git_utf8(cand, "rev-parse", "--is-inside-work-tree")
-            if rc_git == 0:
-                target = cand
-        if target is None:
-            h._write_json(
-                {
-                    "ok": True,
-                    "is_git": False,
-                    "branch": str(view.get("branch") or ""),
-                    "repo": str(view.get("repo") or ""),
-                    "worktree": "",
-                    "dirty_files": [],
-                    "wip_unpushed": bool(view.get("wip_unpushed")),
-                    "diff": "",
-                    "diff_truncated": False,
-                },
-                200,
-            )
-            return
-        rel_file = (q.get("file") or "").strip()
-        rel_posix = ""
-        if rel_file:
-            from agents_terminal.readonly import ReadonlyError, resolve_path
-
-            try:
-                resolved_file = resolve_path(target, rel_file, follow_final=True)
-                rel_posix = resolved_file.relative_to(target.resolve()).as_posix()
-            except ReadonlyError as exc:
-                st, msg = _readonly_error_status(exc)
-                h.send_error(st, msg)
-                return
-            except ValueError:
-                h.send_error(403, "path escapes git root")
-                return
-        rc_b, branch_out, _ = _git_utf8(target, "rev-parse", "--abbrev-ref", "HEAD")
-        branch = branch_out.strip() if rc_b == 0 else str(view.get("branch") or "")
-        _, status_out, _ = _git_utf8(target, "status", "--porcelain")
-        dirty_files = [
-            {"status": ln[:2].strip(), "path": ln[3:].strip()}
-            for ln in status_out.splitlines()
-            if len(ln) >= 4
-        ]
-        diff_text, diff_truncated = _git_diff_bounded(target, rel_posix)
-        h._write_json(
-            {
-                "ok": True,
-                "is_git": True,
-                "branch": branch,
-                "repo": str(view.get("repo") or ""),
-                "worktree": str(target) if bound else "",
-                "dirty_files": dirty_files,
-                "wip_unpushed": bool(view.get("wip_unpushed")),
-                "diff": diff_text,
-                "diff_truncated": diff_truncated,
-            },
-            200,
+            bound_used = bound
+        else:
+            target = _workspace_git_target(ws)
+        _write_git_status(
+            h,
+            target,
+            (q.get("file") or "").strip(),
+            view=view,
+            bound=bound_used,
         )
         return
     h.send_error(404)
@@ -740,7 +769,12 @@ def _post(h: Any, path: str, q: dict[str, str]) -> None:
             h.send_error(400, "source_session is required")
             return
         try:
-            sid = fork_session(src, new_id, traces_dir=ws.traces)
+            sid = fork_session(
+                src,
+                new_id,
+                traces_dir=ws.traces,
+                through_message=body.get("through_message"),
+            )
         except ValueError as exc:
             msg = str(exc)
             st = 404 if "unknown or empty" in msg else 400

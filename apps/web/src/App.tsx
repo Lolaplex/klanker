@@ -64,6 +64,7 @@ import { useRelayCompat } from "./hooks/useRelayCompat";
 import { HostPicker } from "./components/HostPicker";
 import { ProviderModelPicker } from "./components/ProviderModelPicker";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
+import { ShortcutsModal, isEditableTarget } from "./components/ShortcutsModal";
 import { ToastStack, type ToastItem } from "./components/ToastStack";
 import { OnboardingEmpty } from "./components/OnboardingEmpty";
 import { chatToJson, chatToMarkdown, downloadText, exportStem } from "./chatExport";
@@ -134,6 +135,7 @@ export function App() {
   const [hostSwitching, setHostSwitching] = useState(false);
   const [hostNote, setHostNote] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [workbenchTab, setWorkbenchTab] = useState<WorkbenchTabId>("changes");
   const [workbenchDetail, setWorkbenchDetail] = useState<WorkbenchDetail | null>(null);
@@ -1127,10 +1129,10 @@ export function App() {
     pushToast(`exported chat as .${fmt}`, "success");
   }, [activeInstance?.name, messages, openChat?.session, pushToast, selPersona, selWs, tree]);
 
-  const forkChat = useCallback((ws: string, persona: string, row: SessionRow) => {
+  const forkChat = useCallback((ws: string, persona: string, row: SessionRow, throughMessage = 0) => {
     const inst0 = activeInstance;
     if (!inst0 || !row.session) return;
-    void forkSession(inst0, ws, row.session)
+    void forkSession(inst0, ws, row.session, "", throughMessage)
       .then((r) => {
         pushToast(`forked into ${r.session}`, "success");
         tree.expandPersona(ws, persona);
@@ -1169,7 +1171,8 @@ export function App() {
       const ws = String(d.workspace || selWsRef.current || "");
       const persona = String(d.persona || selPersonaRef.current || "default");
       const session = String(d.session || d.source_session || "");
-      if (ws && session) forkChat(ws, persona, { chatId: session, session, label: session, pending: false });
+      const throughMessage = Math.max(0, Math.floor(Number(d.message_index || 0) || 0));
+      if (ws && session) forkChat(ws, persona, { chatId: session, session, label: session, pending: false }, throughMessage);
     };
     const clear = (event: Event) => {
       const d = detailOf(event);
@@ -1226,8 +1229,13 @@ export function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
       const key = e.key.toLowerCase();
+      if (!mod && !e.altKey && e.key === "?" && !isEditableTarget(e.target)) {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+        return;
+      }
+      if (!mod) return;
       if (key === "k") {
         e.preventDefault();
         setPaletteOpen((v) => !v);
@@ -1247,8 +1255,7 @@ export function App() {
         }
       } else if (key === "/") {
         e.preventDefault();
-        setPaletteOpen(true);
-        pushToast("shortcuts: ⌘/ctrl+k palette · b sidebar · j workbench · n new chat · . stop", "info");
+        setShortcutsOpen(true);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1268,7 +1275,7 @@ export function App() {
       { id: "toggle-theme", section: "shell", label: "Toggle dark / white theme", keywords: "light inverted mode", run: toggleTheme },
       { id: "settings", section: "shell", label: "Open settings", run: openSettings },
       { id: "devices", section: "shell", label: "Open devices and presence", run: () => setDevicesOpen(true) },
-      { id: "shortcuts", section: "shell", label: "Keyboard shortcuts", shortcut: "⌘/", run: () => pushToast("⌘/ctrl+k palette · b sidebar · j workbench · n new chat · . stop", "info") },
+      { id: "shortcuts", section: "shell", label: "Keyboard shortcuts", shortcut: "?", run: () => setShortcutsOpen(true) },
     ];
     for (const w of tree.workspaces) {
       const personas = tree.personasOf(w.id) || [];
@@ -1589,6 +1596,7 @@ export function App() {
                     instance={activeInstance}
                     workspace={selWs || "default"}
                     session={openChat?.session || ""}
+                    sessionTitle={headerChatTitle}
                     notify={pushToast}
                     width={workbenchWidth}
                     onResize={(n) => setWorkbenchWidth(Math.max(320, Math.min(640, n)))}
@@ -1699,6 +1707,7 @@ export function App() {
         <PairModal instance={activeInstance} onClose={() => setPairOpen(false)} />
       )}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} items={paletteItems} />
+      <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <DialogHost />
     </div>

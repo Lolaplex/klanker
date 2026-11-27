@@ -40,6 +40,24 @@ export async function speakVoice(inst: KlankerInstance, text: string): Promise<B
   return res.blob();
 }
 
+export async function speakText(inst: KlankerInstance, text: string): Promise<boolean> {
+  const clean = text.trim();
+  if (!clean) return false;
+  const audio = await speakVoice(inst, clean).catch(() => null);
+  if (audio) {
+    const url = URL.createObjectURL(audio);
+    const el = new Audio(url);
+    el.onended = () => URL.revokeObjectURL(url);
+    await el.play().catch(() => {});
+    return true;
+  }
+  if ("speechSynthesis" in window) {
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(clean));
+    return true;
+  }
+  return false;
+}
+
 /** POST /v1/inject's web-session steer contract (agents-relay#78):
  *  ``{session_id, session, text, workspace}`` routes straight onto the active
  *  browser run — web user ids are opaque strings, never numeric chat ids. */

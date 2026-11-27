@@ -302,7 +302,7 @@
 }
 
 .klanker-md {
-  line-height: 1.55;
+  line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
@@ -355,7 +355,14 @@
 .klanker-md :not(pre) > code {
   background: var(--bg-elevated);
   border-radius: 4px;
+  font-family: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
   padding: 0.1em 0.35em;
+}
+
+.klanker-md pre,
+.klanker-md pre code {
+  font-family: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .klanker-md th,
@@ -368,6 +375,8 @@
 .klanker-md table {
   border-collapse: collapse;
   display: block;
+  font-family: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
   max-width: 100%;
   overflow-x: auto;
 }

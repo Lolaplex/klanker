@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, ChevronDown, ChevronRight, CircleDashed, FileDiff, Hammer, X } from "lucide-react";
 import type { SessionEvent } from "../types/klanker";
 import type { TurnEvent } from "../turnStream";
@@ -109,8 +109,9 @@ function icon(step: TimelineStep) {
   return <Check className="h-3.5 w-3.5 text-ink-secondary" />;
 }
 
-export function ToolTimeline({ steps, usage }: { steps: TimelineStep[]; usage?: UsageStats }) {
-  const [open, setOpen] = useState(true);
+export function ToolTimeline({ steps, usage, defaultOpen = false }: { steps: TimelineStep[]; usage?: UsageStats; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  useEffect(() => setOpen(defaultOpen), [defaultOpen]);
   const rows = useMemo(() => steps.slice(-80), [steps]);
   if (!rows.length) return null;
   return (

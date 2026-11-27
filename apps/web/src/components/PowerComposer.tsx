@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Mic, Paperclip, RefreshCw, Volume2, X } from "lucide-react";
 import type { KlankerInstance, ProviderRow } from "../types/klanker";
 import { api } from "../services/api";
-import { listWorkspaceFiles, speakVoice, transcribeVoice, refreshProviders } from "../services/streamExtrasApi";
+import { listWorkspaceFiles, speakText, transcribeVoice, refreshProviders } from "../services/streamExtrasApi";
 import type { OutAttachment } from "./ChatConsole";
 import type { UsageStats } from "./ToolTimeline";
 
@@ -191,17 +191,8 @@ export function PowerComposer(props: {
   const speakLast = async () => {
     const text = [...document.querySelectorAll(".klanker-md")].pop()?.textContent || "";
     if (!text) return;
-    const audio = await speakVoice(instance, text).catch(() => null);
-    if (audio) {
-      const url = URL.createObjectURL(audio);
-      const el = new Audio(url);
-      el.onended = () => URL.revokeObjectURL(url);
-      void el.play();
-      return;
-    }
-    // Clean fallback when the relay voice surface is unconfigured.
-    if ("speechSynthesis" in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-    else setNote("voice unavailable");
+    const ok = await speakText(instance, text);
+    if (!ok) setNote("voice unavailable");
   };
 
   return (

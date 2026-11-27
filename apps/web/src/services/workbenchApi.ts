@@ -53,12 +53,18 @@ export async function forkSession(
   inst: KlankerInstance,
   workspace: string,
   sourceSession: string,
-  newSession = ""
+  newSession = "",
+  throughMessage = 0
 ): Promise<ForkSessionResult> {
   const r = await request<WireRow>(
     inst,
     `/v1/klanker/sessions/fork${qs({ workspace })}`,
-    jsonInit("POST", { workspace, source_session: sourceSession, ...(newSession ? { new_session: newSession } : {}) })
+    jsonInit("POST", {
+      workspace,
+      source_session: sourceSession,
+      ...(newSession ? { new_session: newSession } : {}),
+      ...(throughMessage > 0 ? { through_message: throughMessage } : {}),
+    })
   );
   return { session: wstr(r.session), source_session: wstr(r.source_session), workspace: wstr(r.workspace) };
 }
@@ -79,13 +85,7 @@ export interface SessionGitStatus {
   diff_truncated: boolean;
 }
 
-export async function getSessionGit(
-  inst: KlankerInstance,
-  workspace: string,
-  session: string,
-  file = ""
-): Promise<SessionGitStatus> {
-  const r = await request<WireRow>(inst, `/v1/klanker/sessions/${encodeURIComponent(session)}/git${qs({ workspace, file })}`);
+function parseGitStatus(r: WireRow): SessionGitStatus {
   return {
     is_git: wbool(r.is_git),
     branch: wstr(r.branch),
@@ -98,6 +98,25 @@ export async function getSessionGit(
     diff: wstr(r.diff),
     diff_truncated: wbool(r.diff_truncated),
   };
+}
+
+export async function getSessionGit(
+  inst: KlankerInstance,
+  workspace: string,
+  session: string,
+  file = ""
+): Promise<SessionGitStatus> {
+  const r = await request<WireRow>(inst, `/v1/klanker/sessions/${encodeURIComponent(session)}/git${qs({ workspace, file })}`);
+  return parseGitStatus(r);
+}
+
+export async function getWorkspaceGit(
+  inst: KlankerInstance,
+  workspace: string,
+  file = ""
+): Promise<SessionGitStatus> {
+  const r = await request<WireRow>(inst, `/v1/klanker/git${qs({ workspace, file })}`);
+  return parseGitStatus(r);
 }
 
 export interface WorkbenchFileEntry {
