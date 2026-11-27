@@ -202,6 +202,11 @@ from typing import Any  # noqa: E402
 from . import __version__  # noqa: E402
 
 _PREFIX = "/v1/klanker"
+_BID_RE = re.compile(r"^bg_[A-Za-z0-9_-]{1,64}$")
+_SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
+_MAX_GIT_DIFF_BYTES = 128 * 1024
+_MAX_MEMORY_WRITE_BYTES = 1_048_576
+_MAX_SKILL_WRITE_BYTES = 524_288
 
 
 def _resolve_ws(workspace: str):
@@ -219,6 +224,122 @@ def _safe_rel(root: Path, rel: str) -> Path | None:
     except ValueError:
         return None
     return target
+
+
+def _is_reparse_or_symlink(p: Path) -> bool:
+    import os
+    import stat
+
+    try:
+        st = os.lstat(p)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    attrs = getattr(st, "st_file_attributes", 0)
+    return bool(attrs & 0x400)
+
+
+def _safe_write_rel(root: Path, rel: str) -> tuple[Path | None, int, str]:
+    """Confine a relative write/read path under ``root`` without symlink/reparse escape."""
+    raw = (rel or "").strip().replace("\\", "/")
+    if not raw or "\x00" in raw or "\n" in raw or "\r" in raw:
+        return None, 400, "invalid path"
+    if raw.startswith("/") or ":" in raw:
+        return None, 403, "path escapes root"
+    parts = [p for p in raw.split("/") if p]
+    if not parts or any(p in (".", "..") for p in parts):
+        return None, 403, "path escapes root"
+    if root.exists() and _is_reparse_or_symlink(root):
+        return None, 403, "symlink root denied"
+    cur = root
+    for seg in parts:
+        cur = cur / seg
+        if _is_reparse_or_symlink(cur):
+            return None, 403, "symlink/reparse component denied"
+    target = cur.resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        return None, 403, "path escapes root"
+    return target, 200, ""
+
+
+def _write_text_atomic(target: Path, text: str) -> int:
+    import os
+    import tempfile
+
+    data = text.encode("utf-8")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".klanker_", suffix=".tmp", dir=str(target.parent))
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp_name, target)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return len(data)
+
+
+def _readonly_error_status(exc: Exception) -> tuple[int, str]:
+    msg = str(exc) or "file error"
+    code = getattr(exc, "code", 1)
+    if code == 2 or any(k in msg for k in ("not a file", "not a directory", "binary file", "invalid path", "invalid pattern", "empty pattern")):
+        return 400, msg
+    if any(k in msg for k in ("escapes", "permission denied")):
+        return 403, msg
+    if "not found" in msg:
+        return 404, msg
+    return 500, msg
+
+
+def _git_utf8(repo: Path, *args: str, timeout: float = 15.0) -> tuple[int, str, str]:
+    import os
+    import subprocess
+
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    proc = subprocess.run(
+        ["git", "-C", str(repo), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        env=env,
+        check=False,
+    )
+    return proc.returncode, proc.stdout or "", proc.stderr or ""
+
+
+def _git_diff_bounded(repo: Path, rel_posix: str = "") -> tuple[str, bool]:
+    extra = ["--", rel_posix] if rel_posix else []
+    rc_head, _, _ = _git_utf8(repo, "rev-parse", "--verify", "HEAD")
+    cmd = ["diff", "--no-ext-diff", "--no-textconv"]
+    if rc_head == 0:
+        cmd.append("HEAD")
+    cmd.extend(extra)
+    rc, out, _ = _git_utf8(repo, *cmd)
+    if rc != 0 and rc_head == 0 and not rel_posix:
+        _, out, _ = _git_utf8(repo, "diff", "--no-ext-diff", "--no-textconv")
+    raw_bytes = out.encode("utf-8", errors="replace")
+    if len(raw_bytes) <= _MAX_GIT_DIFF_BYTES:
+        return out, False
+    clipped = raw_bytes[:_MAX_GIT_DIFF_BYTES].decode("utf-8", errors="ignore")
+    return clipped, True
+
+
+def _skill_md_path(ws: Any, name: str) -> tuple[Path | None, int, str]:
+    if not _SKILL_NAME_RE.fullmatch(name) or name in (".", ".."):
+        status = 403 if name in (".", "..") else 400
+        return None, status, f"invalid skill name: {name!r}"
+    return _safe_write_rel(ws.skills, f"{name}/SKILL.md")
 
 
 def _skills_rows(ws) -> list[dict[str, Any]]:
@@ -274,6 +395,21 @@ def _get(h: Any, path: str, q: dict[str, str]) -> None:
         ws = _resolve_ws(q.get("workspace", ""))
         h._write_json({"ok": True, "skills": _skills_rows(ws)}, 200)
         return
+    if path.startswith(f"{_PREFIX}/skills/"):
+        name = path[len(f"{_PREFIX}/skills/") :]
+        ws = _resolve_ws(q.get("workspace", ""))
+        target, st, err = _skill_md_path(ws, name)
+        if target is None:
+            h.send_error(st, err)
+            return
+        if not target.is_file():
+            h.send_error(404, "unknown skill")
+            return
+        h._write_json(
+            {"ok": True, "name": name, "content": target.read_text(encoding="utf-8", errors="replace")},
+            200,
+        )
+        return
     if path == f"{_PREFIX}/recall":
         ws = _resolve_ws(q.get("workspace", ""))
         cfg = _load_config(ws)
@@ -292,11 +428,209 @@ def _get(h: Any, path: str, q: dict[str, str]) -> None:
     if path == f"{_PREFIX}/memory/file":
         ws = _resolve_ws(q.get("workspace", ""))
         rel = q.get("path", "")
-        target = _safe_rel(ws.memory, rel) if rel else None
-        if target is None or not target.is_file():
+        target, st, err = _safe_write_rel(ws.memory, rel)
+        if target is None:
+            h.send_error(st if rel else 404, err or "unknown memory file")
+            return
+        if not target.is_file():
             h.send_error(404, "unknown memory file")
             return
         h._write_json({"ok": True, "path": rel, "content": target.read_text(encoding="utf-8", errors="replace")}, 200)
+        return
+    if path == f"{_PREFIX}/doctor":
+        from .doctor import collect_checks
+
+        report = collect_checks().to_dict()
+        h._write_json({"ok": True, **report}, 200)
+        return
+    if path == f"{_PREFIX}/stats":
+        from agents_traces.stats import compute_stats
+        from agents_traces.store import TraceStore
+
+        ws = _resolve_ws(q.get("workspace", ""))
+        sid = (q.get("session") or "").strip()
+        if sid:
+            from .session import InvalidSessionId, validate_session_id
+
+            try:
+                sid = validate_session_id(sid)
+            except InvalidSessionId as exc:
+                h.send_error(400, str(exc))
+                return
+        days_raw = (q.get("days") or "7").strip()
+        try:
+            days = max(1, min(365, int(days_raw)))
+        except ValueError:
+            h.send_error(400, "invalid days")
+            return
+        store = TraceStore(ws.traces)
+        events = store.get_events_for_session(sid) if sid else list(store.iter_events(files=store.list_trace_files(days=days)))
+        stats = compute_stats(events)
+        h._write_json({"ok": True, "workspace": str(getattr(ws, "id", "") or ""), "stats": stats}, 200)
+        return
+    if path in (f"{_PREFIX}/files", f"{_PREFIX}/files/read", f"{_PREFIX}/files/grep"):
+        from agents_terminal.readonly import ReadonlyError, grep_files, list_directory, read_file
+
+        ws = _resolve_ws(q.get("workspace", ""))
+        wd = getattr(ws, "workdir", None)
+        if not wd or not Path(wd).is_dir():
+            h.send_error(404, "workspace workdir unavailable")
+            return
+        root = Path(wd).resolve()
+        try:
+            if path == f"{_PREFIX}/files":
+                res = list_directory(root, q.get("path") or ".")
+            elif path == f"{_PREFIX}/files/read":
+                rel = q.get("path") or ""
+                if not rel:
+                    h.send_error(400, "path is required")
+                    return
+                offset = int(q.get("offset") or 1)
+                limit = int(q.get("limit") or 2000)
+                res = read_file(root, rel, offset=offset, limit=limit)
+            else:
+                query_txt = q.get("q") or ""
+                if not query_txt:
+                    h.send_error(400, "q is required")
+                    return
+                max_m = int(q.get("max_matches") or 200)
+                ign = str(q.get("ignore_case") or "").lower() in ("1", "true", "yes")
+                res = grep_files(
+                    root,
+                    query_txt,
+                    q.get("path") or ".",
+                    glob=q.get("glob") or None,
+                    ignore_case=ign,
+                    max_matches=max_m,
+                )
+        except ReadonlyError as exc:
+            st, msg = _readonly_error_status(exc)
+            h.send_error(st, msg)
+            return
+        except ValueError:
+            h.send_error(400, "invalid numeric parameter")
+            return
+        h._write_json({"ok": True, **res}, 200)
+        return
+    if path == f"{_PREFIX}/bg":
+        from . import bg
+
+        ws_filter = (q.get("workspace") or "").strip()
+        rows = [
+            {k: v for k, v in row.items() if k != "log"}
+            for row in bg.list_sessions(workspace=ws_filter)
+        ]
+        h._write_json({"ok": True, "sessions": rows}, 200)
+        return
+    parts = path.split("/")
+    if len(parts) == 6 and parts[1] == "v1" and parts[2] == "klanker" and parts[3] == "bg" and parts[5] == "logs":
+        from . import bg
+
+        bid = parts[4]
+        if not _BID_RE.fullmatch(bid):
+            h.send_error(400, f"invalid bg id: {bid!r}")
+            return
+        meta = bg.find(bid)
+        if not meta:
+            h.send_error(404, "unknown bg session")
+            return
+        try:
+            lines = max(1, min(2000, int(q.get("lines") or 200)))
+        except ValueError:
+            h.send_error(400, "invalid lines")
+            return
+        h._write_json(
+            {"ok": True, "id": bid, "status": meta.get("status"), "logs": bg.log_tail(bid, lines=lines)},
+            200,
+        )
+        return
+    if len(parts) == 6 and parts[1] == "v1" and parts[2] == "klanker" and parts[3] == "sessions" and parts[5] == "git":
+        from .session import InvalidSessionId, _bound_workdir, _inside_root, session_view, validate_session_id
+
+        sid = parts[4]
+        try:
+            sid = validate_session_id(sid)
+        except InvalidSessionId as exc:
+            h.send_error(400, str(exc))
+            return
+        ws = _resolve_ws(q.get("workspace", ""))
+        view: dict[str, Any] = {}
+        bound = ""
+        try:
+            from agents_store import open_db
+
+            if Path(ws.store_db).is_file():
+                conn = open_db(ws.store_db)
+                try:
+                    view = session_view(conn, sid)
+                    bound = _bound_workdir(conn, ws, sid)
+                finally:
+                    conn.close()
+        except Exception:
+            view = {}
+            bound = ""
+        target: Path | None = None
+        if bound and Path(bound).is_dir() and _inside_root(Path(bound)):
+            target = Path(bound).resolve()
+        elif getattr(ws, "workdir", None) and Path(ws.workdir).is_dir():
+            cand = Path(ws.workdir).resolve()
+            rc_git, _, _ = _git_utf8(cand, "rev-parse", "--is-inside-work-tree")
+            if rc_git == 0:
+                target = cand
+        if target is None:
+            h._write_json(
+                {
+                    "ok": True,
+                    "is_git": False,
+                    "branch": str(view.get("branch") or ""),
+                    "repo": str(view.get("repo") or ""),
+                    "worktree": "",
+                    "dirty_files": [],
+                    "wip_unpushed": bool(view.get("wip_unpushed")),
+                    "diff": "",
+                    "diff_truncated": False,
+                },
+                200,
+            )
+            return
+        rel_file = (q.get("file") or "").strip()
+        rel_posix = ""
+        if rel_file:
+            from agents_terminal.readonly import ReadonlyError, resolve_path
+
+            try:
+                resolved_file = resolve_path(target, rel_file, follow_final=True)
+                rel_posix = resolved_file.relative_to(target.resolve()).as_posix()
+            except ReadonlyError as exc:
+                st, msg = _readonly_error_status(exc)
+                h.send_error(st, msg)
+                return
+            except ValueError:
+                h.send_error(403, "path escapes git root")
+                return
+        rc_b, branch_out, _ = _git_utf8(target, "rev-parse", "--abbrev-ref", "HEAD")
+        branch = branch_out.strip() if rc_b == 0 else str(view.get("branch") or "")
+        _, status_out, _ = _git_utf8(target, "status", "--porcelain")
+        dirty_files = [
+            {"status": ln[:2].strip(), "path": ln[3:].strip()}
+            for ln in status_out.splitlines()
+            if len(ln) >= 4
+        ]
+        diff_text, diff_truncated = _git_diff_bounded(target, rel_posix)
+        h._write_json(
+            {
+                "ok": True,
+                "is_git": True,
+                "branch": branch,
+                "repo": str(view.get("repo") or ""),
+                "worktree": str(target) if bound else "",
+                "dirty_files": dirty_files,
+                "wip_unpushed": bool(view.get("wip_unpushed")),
+                "diff": diff_text,
+                "diff_truncated": diff_truncated,
+            },
+            200,
+        )
         return
     h.send_error(404)
 
@@ -391,6 +725,47 @@ def _post(h: Any, path: str, q: dict[str, str]) -> None:
                 f"{_PREFIX}/sessions/cleanup"):
         _session_op(h, body, path.rsplit("/", 1)[-1])
         return
+    if path == f"{_PREFIX}/sessions/fork":
+        from .fork import fork_session
+
+        ws_ref = (q.get("workspace") or str(body.get("workspace") or "")).strip()
+        try:
+            ws = _resolve_ws(ws_ref)
+        except Exception:
+            h.send_error(404, "unknown workspace")
+            return
+        src = str(body.get("source_session") or body.get("source") or "").strip()
+        new_id = str(body.get("new_session") or body.get("new_id") or "").strip()
+        if not src:
+            h.send_error(400, "source_session is required")
+            return
+        try:
+            sid = fork_session(src, new_id, traces_dir=ws.traces)
+        except ValueError as exc:
+            msg = str(exc)
+            st = 404 if "unknown or empty" in msg else 400
+            h.send_error(st, msg)
+            return
+        h._write_json(
+            {"ok": True, "session": sid, "source_session": src, "workspace": str(getattr(ws, "id", "") or "")},
+            200,
+        )
+        return
+    parts = path.split("/")
+    if len(parts) == 6 and parts[1] == "v1" and parts[2] == "klanker" and parts[3] == "bg" and parts[5] == "kill":
+        from . import bg
+
+        bid = parts[4]
+        if not _BID_RE.fullmatch(bid):
+            h.send_error(400, f"invalid bg id: {bid!r}")
+            return
+        if not bg.find(bid):
+            h.send_error(404, "unknown bg session")
+            return
+        updated = bg.kill(bid)
+        safe_row = {k: v for k, v in updated.items() if k != "log"}
+        h._write_json({"ok": True, "session": safe_row}, 200)
+        return
     if path == f"{_PREFIX}/recall":
         ws = _resolve_ws(q.get("workspace", "") or str(body.get("workspace") or ""))
         cfg = _load_config(ws)
@@ -460,6 +835,52 @@ def _post(h: Any, path: str, q: dict[str, str]) -> None:
             h.send_error(404, str(exc))
             return
         h.send_error(400, f"unknown action: {action!r}")
+        return
+    h.send_error(404)
+
+
+def _put(h: Any, path: str, q: dict[str, str]) -> None:
+    body = h._read_json()
+    if body is None:
+        return
+    if path == f"{_PREFIX}/memory/file":
+        ws_ref = (q.get("workspace") or str(body.get("workspace") or "")).strip()
+        ws = _resolve_ws(ws_ref)
+        rel = str(body.get("path") or q.get("path") or "").strip()
+        if not rel:
+            h.send_error(400, "path is required")
+            return
+        content = body.get("content")
+        if not isinstance(content, str):
+            h.send_error(400, "content must be a string")
+            return
+        if len(content.encode("utf-8")) > _MAX_MEMORY_WRITE_BYTES:
+            h.send_error(413, "memory content too large")
+            return
+        target, st, err = _safe_write_rel(ws.memory, rel)
+        if target is None:
+            h.send_error(st, err)
+            return
+        written = _write_text_atomic(target, content)
+        h._write_json({"ok": True, "path": rel, "bytes": written}, 200)
+        return
+    if path.startswith(f"{_PREFIX}/skills/"):
+        name = path[len(f"{_PREFIX}/skills/") :]
+        ws_ref = (q.get("workspace") or str(body.get("workspace") or "")).strip()
+        ws = _resolve_ws(ws_ref)
+        content = body.get("content")
+        if not isinstance(content, str):
+            h.send_error(400, "content must be a string")
+            return
+        if len(content.encode("utf-8")) > _MAX_SKILL_WRITE_BYTES:
+            h.send_error(413, "skill content too large")
+            return
+        target, st, err = _skill_md_path(ws, name)
+        if target is None:
+            h.send_error(st, err)
+            return
+        written = _write_text_atomic(target, content)
+        h._write_json({"ok": True, "name": name, "bytes": written}, 200)
         return
     h.send_error(404)
 
@@ -589,6 +1010,8 @@ def _dispatch(h: Any, method: str) -> bool:
             _get(h, path, query)
         elif method == "POST":
             _post(h, path, query)
+        elif method == "PUT":
+            _put(h, path, query)
         elif method == "DELETE":
             _delete(h, path, query)
         else:
