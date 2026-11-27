@@ -49,6 +49,13 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [hostLabel, setHostLabel] = useState<string | null>(null);
   const [hostLabelDraft, setHostLabelDraft] = useState("");
   const [hostNote, setHostNote] = useState<string | null>(null);
+  // Desktop app version + update flow (klanker#169 U15): api.checkAppUpdates
+  // / installAppUpdate / klankerVersion were already wired in services but
+  // never surfaced anywhere.
+  const [appVersion, setAppVersion] = useState("");
+  const [updateInfo, setUpdateInfo] = useState<{ available: boolean; version?: string } | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateNote, setUpdateNote] = useState<string | null>(null);
   const desktop = typeof window !== "undefined" && "__TAURI__" in window;
 
   // Desktop truth wins over the stored flag (user may have toggled the OS
@@ -58,6 +65,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     void api.autostartIsEnabled().then((on) => {
       setDraft((d) => (d.autostart === on ? d : { ...d, autostart: on }));
     });
+    void api
+      .klankerVersion()
+      .then((v) => setAppVersion(v.klanker_version || ""))
+      .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -113,6 +124,35 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
 
   // Save is wired to exactly what this panel owns: host_label (PATCH
   // /v1/host) plus the desktop settings draft (autostart/hub_mode).
+  const checkUpdate = async () => {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateNote(null);
+    try {
+      const info = await api.checkAppUpdates();
+      setUpdateInfo({ available: !!info.available, version: info.version || undefined });
+      if (!info.available) setUpdateNote("up to date");
+    } catch (e) {
+      setUpdateNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
+  const installUpdate = async () => {
+    if (updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateNote(null);
+    try {
+      await api.installAppUpdate();
+      setUpdateNote("update installing — the app restarts when ready");
+    } catch (e) {
+      setUpdateNote(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     setHostNote(null);
@@ -202,6 +242,34 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     On: the local serve binds 0.0.0.0 so tailnet/LAN peers can reach the hub. Off: 127.0.0.1 only.
                     Applies to the next spawn/restart.
                   </p>
+                </div>
+                <div className="mt-2 border-t border-[#1f1f1f] pt-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-[#a3a3a3]">
+                      App version{appVersion ? `: ${appVersion}` : ""}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={updateBusy}
+                      onClick={() => void checkUpdate()}
+                      className="inline-flex min-h-7 items-center px-2.5 py-1 bg-[#0a0a0a] border border-[#262626] rounded text-[10px] text-[#a3a3a3] hover:text-white hover:bg-[#141414] disabled:opacity-50"
+                      aria-label="Check for app updates"
+                    >
+                      {updateBusy ? "checking…" : "check for updates"}
+                    </button>
+                    {updateInfo?.available && (
+                      <button
+                        type="button"
+                        disabled={updateBusy}
+                        onClick={() => void installUpdate()}
+                        className="inline-flex min-h-7 items-center px-2.5 py-1 bg-white text-black border border-white rounded text-[10px] hover:bg-[#e5e5e5] disabled:opacity-50"
+                        aria-label={`Install update ${updateInfo.version || ""}`}
+                      >
+                        install {updateInfo.version || "update"}
+                      </button>
+                    )}
+                  </div>
+                  {updateNote && <p className="text-[10px] text-[#525252] mt-1">{updateNote}</p>}
                 </div>
               </div>
             )}

@@ -31,6 +31,13 @@ export function useSidebarTree(args: {
   setWsNote: (note: string | null) => void;
   evCache: React.MutableRefObject<Map<string, ChatMessage[]>>;
   onResetApprovals: () => void;
+  /** Live SSE stream health (klanker#169 U15): while healthy, focus /
+   *  visibility regains skip the personas re-pull entirely — events
+   *  already drive updates, the 30s interval stays as the backstop. */
+  sseHealthy?: boolean;
+  /** Currently selected workspace — always refresh-scoped even when its
+   *  details were never expanded. */
+  selWs?: string;
 }): {
   workspaces: WorkspaceRow[];
   setWorkspaces: (rows: WorkspaceRow[]) => void;
@@ -55,7 +62,7 @@ export function useSidebarTree(args: {
   personasOf: (ws: string) => PersonaRow[] | undefined;
   sessionRowsOf: (ws: string, persona: string) => SessionRow[] | undefined;
 } {
-  const { activeInstance, status, chats, setSelWs, setWsNote, evCache, onResetApprovals } = args;
+  const { activeInstance, status, chats, setSelWs, setWsNote, evCache, onResetApprovals, sseHealthy = false, selWs = "" } = args;
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
   const [wsHosts, setWsHosts] = useState<Record<string, WorkspaceHosts>>({});
   const [treePersonas, setTreePersonas] = useState<Record<string, PersonaRow[]>>({});
@@ -78,6 +85,12 @@ export function useSidebarTree(args: {
   wsHostsRef.current = wsHosts;
   const personaCountsRef = useRef(personaCounts);
   personaCountsRef.current = personaCounts;
+  const treePersonasRef = useRef(treePersonas);
+  treePersonasRef.current = treePersonas;
+  const selWsRef = useRef(selWs);
+  selWsRef.current = selWs;
+  const sseHealthyRef = useRef(sseHealthy);
+  sseHealthyRef.current = sseHealthy;
   const instId = activeInstance?.id;
 
   const expandWs = (ws: string) => {
@@ -125,7 +138,10 @@ export function useSidebarTree(args: {
         if (stop) return;
         setWorkspaces(rows);
         setSelWs((cur) => cur || rows[0]?.id || "");
-        rows.forEach((w) => expandWsRef.current(w.id));
+        // No eager expandWs for every row (klanker#169 U15): 3 requests
+        // per workspace fired even for collapsed rows. Details lazy-load
+        // via KlankerList expand/selection; the selected row is expanded
+        // by KlankerList's mount effect.
       } catch (e) {
         if (!stop) setWsNote(`workspaces: ${e instanceof Error ? e.message : e}`);
       }
@@ -142,8 +158,12 @@ export function useSidebarTree(args: {
   useEffect(() => {
     const inst = activeInstance;
     if (!inst || status?.state !== "running") return;
+    // Scope: only workspaces whose details are loaded (expanded at least
+    // once) plus the selected one — collapsed rows stay lazy (klanker#169).
     const refresh = () => {
       for (const ws of workspacesRef.current) {
+        const loaded = !!treePersonasRef.current[ws.id];
+        if (!loaded && ws.id !== selWsRef.current) continue;
         void api
           .listPersonas(inst, ws.id)
           .then((rows) => setTreePersonas((prev) => ({ ...prev, [ws.id]: rows })))
@@ -165,16 +185,19 @@ export function useSidebarTree(args: {
       }
     };
     const onVisible = () => {
-      if (!document.hidden) refresh();
+      if (!document.hidden && !sseHealthyRef.current) refresh();
+    };
+    const onFocus = () => {
+      if (!sseHealthyRef.current) refresh();
     };
     document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("focus", refresh);
+    window.addEventListener("focus", onFocus);
     const timer = window.setInterval(() => {
       if (!document.hidden) refresh();
     }, 30_000);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("focus", refresh);
+      window.removeEventListener("focus", onFocus);
       window.clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -282,7 +305,10 @@ export function useSidebarTree(args: {
         const rows = dedupeWorkspaces(raw);
         setWorkspaces(rows);
         setSelWs((cur) => cur || rows[0]?.id || "");
-        rows.forEach((w) => expandWsRef.current(w.id));
+        // No eager expandWs for every row (klanker#169 U15): 3 requests
+        // per workspace fired even for collapsed rows. Details lazy-load
+        // via KlankerList expand/selection; the selected row is expanded
+        // by KlankerList's mount effect.
       })
       .catch(() => {});
   };

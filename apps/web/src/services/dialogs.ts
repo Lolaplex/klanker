@@ -18,7 +18,11 @@ interface Pending {
   resolve: (value: string | boolean | null) => void;
 }
 
-let pending: Pending | null = null;
+// FIFO queue (klanker#169 U15): a second confirm()/prompt() used to
+// overwrite `pending` outright — the first promise hung unresolved
+// forever and its dialog never rendered. Now overlapping calls line up
+// and each resolves in order.
+const queue: Pending[] = [];
 const listeners = new Set<() => void>();
 const emit = () => listeners.forEach((fn) => fn());
 
@@ -28,27 +32,31 @@ export function subscribeDialogs(fn: () => void): () => void {
 }
 
 export function currentDialog(): Pending | null {
-  return pending;
+  return queue[0] ?? null;
 }
 
 export function resolveDialog(value: string | boolean | null): void {
-  const p = pending;
-  pending = null;
+  const p = queue.shift();
   emit();
   p?.resolve(value);
 }
 
+/** Test/introspection helper — queued length including the visible one. */
+export function pendingDialogCount(): number {
+  return queue.length;
+}
+
+const enqueue = (req: DialogRequest): Promise<string | boolean | null> =>
+  new Promise((resolve) => {
+    queue.push({ req, resolve });
+    emit();
+  });
+
 export const dialogs = {
   confirm(message: string, opts: DialogOptions = {}): Promise<boolean> {
-    return new Promise((resolve) => {
-      pending = { req: { kind: "confirm", message, ...opts }, resolve: (v) => resolve(!!v) };
-      emit();
-    });
+    return enqueue({ kind: "confirm", message, ...opts }).then((v) => !!v);
   },
   prompt(message: string, opts: DialogOptions = {}): Promise<string | null> {
-    return new Promise((resolve) => {
-      pending = { req: { kind: "prompt", message, ...opts }, resolve: (v) => resolve(typeof v === "string" ? v : null) };
-      emit();
-    });
+    return enqueue({ kind: "prompt", message, ...opts }).then((v) => (typeof v === "string" ? v : null));
   },
 };

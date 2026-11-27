@@ -4,13 +4,14 @@ import { JSDOM } from "jsdom";
 // evaluates — @base-ui/react + floating-ui capture the DOM environment
 // at module scope, so importing them without a document bakes in the
 // no-DOM path and portals never mount. Import this module first.
-const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
+const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "http://localhost/" });
 
 const KEYS = [
   "window", "document", "HTMLElement", "Node", "Element", "navigator",
   "customElements", "DocumentFragment", "MutationObserver", "getComputedStyle",
   "requestAnimationFrame", "cancelAnimationFrame", "ResizeObserver",
   "CSSStyleSheet", "ShadowRoot", "Document", "Range", "Selection", "SVGElement", "XMLSerializer", "DOMParser",
+  "localStorage", "sessionStorage",
 ] as const;
 
 for (const key of KEYS) {

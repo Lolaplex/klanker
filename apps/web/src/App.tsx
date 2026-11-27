@@ -115,6 +115,7 @@ export function App() {
     });
   }, []);
   const [wsModal, setWsModal] = useState<{ id: string; tab?: WorkspaceTab } | null>(null);
+  const [sseHealthy, setSseHealthy] = useState(false);
   const [personaEditor, setPersonaEditor] = useState<{ ws: string; persona: string } | null>(null);
   const [pairOpen, setPairOpen] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
@@ -257,6 +258,8 @@ export function App() {
     setWsNote,
     evCache,
     onResetApprovals: approvals.reset,
+    sseHealthy,
+    selWs,
   });
 
   const { flushPersist } = usePersistChats({
@@ -404,9 +407,19 @@ export function App() {
   useRelayEvents({
     activeInstance,
     status: herdStatus,
+    onHealth: setSseHealthy,
     onEvent: (ev) => {
       if (ev.kind === "workspace.changed") {
         tree.refreshWorkspaces();
+      } else if (ev.kind === "provider.changed") {
+        // Manifest/secret edits on any host — provider rows + badges
+        // update live instead of on the next manual refresh (klanker#169).
+        refreshProviders();
+      } else if (ev.kind === "host.changed") {
+        tree.refreshHosts();
+      } else if (ev.kind === "device.changed") {
+        void inst.refreshInstances();
+        tree.refreshHosts();
       } else if (ev.kind === "persona.changed") {
         tree.refreshPersonas(ev.workspace || undefined);
       } else if (ev.kind === "session.changed") {
@@ -761,7 +774,16 @@ export function App() {
     }
   };
 
-  const handleSendMessage = async (text: string, attachments?: { data: string; mime?: string; name?: string }[]) => {
+  /** opts.command: trace slash-commands (/retry, /undo, /compress) ride
+   *  the same turn pipeline but never append a user bubble — the command
+   *  is not conversation content. opts.reuseAssistant (only with
+   *  /retry): stream the regenerated answer into the last assistant
+   *  bubble instead of stacking a duplicate pair (klanker#169 U15). */
+  const handleSendMessage = async (
+    text: string,
+    attachments?: { data: string; mime?: string; name?: string }[],
+    opts?: { command?: boolean; reuseAssistant?: boolean }
+  ) => {
     const inst0 = activeInstance;
     if (!inst0) return;
     const id = inst0.id;
@@ -785,6 +807,10 @@ export function App() {
     const bk = busyKey(selWs || "default", session);
     if (turnBusyRef.current[bk] || busyForChat(turnBusyRef.current, chatId)) return;
 
+    const asCommand = !!opts?.command;
+    const reuseId = opts?.reuseAssistant
+      ? [...chat.messages].reverse().find((m) => m.role === "klanker")?.id
+      : undefined;
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -792,7 +818,7 @@ export function App() {
       timestamp: new Date().toISOString(),
       attachments: attachments?.map((a) => a.name || "file"),
     };
-    const assistantId = crypto.randomUUID();
+    const assistantId = reuseId || crypto.randomUUID();
     const assistantMessage: ChatMessage = {
       id: assistantId,
       role: "klanker",
@@ -805,7 +831,11 @@ export function App() {
         session,
         draft: false,
         input: "",
-        messages: [...item.messages, userMessage, assistantMessage],
+        messages: reuseId
+          ? item.messages.map((m) => (m.id === reuseId ? { ...m, content: "", elapsed_ms: undefined } : m))
+          : asCommand
+            ? [...item.messages, assistantMessage]
+            : [...item.messages, userMessage, assistantMessage],
       }))
     );
     const busy: TurnBusy = {
