@@ -1,5 +1,6 @@
 allowBuilds:
   esbuild: true
+  "@openuidev/lang-core": false
 minimumReleaseAgeExclude:
   - mermaid@12.4.0
 onlyBuiltDependencies:
