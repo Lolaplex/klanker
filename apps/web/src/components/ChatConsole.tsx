@@ -1,9 +1,11 @@
 import React, { useState, useRef, useEffect } from "react";
-import { ArrowUp, Bot, User, Square, Paperclip, X } from "lucide-react";
+import { ArrowUp, Bot, User, Square, Paperclip, RotateCcw, X } from "lucide-react";
 import { shouldSubmitOnEnter, focusWithoutScroll } from "../chatUi";
+import { splitThinking } from "../thinkingParse";
 import { chatToJson, chatToMarkdown, downloadText, exportStem } from "../chatExport";
 import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow } from "../types/klanker";
 import { CopyButton } from "./CopyButton";
+import { ThinkingAccordion } from "./ThinkingAccordion";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { Popover } from "./ui/Popover";
@@ -180,6 +182,30 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     e.target.value = "";
   };
 
+  const addFiles = async (picked: File[]) => {
+    if (!picked.length) return;
+    const next = await Promise.all(picked.map(readFile));
+    setFiles((cur) => [...cur, ...next]);
+  };
+
+  // Clipboard images/files land as attachment chips; a text-only paste
+  // stays on the default textarea path (klanker#163 U08).
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const picked = Array.from(e.clipboardData?.files || []);
+    if (!picked.length) return;
+    e.preventDefault();
+    void addFiles(picked);
+  };
+
+  const [dragOver, setDragOver] = useState(false);
+  const onDrop = (e: React.DragEvent<HTMLFormElement>) => {
+    const picked = Array.from(e.dataTransfer?.files || []);
+    if (!picked.length) return;
+    e.preventDefault();
+    setDragOver(false);
+    void addFiles(picked);
+  };
+
   const coarsePointer = useCoarsePointer();
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -198,6 +224,24 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   };
 
   const last = messages[messages.length - 1];
+
+  // Regenerate (klanker#163 U08): resend the user message preceding the
+  // latest assistant answer. Hover control on that bubble only.
+  let lastAssistantIdx = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "klanker" && messages[i].content) {
+      lastAssistantIdx = i;
+      break;
+    }
+  }
+  const regenerate = () => {
+    for (let i = lastAssistantIdx - 1; i >= 0; i--) {
+      if (messages[i].role === "user" && messages[i].content) {
+        onSendMessage(messages[i].content);
+        return;
+      }
+    }
+  };
   const [exportOpen, setExportOpen] = useState(false);
   const streamingBubble = isLoading && last?.role === "klanker";
   const displaySpeaker = speakerName || instance.name;
@@ -341,12 +385,14 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             </p>
           </div>
         ) : (
-          messages.map((m) => (
+          messages.map((m, i) => (
             <MessageBubble
               key={m.id}
               message={m}
               name={displaySpeaker}
               thinking={streamingBubble && m.id === last?.id && !m.content}
+              streaming={streamingBubble && m.id === last?.id}
+              onRegenerate={i === lastAssistantIdx && !isLoading ? regenerate : undefined}
             />
           ))
         )}
@@ -372,7 +418,19 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       <div className="composer touch-none px-3 pt-3 bg-[#000000] border-t border-[#262626] md:min-h-[73px] md:p-3 md:flex md:items-center">
         <form
           onSubmit={handleSubmit}
-          className="w-full flex flex-col min-h-12 bg-[#121212] border border-[#262626] focus-within:border-[#525252] rounded transition-colors"
+          onDragOver={(e) => {
+            if (e.dataTransfer?.types?.includes("Files")) {
+              e.preventDefault();
+              setDragOver(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+          }}
+          onDrop={onDrop}
+          className={`w-full flex flex-col min-h-12 bg-[#121212] border focus-within:border-[#525252] rounded transition-colors ${
+            dragOver ? "border-white" : "border-[#262626]"
+          }`}
         >
           {files.length > 0 && (
             <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
@@ -418,6 +476,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               value={input}
               onChange={(e) => onInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              onPaste={onPaste}
               placeholder={`Message ${displaySpeaker}...`}
               className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-white outline-none resize-none overscroll-y-contain font-mono text-base leading-snug placeholder-[#525252] md:text-sm"
             />
@@ -441,12 +500,22 @@ const MessageBubble = React.memo(function MessageBubble({
   message,
   name,
   thinking,
+  streaming = false,
+  onRegenerate,
 }: {
   message: ChatMessage;
   name: string;
   thinking: boolean;
+  /** This bubble is the live-streaming one — think timer keeps ticking. */
+  streaming?: boolean;
+  /** Latest assistant answer only: hover control resends the preceding
+   *  user message (klanker#163 U08). */
+  onRegenerate?: () => void;
 }) {
   const mine = message.role === "user";
+  // <think> extraction: reasoning sits in a collapsible accordion above
+  // the answer body; while streaming an unclosed trailing tag counts too.
+  const thinkSplit = !mine && message.content ? splitThinking(message.content) : null;
   return (
     <div className={`group flex w-full ${mine ? "justify-end" : "justify-start"}`}>
       <div className={`flex min-w-0 max-w-[85%] flex-col ${mine ? "items-end" : "items-start"}`}>
@@ -478,6 +547,17 @@ const MessageBubble = React.memo(function MessageBubble({
               className="!h-5 !w-5 text-[#525252] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
             />
           ) : null}
+          {onRegenerate ? (
+            <button
+              type="button"
+              onClick={onRegenerate}
+              title="Regenerate — resend the previous user message"
+              aria-label="Regenerate response"
+              className="inline-flex !h-5 !w-5 items-center justify-center text-[#525252] hover:text-white opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity [@media(hover:none)]:!h-11 [@media(hover:none)]:!w-11 [@media(hover:none)]:-my-3.5 [@media(hover:none)]:opacity-100"
+            >
+              <RotateCcw className="w-3 h-3" />
+            </button>
+          ) : null}
         </div>
         <div
           className={`min-w-0 max-w-full rounded border p-3 leading-relaxed select-text ${
@@ -499,8 +579,13 @@ const MessageBubble = React.memo(function MessageBubble({
               ))}
             </div>
           ) : null}
+          {thinkSplit?.thinking ? (
+            <ThinkingAccordion thinking={thinkSplit.thinking} streaming={streaming && thinkSplit.thinkingOpen} />
+          ) : null}
           {message.role === "klanker" && message.content ? (
-            <MarkdownMessage text={message.content} />
+            thinkSplit?.thinking && !thinkSplit.body && thinkSplit.thinkingOpen ? null : (
+              <MarkdownMessage text={thinkSplit ? thinkSplit.body : message.content} />
+            )
           ) : (
             <div className="whitespace-pre-wrap break-words">
               {message.content || (thinking ? "thinking..." : "")}
