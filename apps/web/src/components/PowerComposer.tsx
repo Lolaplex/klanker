@@ -398,7 +398,7 @@ export function PowerComposer(props: {
                 ariaLabel="Thinking effort"
                 testId="reasoning-selector"
                 value={reasoning}
-                className="h-7 min-h-7 w-24 shrink-0 border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                className="h-7 min-h-7 w-28 shrink-0 whitespace-nowrap border-subtle bg-surface px-2 py-0.5 text-[10px] text-ink-secondary"
                 options={[
                   { value: "auto", label: "Think: Auto" },
                   { value: "off", label: "Think: Off" },

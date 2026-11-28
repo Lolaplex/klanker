@@ -31,6 +31,8 @@ export function Select({
   placeholder?: string;
   testId?: string;
 }) {
+  const hasWidth = /\bw-/.test(className);
+  const selectedOption = options.find((o) => o.value === value);
   return (
     <BaseSelect.Root
       value={value}
@@ -40,9 +42,11 @@ export function Select({
       <BaseSelect.Trigger
         aria-label={ariaLabel}
         data-testid={testId}
-        className={`w-full bg-elevated border border-subtle hover:border-strong focus:border-strong rounded-md px-2.5 py-1.5 text-ink-primary outline-none flex items-center justify-between gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        className={`${hasWidth ? "" : "w-full "}bg-elevated border border-subtle hover:border-strong focus:border-strong rounded-md px-2.5 py-1.5 text-ink-primary outline-none flex items-center justify-between gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
       >
-        <BaseSelect.Value placeholder={placeholder} />
+        <BaseSelect.Value placeholder={placeholder}>
+          {selectedOption ? selectedOption.label : placeholder}
+        </BaseSelect.Value>
         <BaseSelect.Icon className="text-ink-dim">
           <ChevronDown className="w-3 h-3" />
         </BaseSelect.Icon>

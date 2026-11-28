@@ -1161,6 +1161,14 @@ export const api = {
           modes: Array.isArray(p.modes)
             ? p.modes.filter((m): m is string => typeof m === "string")
             : undefined,
+          thought_level: wstr(p.thought_level),
+          thought_levels: Array.isArray(p.thought_levels)
+            ? p.thought_levels.filter((m): m is string => typeof m === "string" && m !== "")
+            : undefined,
+          speed: wstr(p.speed),
+          speeds: Array.isArray(p.speeds)
+            ? p.speeds.filter((m): m is string => typeof m === "string" && m !== "")
+            : undefined,
           source: wstr(p.source),
           configurable: wbool(p.configurable),
           command: wstr(p.command),
@@ -1228,6 +1236,14 @@ export const api = {
             : undefined,
           modes: Array.isArray(p.modes)
             ? p.modes.filter((m): m is string => typeof m === "string")
+            : undefined,
+          thought_level: wstr(p.thought_level),
+          thought_levels: Array.isArray(p.thought_levels)
+            ? p.thought_levels.filter((m): m is string => typeof m === "string" && m !== "")
+            : undefined,
+          speed: wstr(p.speed),
+          speeds: Array.isArray(p.speeds)
+            ? p.speeds.filter((m): m is string => typeof m === "string" && m !== "")
             : undefined,
           source: wstr(p.source),
           configurable: wbool(p.configurable),

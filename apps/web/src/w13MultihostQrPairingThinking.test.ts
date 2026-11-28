@@ -144,5 +144,7 @@ describe("W13C composer thinking and ACP controls", () => {
     assert.match(api, /thought_level\?: string/);
     assert.match(api, /speed\?: string/);
     assert.match(api, /reasoning\?: "off" \| "low" \| "medium" \| "high"/);
+    assert.match(api, /thought_levels: Array\.isArray\(p\.thought_levels\)/);
+    assert.match(api, /speeds: Array\.isArray\(p\.speeds\)/);
   });
 });
