@@ -5,6 +5,7 @@ import { QuickAskApp } from "./components/QuickAskApp";
 import { kbDebugEnabled } from "./kbDebug";
 import { migrateLegacyStorage } from "./chatBuckets";
 import { ThemeRoot } from "./ThemeRoot";
+import { ContextMenuProvider } from "./components/ui/ContextMenu";
 import { bootstrapTheme } from "./theme";
 import { closeSplash } from "./services/desktopApi";
 import "./index.css";
@@ -42,14 +43,16 @@ const quickAskView = new URLSearchParams(window.location.search).get("view") ===
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <ThemeRoot>
-      {quickAskView ? (
-        <QuickAskApp />
-      ) : (
-        <>
-          <SplashCloser />
-          <App />
-        </>
-      )}
+      <ContextMenuProvider>
+        {quickAskView ? (
+          <QuickAskApp />
+        ) : (
+          <>
+            <SplashCloser />
+            <App />
+          </>
+        )}
+      </ContextMenuProvider>
     </ThemeRoot>
   </React.StrictMode>
 );

@@ -18,7 +18,7 @@ import { api, caps, notifyWhenUnfocused } from "./services/api";
 import { dialogs } from "./services/dialogs";
 import { DialogHost } from "./components/DialogHost";
 import { createDeltaQueue } from "./chatPersist";
-import type { SessionRow } from "./components/KlankerList";
+import type { SessionFocusTarget, SessionRow } from "./components/KlankerList";
 import {
   ChatBucket,
   TurnBusy,
@@ -33,7 +33,7 @@ import {
   normBucket,
   sendHeld,
 } from "./chatBuckets";
-import { reconcileChat } from "./chatSync";
+import { eventsToMessages, reconcileChat } from "./chatSync";
 import {
   applyPresence,
   checkpointBranch,
@@ -74,6 +74,9 @@ import { forkSession } from "./services/workbenchApi";
 import { readThemePreference, resolveMode, setThemePreference } from "./theme";
 
 const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false, hub_mode: false };
+const SIDEBAR_AUTO_COLLAPSE_WIDTH = 1160;
+const DESKTOP_SIDEBAR_WIDTH = 768;
+const narrowDesktopSidebarWidth = () => window.innerWidth >= DESKTOP_SIDEBAR_WIDTH && window.innerWidth < SIDEBAR_AUTO_COLLAPSE_WIDTH;
 
 function loadedSettings(loaded: DesktopSettings): DesktopSettings {
   return { ...DEFAULT_SETTINGS, ...loaded };
@@ -149,9 +152,25 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("klanker.sidebar.collapsed") === "1");
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const n = Number(localStorage.getItem("klanker.sidebar.width") || 240);
-    return Number.isFinite(n) ? Math.max(200, Math.min(420, n)) : 240;
+    return Number.isFinite(n) ? Math.max(208, Math.min(420, n)) : 240;
   });
+  const [narrowViewport, setNarrowViewport] = useState(() => narrowDesktopSidebarWidth());
+  const [allowExpandedOnNarrow, setAllowExpandedOnNarrow] = useState(false);
+  const [sessionFocus, setSessionFocus] = useState<SessionFocusTarget | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const effectiveSidebarCollapsed = narrowViewport ? sidebarCollapsed || !allowExpandedOnNarrow : sidebarCollapsed;
+  const focusSessionRow = useCallback((ws: string, persona: string, id: string) => {
+    setSessionFocus({ nonce: Date.now() + Math.random(), ws, persona, id });
+  }, []);
+  const toggleSidebar = useCallback(() => {
+    if (effectiveSidebarCollapsed) {
+      setSidebarCollapsed(false);
+      if (narrowViewport) setAllowExpandedOnNarrow(true);
+    } else {
+      setSidebarCollapsed(true);
+      if (narrowViewport) setAllowExpandedOnNarrow(false);
+    }
+  }, [effectiveSidebarCollapsed, narrowViewport]);
 
   const { kbBox, idleH } = useKeyboardViewport();
 
@@ -202,6 +221,17 @@ export function App() {
   useEffect(() => {
     try { localStorage.setItem("klanker.workbench.width", String(workbenchWidth)); } catch {}
   }, [workbenchWidth]);
+  useEffect(() => {
+    let narrow = narrowDesktopSidebarWidth();
+    const onResize = () => {
+      const next = narrowDesktopSidebarWidth();
+      if (next && !narrow) setAllowExpandedOnNarrow(false);
+      narrow = next;
+      setNarrowViewport(next);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   // Bucket key: `${ws} ${persona}` — the primary endpoint fronts every
   // workspace, so chat state is never partitioned per instance (klanker#150).
@@ -542,7 +572,7 @@ export function App() {
     },
   });
 
-  const selectChat = (ws: string, persona: string, chatId: string) => {
+  const selectChat = (ws: string, persona: string, chatId: string, focus = false) => {
     flushDeltas();
     const key = `${ws} ${persona}`;
     setSelWs(ws);
@@ -566,6 +596,7 @@ export function App() {
       ];
       return { ...prev, [key]: { openId: items[items.length - 1].id, items } };
     });
+    if (focus) focusSessionRow(ws, persona, chatId);
   };
 
   const deleteChat = async (ws: string, persona: string, row: SessionRow) => {
@@ -1150,6 +1181,41 @@ export function App() {
     pushToast(`exported chat as .${fmt}`, "success");
   }, [activeInstance?.name, messages, openChat?.session, pushToast, selPersona, selWs, tree]);
 
+  const exportSessionChat = useCallback((ws: string, persona: string, row: SessionRow, fmt: "md" | "json") => {
+    const inst0 = activeInstance;
+    if (!inst0 || !row.session) {
+      pushToast("nothing to export yet", "info");
+      return;
+    }
+    void api.sessionEvents(inst0, ws, persona, row.session).then((events) => {
+      if (!events) {
+        pushToast("export failed: session unavailable", "error");
+        return;
+      }
+      const restored = eventsToMessages(events);
+      if (!restored.length) {
+        pushToast("nothing to export yet", "info");
+        return;
+      }
+      const speaker = tree.personasOf(ws)?.find((p) => p.id === persona)?.name || persona || inst0.name;
+      const session = `${ws || "default"} · ${persona || "default"} · ${row.session}`;
+      const doc = { agent: inst0.name || "klanker", speaker, session, messages: restored };
+      const stem = exportStem(session || "chat");
+      if (fmt === "md") downloadText(`${stem}.md`, chatToMarkdown(doc), "text/markdown");
+      else downloadText(`${stem}.json`, chatToJson(doc), "application/json");
+      pushToast(`exported chat as .${fmt}`, "success");
+    });
+  }, [activeInstance, pushToast, tree]);
+
+  const copySessionId = useCallback((_ws: string, _persona: string, row: SessionRow) => {
+    const id = row.session || row.chatId;
+    if (!id) return;
+    void navigator.clipboard?.writeText(id).then(
+      () => pushToast("session id copied", "success"),
+      () => pushToast("copy failed", "error")
+    );
+  }, [pushToast]);
+
   const forkChat = useCallback((ws: string, persona: string, row: SessionRow, throughMessage = 0) => {
     const inst0 = activeInstance;
     if (!inst0 || !row.session) return;
@@ -1158,7 +1224,7 @@ export function App() {
         pushToast(`forked into ${r.session}`, "success");
         tree.expandPersona(ws, persona);
         tree.refreshSessions(ws, persona);
-        selectChat(ws, persona, r.session);
+        selectChat(ws, persona, r.session, true);
       })
       .catch((e) => pushToast(`fork: ${e instanceof Error ? e.message : e}`, "error"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1211,7 +1277,7 @@ export function App() {
       tree.refreshPersonas(ws);
       if (session) {
         tree.refreshSessions(ws, persona);
-        selectChat(ws, persona, session);
+        selectChat(ws, persona, session, true);
       } else {
         newChat(ws, persona);
       }
@@ -1262,7 +1328,7 @@ export function App() {
         setPaletteOpen((v) => !v);
       } else if (key === "b") {
         e.preventDefault();
-        setSidebarCollapsed((v) => !v);
+        toggleSidebar();
       } else if (key === "j") {
         e.preventDefault();
         setWorkbenchOpen((v) => !v);
@@ -1282,7 +1348,7 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLoadingTurn, pushToast]);
+  }, [isLoadingTurn, pushToast, toggleSidebar]);
 
   const paletteItems = useMemo<PaletteItem[]>(() => {
     const rows: PaletteItem[] = [
@@ -1291,7 +1357,7 @@ export function App() {
       { id: "export-md", section: "chat", label: "Export chat as Markdown", keywords: "download transcript md", disabled: messages.length === 0, run: () => exportOpenChat("md") },
       { id: "export-json", section: "chat", label: "Export chat as JSON", keywords: "download transcript json", disabled: messages.length === 0, run: () => exportOpenChat("json") },
       { id: "stop-turn", section: "chat", label: "Stop current turn", shortcut: "⌘.", disabled: !isLoadingTurn, run: handleStop },
-      { id: "toggle-sidebar", section: "shell", label: sidebarCollapsed ? "Show sidebar" : "Hide sidebar", shortcut: "⌘B", run: () => setSidebarCollapsed((v) => !v) },
+      { id: "toggle-sidebar", section: "shell", label: effectiveSidebarCollapsed ? "Show sidebar" : "Hide sidebar", shortcut: "⌘B", run: () => toggleSidebar() },
       { id: "toggle-workbench", section: "shell", label: workbenchOpen ? "Hide workbench" : "Show workbench", shortcut: "⌘J", run: () => setWorkbenchOpen((v) => !v) },
       { id: "toggle-theme", section: "shell", label: "Toggle dark / white theme", keywords: "light inverted mode", run: toggleTheme },
       { id: "settings", section: "shell", label: "Open settings", run: openSettings },
@@ -1308,14 +1374,14 @@ export function App() {
             label: row.label,
             hint: `${w.label || w.id} / ${persona.name || persona.id}`,
             keywords: `${w.id} ${persona.id} ${row.session} ${row.branch || ""} ${row.repo || ""}`,
-            run: () => selectChat(w.id, persona.id, row.chatId),
+            run: () => selectChat(w.id, persona.id, row.chatId, true),
           });
         }
       }
     }
     return rows;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tree.workspaces, tree.personasOf, tree.sessionRowsOf, openChat?.id, openChat?.session, messages.length, isLoadingTurn, sidebarCollapsed, workbenchOpen, selWs, selPersona, headerChatTitle, exportOpenChat, forkChat, toggleTheme, pushToast]);
+  }, [tree.workspaces, tree.personasOf, tree.sessionRowsOf, openChat?.id, openChat?.session, messages.length, isLoadingTurn, effectiveSidebarCollapsed, workbenchOpen, selWs, selPersona, headerChatTitle, exportOpenChat, forkChat, toggleTheme, pushToast]);
 
   if (inst.auth !== "ok") {
     return <AuthGate auth={inst.auth} />;
@@ -1370,9 +1436,9 @@ export function App() {
           selPersona={selPersona}
           openChatId={openChat?.id ?? null}
           width={sidebarWidth}
-          collapsed={sidebarCollapsed}
+          collapsed={effectiveSidebarCollapsed}
           onResize={setSidebarWidth}
-          onToggleCollapse={() => setSidebarCollapsed((v) => !v)}
+          onToggleCollapse={() => toggleSidebar()}
           onExpandWs={tree.expandWs}
           onExpandPersona={tree.expandPersona}
           onSelectChat={(ws, p, id) => { selectChat(ws, p, id); setNavOpen(false); }}
@@ -1380,7 +1446,18 @@ export function App() {
           onDeleteChat={deleteChat}
           onRenameChat={renameChat}
           onForkChat={forkChat}
+          onExportChat={exportSessionChat}
+          onCopySessionId={copySessionId}
           onWorkspaceSettings={(ws) => { setWsModal({ id: ws }); setNavOpen(false); }}
+          onWorkspaceShare={(ws) => { setWsModal({ id: ws, tab: "sharing" }); setNavOpen(false); }}
+          onSelectWorkspace={(ws) => {
+            tree.expandWs(ws);
+            setSelWs(ws);
+            setSelPersona(tree.personasOf(ws)?.[0]?.id || "default");
+          }}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenSettings={openSettings}
+          focusSession={sessionFocus}
           onDeleteWorkspace={async (ws) => {
             const inst0 = activeInstance;
             if (!inst0 || !(await dialogs.confirm(`Archive workspace "${ws}"? (restorable from trash)`, { danger: true }))) return;
@@ -1452,8 +1529,8 @@ export function App() {
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleWorkbench={() => setWorkbenchOpen((v) => !v)}
           workbenchOpen={workbenchOpen}
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
+          sidebarCollapsed={effectiveSidebarCollapsed}
+          onToggleSidebar={() => toggleSidebar()}
           pendingApprovals={approvals.pendingCount}
           controls={activeInstance ? (
             <>
@@ -1543,6 +1620,8 @@ export function App() {
                     isLoading={isLoadingTurn}
                     remoteActive={remoteActive}
                     title={`${selWs || "default"} · ${selPersona || "default"}`}
+                    workspace={selWs || "default"}
+                    persona={selPersona || "default"}
                     streamStatus={
                       openChat ? streamStatus[busyKey(selWs || "default", openChat.session || "")] || null : null
                     }
@@ -1704,13 +1783,13 @@ export function App() {
           onOpenStoreInspector={storeSupported ? () => { setWsModal(null); setWorkbenchOpen(true); } : undefined}
           onOpenSession={(ws, persona, session) => {
             setWsModal(null);
-            selectChat(ws, persona, session);
+            selectChat(ws, persona, session, true);
           }}
           treePersonas={(tree.treePersonas[wsModal.id] || []).map((p) => ({ id: p.id, name: p.name }))}
           onOpenInboxChat={(ws, persona) => {
             const sessions = tree.sessionRowsOf(ws, persona) || [];
             const newest = sessions.find((r) => r.session)?.session;
-            if (newest) selectChat(ws, persona, newest);
+            if (newest) selectChat(ws, persona, newest, true);
             else newChat(ws, persona);
           }}
           onSaved={(row) => {

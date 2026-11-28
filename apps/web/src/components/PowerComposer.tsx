@@ -64,6 +64,11 @@ export function PowerComposer(props: {
     session, workspace, usage, providers = [], pickProvider, onSteer, steerNote, acpMode = "",
   } = props;
   const [dragOver, setDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
+  const inputRef = useRef(input);
+  const onInputRef = useRef(onInput);
+  inputRef.current = input;
+  onInputRef.current = onInput;
   const [menuIndex, setMenuIndex] = useState(0);
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [note, setNote] = useState("");
@@ -79,6 +84,24 @@ export function PowerComposer(props: {
     const t = setTimeout(() => setNote(""), 4000);
     return () => clearTimeout(t);
   }, [note]);
+
+  useEffect(() => {
+    const insertMention = (event: Event) => {
+      const detail = ((event as CustomEvent<Record<string, unknown>>).detail || {}) as Record<string, unknown>;
+      const raw = typeof detail.mention === "string"
+        ? detail.mention
+        : typeof detail.path === "string"
+          ? `@${detail.path}`
+          : "";
+      if (!raw.trim()) return;
+      const mention = raw.trim().startsWith("@") ? raw.trim() : `@${raw.trim()}`;
+      const cur = inputRef.current;
+      onInputRef.current(`${cur}${cur.endsWith(" ") || !cur ? "" : " "}${mention} `);
+      window.setTimeout(() => textareaRef.current?.focus(), 0);
+    };
+    window.addEventListener("klanker:insert-mention", insertMention);
+    return () => window.removeEventListener("klanker:insert-mention", insertMention);
+  }, [textareaRef]);
 
   useEffect(() => {
     if (mquery === null) {
@@ -204,16 +227,22 @@ export function PowerComposer(props: {
     <div className="composer touch-none px-3 pt-3 bg-main border-t border-subtle md:min-h-[73px] md:p-3 md:flex md:items-center">
       <form
         onSubmit={submit}
-        onDragOver={(e) => {
+        onDragEnter={(e) => {
           if (e.dataTransfer?.types?.includes("Files")) {
             e.preventDefault();
+            dragDepthRef.current += 1;
             setDragOver(true);
           }
         }}
-        onDragLeave={(e) => {
-          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+        onDragOver={(e) => {
+          if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
+        }}
+        onDragLeave={() => {
+          dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+          if (dragDepthRef.current === 0) setDragOver(false);
         }}
         onDrop={(e) => {
+          dragDepthRef.current = 0;
           setDragOver(false);
           onDrop(e);
         }}

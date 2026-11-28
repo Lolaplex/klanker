@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { FileText, Folder, GitBranch, Play, RefreshCw, Save, Search, Skull, Trash2 } from "lucide-react";
+import { AtSign, Copy, ExternalLink, FileText, Folder, GitBranch, Play, RefreshCw, Save, Search, Skull, Trash2 } from "lucide-react";
 import type { KlankerInstance, StoreItem } from "../../types/klanker";
 import { api } from "../../services/api";
 import {
@@ -33,11 +33,24 @@ import {
 } from "../../services/workbenchApi";
 import { inputClass } from "../ui/inputClass";
 import type { WorkbenchTabProps } from "./types";
+import { useContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 
 type Props = WorkbenchTabProps & { instance: KlankerInstance; workspace: string; session: string };
 
 const btn = "inline-flex h-7 items-center gap-1 rounded-md border border-subtle bg-elevated px-2 text-[10px] text-ink-secondary hover:border-strong hover:bg-hover hover:text-ink-primary disabled:opacity-40";
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+function workbenchRowItems(path: string, open: () => void, notify: (message: string, kind?: "info" | "success" | "error") => void): ContextMenuItem[] {
+  return [
+    { id: "open-detail", label: "Open in Detail", icon: <ExternalLink className="h-3 w-3" />, onSelect: open },
+    { id: "copy-path", label: "Copy path", icon: <Copy className="h-3 w-3" />, onSelect: () => {
+      void navigator.clipboard?.writeText(path).then(() => notify("path copied", "success"), () => notify("copy failed", "error"));
+    } },
+    { id: "mention-path", label: "Mention @path in Composer", icon: <AtSign className="h-3 w-3" />, onSelect: () => {
+      window.dispatchEvent(new CustomEvent("klanker:insert-mention", { detail: { mention: `@${path}`, path } }));
+    } },
+  ];
+}
 
 function useAsync<T>(fn: () => Promise<T>, deps: readonly unknown[]) {
   const [data, setData] = useState<T | null>(null);
@@ -61,6 +74,7 @@ function StateLine({ loading, error, empty }: { loading: boolean; error: string;
 }
 
 export function ChangesTab({ instance, workspace, session, openDetail, notify }: Props) {
+  const { openMenu } = useContextMenu();
   const gitStatus = useCallback(
     (file = "") => session ? getSessionGit(instance, workspace, session, file) : getWorkspaceGit(instance, workspace, file),
     [instance, workspace, session]
@@ -88,6 +102,11 @@ export function ChangesTab({ instance, workspace, session, openDetail, notify }:
                 .then((d) => openDetail({ title: f.path, body: d.diff, diff: d.diff, truncated: d.diff_truncated }))
                 .catch((e) => notify(`diff: ${errText(e)}`, "error"));
             }}
+            onContextMenu={(e) => openMenu(e, workbenchRowItems(f.path, () => {
+              void gitStatus(f.path)
+                .then((d) => openDetail({ title: f.path, body: d.diff, diff: d.diff, truncated: d.diff_truncated }))
+                .catch((err) => notify(`diff: ${errText(err)}`, "error"));
+            }, notify))}
             className="flex w-full items-center gap-2 border-b border-subtle px-3 py-2 text-left hover:bg-hover"
           >
             <span className="w-7 shrink-0 rounded border border-subtle px-1 text-center text-[9px] uppercase text-ink-muted">{f.status}</span>
@@ -105,6 +124,7 @@ export function ChangesTab({ instance, workspace, session, openDetail, notify }:
 }
 
 export function FilesTab({ instance, workspace, openDetail, notify }: Props) {
+  const { openMenu } = useContextMenu();
   const [path, setPath] = useState(".");
   const [entries, setEntries] = useState<WorkbenchFileEntry[]>([]);
   const [q, setQ] = useState("");
@@ -117,8 +137,9 @@ export function FilesTab({ instance, workspace, openDetail, notify }: Props) {
       .catch((e) => setError(errText(e)));
   }, [instance, workspace, path]);
   useEffect(() => load("."), []); // eslint-disable-line react-hooks/exhaustive-deps
+  const entryPath = (name: string) => path === "." ? name : `${path.replace(/\/+$/, "")}/${name}`;
   const openFile = (name: string) => {
-    const p = path === "." ? name : `${path.replace(/\/+$/, "")}/${name}`;
+    const p = entryPath(name);
     void readWorkbenchFile(instance, workspace, p)
       .then((r) => openDetail({ title: r.path, body: r.content, truncated: r.truncated }))
       .catch((e) => notify(`read: ${errText(e)}`, "error"));
@@ -151,7 +172,9 @@ export function FilesTab({ instance, workspace, openDetail, notify }: Props) {
             <button key={`${m.path}:${m.line}`} type="button" className="block w-full border-b border-subtle px-3 py-2 text-left hover:bg-hover" onClick={() => {
               const file = m.path;
               void readWorkbenchFile(instance, workspace, file).then((r) => openDetail({ title: `${file}:${m.line}`, body: r.content, truncated: r.truncated })).catch((e) => notify(`read: ${errText(e)}`, "error"));
-            }}>
+            }} onContextMenu={(e) => openMenu(e, workbenchRowItems(m.path, () => {
+              void readWorkbenchFile(instance, workspace, m.path).then((r) => openDetail({ title: `${m.path}:${m.line}`, body: r.content, truncated: r.truncated })).catch((err) => notify(`read: ${errText(err)}`, "error"));
+            }, notify))}>
               <span className="text-ink-primary">{m.path}:{m.line}</span>
               <span className="block truncate text-[10px] text-ink-dim">{m.text}</span>
             </button>
@@ -160,7 +183,10 @@ export function FilesTab({ instance, workspace, openDetail, notify }: Props) {
           <>
             {path !== "." && <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-ink-secondary hover:bg-hover" onClick={() => load(parent)}><Folder className="h-3.5 w-3.5" />..</button>}
             {entries.map((e) => (
-              <button key={e.name} type="button" className="flex w-full items-center gap-2 border-b border-subtle px-3 py-2 text-left hover:bg-hover" onClick={() => e.type === "dir" ? load(path === "." ? e.name : `${path}/${e.name}`) : openFile(e.name)}>
+              <button key={e.name} type="button" className="flex w-full items-center gap-2 border-b border-subtle px-3 py-2 text-left hover:bg-hover" onClick={() => e.type === "dir" ? load(path === "." ? e.name : `${path}/${e.name}`) : openFile(e.name)} onContextMenu={(ev) => openMenu(ev, workbenchRowItems(entryPath(e.name), () => {
+                if (e.type === "dir") load(entryPath(e.name));
+                else openFile(e.name);
+              }, notify))}>
                 {e.type === "dir" ? <Folder className="h-3.5 w-3.5 text-ink-dim" /> : <FileText className="h-3.5 w-3.5 text-ink-dim" />}
                 <span className="min-w-0 flex-1 truncate text-ink-primary">{e.name}</span>
                 <span className="text-[9px] text-ink-dim">{e.type === "dir" ? "dir" : `${e.size}b`}</span>
