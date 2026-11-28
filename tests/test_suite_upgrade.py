@@ -928,7 +928,20 @@ class TestGatingAndDocs(unittest.TestCase):
             re.MULTILINE,
         )
         self.assertIsNotNone(declared)
-        self.assertEqual(__version__, declared.group(1))
+        from importlib.metadata import version as dist_version
+        from packaging.version import Version
+
+        base = Version(declared.group(1))
+        got = Version(__version__)
+        # One source of truth: the import matches the installed metadata,
+        # and a dev/local build sorts at or above the pyproject release.
+        self.assertEqual(__version__, dist_version("klanker"))
+        self.assertEqual(Version(got.base_version), base)
+        self.assertGreaterEqual(got, base)
+        for path in (root / "src" / "klanker").rglob("*.py"):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r'__version__\s*=\s*["\']\d')
+            self.assertNotRegex(text, r'klanker_version\s*=\s*["\']\d')
         example = json.loads((root / "examples/mcp.json").read_text(encoding="utf-8"))
         self.assertIn("mcpServers", example)
 

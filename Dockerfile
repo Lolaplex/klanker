@@ -57,6 +57,8 @@ ARG STORE_REF=${SUITE_REF}
 # dep there reaches the image automatically; the *_REF ARGs stay the
 # per-package override surface. One resolver pass also orders the
 # workspace contract before its dependents.
+# SUITE_REF=main stamps klanker at [project].version (KLANKER_RELEASE=1).
+# Any other ref is a dev build: its local version sorts above that release.
 RUN --mount=type=secret,id=github_token \
     set -eu; \
     if [ -s /run/secrets/github_token ]; then \
@@ -67,6 +69,7 @@ RUN --mount=type=secret,id=github_token \
     echo "klanker-suite cache=${CACHE_BUST} ref=${SUITE_REF}"; \
     python scripts/dev-suite.py --emit > /tmp/suite-reqs.txt; \
     pip install --no-cache-dir -r /tmp/suite-reqs.txt; \
+    if [ "$SUITE_REF" = "main" ]; then export KLANKER_RELEASE=1; fi; \
     pip install --no-cache-dir .
 
 # Optional ACP agent for agents-relay acp-run: INSTALL_DEVIN=1 bakes

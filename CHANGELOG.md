@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Dev install is one command: `python scripts/dev-suite.py` installs every `agents-*` dependency from source (sibling checkout or `SUITE_REF`, default `dev`), then installs klanker editable. The lockstep floors are not on PyPI yet, so that order is what a clean venv can resolve. `agents-workspace`, `agents-harness`, `agents-relay`, `agents-sync`, `agents-traces`, and `agents-calendar` are pinned `>=0.2.0,<1`, matching the rest of the suite.
+- `klanker.__version__` is the installed distribution version, taken from package metadata. That metadata is `[project].version` on a release build (`0.3.0`) and the same base plus a PEP 440 local segment on every other build (`0.3.0+g<sha>`, or `0.3.0+dev` when git is unavailable). The local version sorts above the base, so a dev install is never offered a PyPI release at or below that base, and a newer release is reported as information with the dev install left in place. The health endpoint and the update check both read this version.
 
 ### Added
 - Wave 13C multi-host pairing and thinking controls: local workspaces now keep local turn leases on hub-connected spokes, workspace host maps and guest invites accurately proxy through paired hubs, generated QR codes follow ISO/IEC 18004 format placement, device linking and hub joining use role-clear QR/code flows, sharing separates paired devices from restricted guest access, and the composer exposes persisted reasoning plus ACP thinking/speed controls.

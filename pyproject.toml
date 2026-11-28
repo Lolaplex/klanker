@@ -1,6 +1,7 @@
 [build-system]
 requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+build-backend = "backend"
+backend-path = ["_build"]
 
 [project]
 name = "klanker"
@@ -24,6 +25,7 @@ dependencies = [
     "agents-voice>=0.1.1",
     "agents-store>=0.0.1",
     "agents-browser>=0.47.0",
+    "packaging>=24",
 ]
 
 [project.optional-dependencies]
