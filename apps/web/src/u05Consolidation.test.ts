@@ -163,8 +163,8 @@ describe("provider rows test-filter", () => {
     assert.deepEqual(visibleProviderRows(rows, false).map((r) => r.name), ["lmstudio", "devin"]);
   });
 
-  it("show-test returns every row", () => {
-    assert.equal(visibleProviderRows(rows, true).length, 4);
+  it("the legacy show-test flag cannot expose fixtures", () => {
+    assert.deepEqual(visibleProviderRows(rows, true).map((r) => r.name), ["lmstudio", "devin"]);
   });
 });
 

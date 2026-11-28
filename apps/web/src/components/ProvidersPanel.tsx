@@ -8,16 +8,14 @@ import { providerCatalogKey, providerRowsKey } from "../services/sessionCache";
 import {
   CURATED_PROVIDER_PRESETS,
   filterVisibleProviders,
-  isAcpConfigured,
-  mergeAcpAgentCatalog,
+  isAcpProviderRow,
+  mergeCodingAgentCatalog,
   readHiddenProviders,
-  readShowTestProviders,
-  writeShowTestProviders,
+  type CodingAgentEntry,
   type ProviderPreset,
 } from "../services/providerCatalog";
 import { providerDisplayName } from "../providerDisplay";
 import { inputClass } from "./ui/inputClass";
-import { Switch } from "./ui/Switch";
 
 /** Compatibility export for the older settings tests; the canonical rule
  * lives in services/providerCatalog so picker and panel cannot drift. */
@@ -37,12 +35,16 @@ type EditForm = {
   command: string;
 };
 
-const emptyCustomForm = {
+const emptyCustomProviderForm = {
   name: "",
   url: "",
   key_env: "LLM_API_KEY",
   model: "",
-  kind: "openai_compat",
+};
+
+const emptyCustomAcpForm = {
+  name: "",
+  label: "",
   command: "",
 };
 
@@ -72,8 +74,14 @@ function parseModelsInput(raw: string): string[] {
   return [...new Set(raw.split(/[\n,]+/).map((m) => m.trim()).filter(Boolean))];
 }
 
-/** Host-scoped provider setup. Curated one-click flows stay on the existing
- * provider wire contract; custom manifests remain available for power users. */
+function modelCountLabel(count: number | undefined): string {
+  if (!count) return "";
+  return `${count} ${count === 1 ? "model" : "models"}`;
+}
+
+/** Host-scoped provider setup. Model providers and external ACP coding agents
+ * are separate capability classes: a configured acp.* row renders exactly once,
+ * in the coding-agent section, never as a duplicate model-provider card. */
 export function ProvidersPanel({
   instance,
   onChanged,
@@ -93,7 +101,6 @@ export function ProvidersPanel({
   const [busy, setBusy] = useState(false);
   const [probeBusy, setProbeBusy] = useState<string | null>(null);
   const [probeOut, setProbeOut] = useState<Record<string, ProbeInfo>>({});
-  const [showTestProviders, setShowTestProvidersState] = useState(readShowTestProviders);
   const [keyTarget, setKeyTarget] = useState("");
   const [keyValue, setKeyValue] = useState("");
   const [keyNote, setKeyNote] = useState<Record<string, string>>({});
@@ -103,9 +110,11 @@ export function ProvidersPanel({
   const [presetModel, setPresetModel] = useState("");
   const [agentRows, setAgentRows] = useState<unknown[] | null>(null);
   const [agentBusy, setAgentBusy] = useState("");
-  const [customOpen, setCustomOpen] = useState(false);
+  const [customProviderOpen, setCustomProviderOpen] = useState(false);
+  const [customAcpOpen, setCustomAcpOpen] = useState(false);
   const [editing, setEditing] = useState("");
-  const [form, setForm] = useState(emptyCustomForm);
+  const [customProviderForm, setCustomProviderForm] = useState(emptyCustomProviderForm);
+  const [customAcpForm, setCustomAcpForm] = useState(emptyCustomAcpForm);
   const [editForm, setEditForm] = useState<EditForm>(emptyEditForm);
 
   useEffect(() => {
@@ -129,12 +138,6 @@ export function ProvidersPanel({
     void agentsSwr.refresh().catch(() => {});
   }, [agentsSwr, providersSwr]);
 
-  const setShowTestProviders = (value: boolean) => {
-    setShowTestProvidersState(value);
-    writeShowTestProviders(value);
-    onChanged?.();
-  };
-
   const rememberProbe = (name: string, out: Awaited<ReturnType<typeof api.probeProvider>>) => {
     setProbeOut((prev) => ({
       ...prev,
@@ -150,6 +153,7 @@ export function ProvidersPanel({
       rememberProbe(name, await fetchSWR(swrKey(instance.id, "_root", `providers:probe:${name}`), () => api.probeProvider(instance, name), { ttlMs: 15_000, persist: false, force: true }));
       invalidateProviders();
       load();
+      onChanged?.();
     } finally {
       setProbeBusy(null);
     }
@@ -174,6 +178,27 @@ export function ProvidersPanel({
       onChanged?.();
     } catch (e) {
       setNote(`delete: ${e instanceof Error ? e.message : e}`);
+    }
+  };
+
+  const disableAgent = async (row: ProviderRow) => {
+    setAgentBusy(row.name);
+    setNote(null);
+    try {
+      await api.deleteProvider(instance, row.name);
+      setProbeOut((prev) => {
+        const next = { ...prev };
+        delete next[row.name];
+        return next;
+      });
+      if (editing === row.name) cancelEdit();
+      invalidateProviders();
+      load();
+      onChanged?.();
+    } catch (e) {
+      setNote(`disable: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setAgentBusy("");
     }
   };
 
@@ -236,24 +261,47 @@ export function ProvidersPanel({
     }
   };
 
-  const submitCustom = async () => {
-    const name = form.name.trim();
+  const submitCustomProvider = async () => {
+    const name = customProviderForm.name.trim();
     if (!name) return;
     setBusy(true);
     setNote(null);
     try {
-      if (form.kind === "acp-agent") {
-        await api.addProvider(instance, { name, kind: "acp-agent", command: form.command.trim() });
-      } else {
-        await api.addProvider(instance, {
-          name,
-          url: form.url.trim(),
-          key_env: form.key_env.trim() || "LLM_API_KEY",
-          model: form.model.trim(),
-        });
-      }
-      setCustomOpen(false);
-      setForm(emptyCustomForm);
+      await api.addProvider(instance, {
+        name,
+        url: customProviderForm.url.trim(),
+        key_env: customProviderForm.key_env.trim() || "LLM_API_KEY",
+        model: customProviderForm.model.trim(),
+      });
+      setCustomProviderOpen(false);
+      setCustomProviderForm(emptyCustomProviderForm);
+      invalidateProviders();
+      load();
+      onChanged?.();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setNote(/^404|^501/.test(msg) ? "host relay predates the provider write API — update agents-relay on that host" : msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitCustomAcp = async () => {
+    const rawName = customAcpForm.name.trim();
+    if (!rawName) return;
+    const name = rawName.startsWith("acp.") ? rawName : `acp.${rawName}`;
+    setBusy(true);
+    setNote(null);
+    try {
+      await api.addProvider(instance, {
+        name,
+        kind: "acp-agent",
+        label: customAcpForm.label.trim(),
+        command: customAcpForm.command.trim(),
+      });
+      rememberProbe(name, await api.probeProvider(instance, name));
+      setCustomAcpOpen(false);
+      setCustomAcpForm(emptyCustomAcpForm);
       invalidateProviders();
       load();
       onChanged?.();
@@ -361,128 +409,176 @@ export function ProvidersPanel({
     }
   };
 
-  const visibleRows = filterVisibleProviders(rows, showTestProviders);
-  const agents = mergeAcpAgentCatalog(agentRows, agentRows !== null);
-  const hasTestRows = showTestProviders || rows.length !== filterVisibleProviders(rows, false).length;
+  const visibleRows = filterVisibleProviders(rows, false);
+  const llmRows = visibleRows.filter((row) => !isAcpProviderRow(row));
+  const agents = mergeCodingAgentCatalog(agentRows, agentRows !== null, visibleRows);
   const hiddenCount = hiddenProviders.length;
 
+  const renderInlineEditor = (row: ProviderRow, displayName: string) => (
+    <div className="mt-3 space-y-2 rounded-lg border border-subtle bg-main p-2.5" data-testid="inline-provider-edit">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] uppercase tracking-wider text-ink-muted">edit {displayName}</span>
+        <button type="button" onClick={cancelEdit} aria-label="Close provider editor" className="text-ink-muted hover:text-ink-primary"><X className="h-3.5 w-3.5" /></button>
+      </div>
+      <label className="block space-y-1">
+        <span className="text-[10px] uppercase tracking-wider text-ink-dim">Display name</span>
+        <input autoFocus value={editForm.label} onChange={(e) => setEditForm((f) => ({ ...f, label: e.target.value }))} placeholder={displayName} aria-label="Display name" spellCheck={false} className={inputClass} />
+      </label>
+      {editForm.kind === "acp-agent" ? (
+        <label className="block space-y-1">
+          <span className="text-[10px] uppercase tracking-wider text-ink-dim">Spawn command</span>
+          <input value={editForm.command} onChange={(e) => setEditForm((f) => ({ ...f, command: e.target.value }))} placeholder='spawn command, e.g. "devin acp"' aria-label="Spawn command" spellCheck={false} className={inputClass} />
+        </label>
+      ) : (
+        <>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-ink-dim">Base URL</span>
+            <input value={editForm.url} onChange={(e) => setEditForm((f) => ({ ...f, url: e.target.value }))} placeholder="base url" aria-label="Base URL" spellCheck={false} className={inputClass} />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block space-y-1">
+              <span className="text-[10px] uppercase tracking-wider text-ink-dim">Default model</span>
+              <input value={editForm.model} onChange={(e) => setEditForm((f) => ({ ...f, model: e.target.value }))} placeholder="default model" aria-label="Default model" spellCheck={false} className={inputClass} />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-[10px] uppercase tracking-wider text-ink-dim">Key env var</span>
+              <input value={editForm.key_env} onChange={(e) => setEditForm((f) => ({ ...f, key_env: e.target.value }))} placeholder="key env var" aria-label="Key env var" spellCheck={false} className={inputClass} />
+            </label>
+          </div>
+          <label className="block space-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-ink-dim">Models</span>
+            <textarea value={editForm.models} onChange={(e) => setEditForm((f) => ({ ...f, models: e.target.value }))} placeholder="model ids, comma or newline separated" aria-label="Models list" spellCheck={false} rows={3} className={`${inputClass} min-h-16 resize-y`} />
+          </label>
+        </>
+      )}
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <button type="button" onClick={cancelEdit} className="rounded-md px-3 py-1.5 text-[10px] text-ink-muted hover:text-ink-primary">Cancel</button>
+        <button type="button" onClick={() => void saveEdit(row)} disabled={busy || (editForm.kind === "acp-agent" ? !editForm.command.trim() : !editForm.url.trim())} className="rounded-md bg-accent px-3 py-1.5 text-[10px] text-accent-ink disabled:bg-hover disabled:text-ink-dim">{busy ? "saving…" : "Save"}</button>
+      </div>
+    </div>
+  );
+
+  const renderModelProvider = (row: ProviderRow) => {
+    const probed = probeOut[row.name];
+    const status = probed?.status || (row.error ? "error" : row.key_env && !row.key_configured ? "missing-key" : row.key_configured ? "configured" : "");
+    const pill = status ? pillFor(status) : null;
+    const displayName = providerDisplayName(row);
+    const keyConfigured = row.key_configured === true;
+    return (
+      <article key={row.name} className="rounded-xl border border-strong bg-surface p-3" data-provider={row.name}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="truncate text-[12px] font-medium text-ink-primary">{displayName}</span>
+              {row.kind ? <span className="rounded-md border border-strong px-1.5 py-0.5 text-[9px] uppercase text-ink-muted">{row.kind}</span> : null}
+              {pill ? <span className={`rounded-md border px-1.5 py-0.5 text-[9px] uppercase ${pill.cls}`}>{pill.label}</span> : null}
+              {row.models?.length ? <span className="text-[10px] text-ink-dim">{modelCountLabel(row.models.length)}</span> : null}
+            </div>
+            {displayName !== row.name ? <div className="mt-0.5 truncate text-[10px] font-mono text-ink-dim">{row.name}</div> : null}
+            <div className="mt-1 truncate text-[10px] text-ink-dim" title={row.url || row.model || ""}>{row.url || row.model || "host provider"}</div>
+            {probed ? <div className="mt-1 text-[10px] text-ink-secondary">{probeText(probed)}</div> : row.error ? <div className="mt-1 text-[10px] text-danger">{row.error}</div> : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+            <button type="button" onClick={() => void probe(row.name)} disabled={probeBusy === row.name} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary disabled:opacity-40">{probeBusy === row.name ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}Probe</button>
+            {row.key_env ? (
+              <button
+                type="button"
+                onClick={() => { setKeyTarget(keyTarget === row.name ? "" : row.name); setKeyValue(""); }}
+                className={keyConfigured
+                  ? "h-8 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary"
+                  : "h-8 rounded-md border border-warn/60 bg-accent px-2 text-[10px] text-accent-ink"}
+              >
+                {keyConfigured ? "Update key" : "Set API key"}
+              </button>
+            ) : null}
+            <button type="button" onClick={() => edit(row)} aria-expanded={editing === row.name} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary"><Pencil className="h-3 w-3" />Edit</button>
+            {row.source === "file" ? (
+              <button type="button" onClick={() => void drop(row)} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-danger"><Trash2 className="h-3 w-3" />Delete</button>
+            ) : (
+              <button type="button" onClick={() => void hideProvider(row)} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary"><EyeOff className="h-3 w-3" />Hide</button>
+            )}
+          </div>
+        </div>
+        {row.key_env && keyTarget === row.name ? (
+          <div className="mt-2 flex items-center gap-1">
+            <input type="password" autoFocus value={keyValue} onChange={(e) => setKeyValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void setKey(row); if (e.key === "Escape") { setKeyTarget(""); setKeyValue(""); } }} placeholder={`${row.key_env} value`} aria-label={`API key for ${row.name}`} className={inputClass} />
+            <button type="button" onClick={() => void setKey(row)} disabled={!keyValue.trim()} className="shrink-0 rounded-md bg-accent px-3 py-2 text-[10px] text-accent-ink disabled:opacity-40">save</button>
+          </div>
+        ) : null}
+        {keyNote[row.name] ? <div className="mt-1 text-[10px] text-ink-muted">{keyNote[row.name]}</div> : null}
+        {editing === row.name ? renderInlineEditor(row, displayName) : null}
+      </article>
+    );
+  };
+
+  const renderCodingAgent = (agent: CodingAgentEntry) => {
+    const row = agent.row;
+    const configured = agent.configured && !!row;
+    const providerName = agent.providerName;
+    const agentProbe = probeOut[providerName];
+    const count = agentProbe?.models?.length ?? row?.models?.length;
+    const countLabel = configured ? modelCountLabel(count) : "";
+    const probeError = agentProbe && agentProbe.status !== "ok" ? probeText(agentProbe) : "";
+    return (
+      <article key={providerName} className="rounded-xl border border-strong bg-surface p-3" data-coding-agent={agent.id} {...(configured ? { "data-provider": providerName } : {})}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Bot className="h-3.5 w-3.5 text-ink-muted" />
+              <span className="truncate text-[12px] text-ink-primary">{agent.label}</span>
+              {agent.installed ? <span className="rounded-md border border-success/50 px-1.5 py-0.5 text-[9px] uppercase text-success" title={agent.path || "installed"}>INSTALLED</span> : <span className="rounded-md border border-strong px-1.5 py-0.5 text-[9px] uppercase text-ink-muted">NOT INSTALLED</span>}
+              {configured ? <span className="rounded-md border border-success/50 px-1.5 py-0.5 text-[9px] uppercase text-success">ENABLED</span> : null}
+              {countLabel ? <span className="rounded-md border border-subtle px-1.5 py-0.5 text-[9px] text-ink-muted">{countLabel}</span> : null}
+              {agent.custom ? <span className="rounded-md border border-subtle px-1.5 py-0.5 text-[9px] uppercase text-ink-muted">custom</span> : null}
+            </div>
+            <div className="mt-1 truncate font-mono text-[10px] text-ink-dim" title={agent.command}>{agent.command || "no spawn command configured"}</div>
+            <div className="mt-1 text-[10px] text-ink-dim">{agent.detectionUnavailable ? "Restart local relay to refresh CLI detection" : agent.hint}</div>
+            {agent.error ? <div className="mt-1 text-[10px] text-danger">{agent.error}</div> : null}
+            {agentProbe && agentProbe.status !== "ok" ? <div className="mt-1 text-[10px] text-danger">probe: {probeText(agentProbe)}</div> : null}
+            {!agent.error && !probeError && agentProbe?.detail ? <div className="mt-1 text-[10px] text-ink-secondary">{agentProbe.detail}</div> : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+            {configured && row ? (
+              <>
+                <button type="button" onClick={() => void probe(providerName)} disabled={probeBusy === providerName} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary disabled:opacity-40">{probeBusy === providerName ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}Probe</button>
+                <button type="button" onClick={() => edit(row)} aria-expanded={editing === providerName} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary"><Pencil className="h-3 w-3" />Edit</button>
+                <button type="button" onClick={() => void disableAgent(row)} disabled={agentBusy === providerName} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-danger disabled:opacity-40"><Trash2 className="h-3 w-3" />{agentBusy === providerName ? "disabling…" : "Disable"}</button>
+              </>
+            ) : (
+              <button type="button" onClick={() => void enableAgent(agent.id, agent.command)} disabled={agentBusy === agent.id || !agent.command.trim()} className="shrink-0 rounded-md bg-accent px-3 py-2 text-[10px] text-accent-ink disabled:bg-hover disabled:text-ink-dim">{agentBusy === agent.id ? "enabling…" : "Enable"}</button>
+            )}
+          </div>
+        </div>
+        {configured && row && editing === row.name ? renderInlineEditor(row, agent.label) : null}
+      </article>
+    );
+  };
+
   return (
-    <div className="flex-1 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-5">
+    <div className="flex-1 min-h-0 overflow-y-auto overscroll-y-contain p-4 pb-[max(1rem,var(--sab))] md:pb-4 space-y-5">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-[10px] uppercase tracking-wider text-ink-muted">providers &amp; agents</div>
           <div className="mt-0.5 text-[10px] text-ink-dim">{stale ? "offline cache" : "host-scoped model access"}</div>
         </div>
-        {hasTestRows ? <label className="flex items-center gap-1.5 text-[10px] text-ink-muted"><Switch checked={showTestProviders} onCheckedChange={setShowTestProviders} ariaLabel="show test providers" />test fixtures</label> : null}
       </div>
       {note ? <p className="rounded-md border border-danger/50 px-2.5 py-2 text-[11px] text-danger">{note}</p> : null}
 
-      <section className="space-y-2" aria-label="Configured providers and agents">
+      <section className="space-y-4" aria-label="Model Providers">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-[10px] uppercase tracking-wider text-ink-muted">configured providers &amp; agents</div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-ink-muted">Model Providers</div>
+            <div className="mt-0.5 text-[10px] text-ink-dim">Klanker harness models and OpenAI-compatible endpoints</div>
+          </div>
           {hiddenCount > 0 ? (
             <button type="button" onClick={() => void restoreHidden()} disabled={busy} className="inline-flex h-7 items-center gap-1 rounded-md border border-subtle px-2 text-[10px] text-ink-secondary hover:border-strong hover:text-ink-primary disabled:opacity-40">
               <RotateCcw className="h-3 w-3" />Restore defaults ({hiddenCount})
             </button>
           ) : null}
         </div>
-        {visibleRows.length === 0 ? <div className="rounded-xl border border-subtle bg-surface px-3 py-4 text-center text-[11px] text-ink-dim">no visible providers on this host</div> : visibleRows.map((row) => {
-          const probed = probeOut[row.name];
-          const status = probed?.status || (row.error ? "error" : row.key_env && !row.key_configured ? "missing-key" : row.key_configured ? "configured" : "");
-          const pill = status ? pillFor(status) : null;
-          const displayName = providerDisplayName(row);
-          const keyConfigured = row.key_configured === true;
-          return (
-            <article key={row.name} className="rounded-xl border border-strong bg-surface p-3" data-provider={row.name}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="truncate text-[12px] font-medium text-ink-primary">{displayName}</span>
-                    {row.kind ? <span className="rounded-md border border-strong px-1.5 py-0.5 text-[9px] uppercase text-ink-muted">{row.kind}</span> : null}
-                    {pill ? <span className={`rounded-md border px-1.5 py-0.5 text-[9px] uppercase ${pill.cls}`}>{pill.label}</span> : null}
-                    {row.models?.length ? <span className="text-[10px] text-ink-dim">{row.models.length} model(s)</span> : null}
-                  </div>
-                  {displayName !== row.name ? <div className="mt-0.5 truncate text-[10px] font-mono text-ink-dim">{row.name}</div> : null}
-                  <div className="mt-1 truncate text-[10px] text-ink-dim" title={row.command || row.url || row.model || ""}>{row.command || row.url || row.model || "host provider"}</div>
-                  {probed ? <div className="mt-1 text-[10px] text-ink-secondary">{probeText(probed)}</div> : row.error ? <div className="mt-1 text-[10px] text-danger">{row.error}</div> : null}
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-                  <button type="button" onClick={() => void probe(row.name)} disabled={probeBusy === row.name} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary disabled:opacity-40">{probeBusy === row.name ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}Probe</button>
-                  {row.key_env ? (
-                    <button
-                      type="button"
-                      onClick={() => { setKeyTarget(keyTarget === row.name ? "" : row.name); setKeyValue(""); }}
-                      className={keyConfigured
-                        ? "h-8 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary"
-                        : "h-8 rounded-md border border-warn/60 bg-accent px-2 text-[10px] text-accent-ink"}
-                    >
-                      {keyConfigured ? "Update key" : "Set API key"}
-                    </button>
-                  ) : null}
-                  <button type="button" onClick={() => edit(row)} aria-expanded={editing === row.name} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary"><Pencil className="h-3 w-3" />Edit</button>
-                  {row.source === "file" ? (
-                    <button type="button" onClick={() => void drop(row)} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-danger"><Trash2 className="h-3 w-3" />Delete</button>
-                  ) : (
-                    <button type="button" onClick={() => void hideProvider(row)} className="inline-flex h-8 items-center gap-1 rounded-md border border-strong px-2 text-[10px] text-ink-secondary hover:text-ink-primary"><EyeOff className="h-3 w-3" />Hide</button>
-                  )}
-                </div>
-              </div>
-              {row.key_env && keyTarget === row.name ? (
-                <div className="mt-2 flex items-center gap-1">
-                  <input type="password" autoFocus value={keyValue} onChange={(e) => setKeyValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void setKey(row); if (e.key === "Escape") { setKeyTarget(""); setKeyValue(""); } }} placeholder={`${row.key_env} value`} aria-label={`API key for ${row.name}`} className={inputClass} />
-                  <button type="button" onClick={() => void setKey(row)} disabled={!keyValue.trim()} className="shrink-0 rounded-md bg-accent px-3 py-2 text-[10px] text-accent-ink disabled:opacity-40">save</button>
-                </div>
-              ) : null}
-              {keyNote[row.name] ? <div className="mt-1 text-[10px] text-ink-muted">{keyNote[row.name]}</div> : null}
-              {editing === row.name ? (
-                <div className="mt-3 space-y-2 rounded-lg border border-subtle bg-main p-2.5" data-testid="inline-provider-edit">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] uppercase tracking-wider text-ink-muted">edit {displayName}</span>
-                    <button type="button" onClick={cancelEdit} aria-label="Close provider editor" className="text-ink-muted hover:text-ink-primary"><X className="h-3.5 w-3.5" /></button>
-                  </div>
-                  <label className="block space-y-1">
-                    <span className="text-[10px] uppercase tracking-wider text-ink-dim">Display name</span>
-                    <input autoFocus value={editForm.label} onChange={(e) => setEditForm((f) => ({ ...f, label: e.target.value }))} placeholder={displayName} aria-label="Display name" spellCheck={false} className={inputClass} />
-                  </label>
-                  {editForm.kind === "acp-agent" ? (
-                    <label className="block space-y-1">
-                      <span className="text-[10px] uppercase tracking-wider text-ink-dim">Spawn command</span>
-                      <input value={editForm.command} onChange={(e) => setEditForm((f) => ({ ...f, command: e.target.value }))} placeholder='spawn command, e.g. "devin acp"' aria-label="Spawn command" spellCheck={false} className={inputClass} />
-                    </label>
-                  ) : (
-                    <>
-                      <label className="block space-y-1">
-                        <span className="text-[10px] uppercase tracking-wider text-ink-dim">Base URL</span>
-                        <input value={editForm.url} onChange={(e) => setEditForm((f) => ({ ...f, url: e.target.value }))} placeholder="base url" aria-label="Base URL" spellCheck={false} className={inputClass} />
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <label className="block space-y-1">
-                          <span className="text-[10px] uppercase tracking-wider text-ink-dim">Default model</span>
-                          <input value={editForm.model} onChange={(e) => setEditForm((f) => ({ ...f, model: e.target.value }))} placeholder="default model" aria-label="Default model" spellCheck={false} className={inputClass} />
-                        </label>
-                        <label className="block space-y-1">
-                          <span className="text-[10px] uppercase tracking-wider text-ink-dim">Key env var</span>
-                          <input value={editForm.key_env} onChange={(e) => setEditForm((f) => ({ ...f, key_env: e.target.value }))} placeholder="key env var" aria-label="Key env var" spellCheck={false} className={inputClass} />
-                        </label>
-                      </div>
-                      <label className="block space-y-1">
-                        <span className="text-[10px] uppercase tracking-wider text-ink-dim">Models</span>
-                        <textarea value={editForm.models} onChange={(e) => setEditForm((f) => ({ ...f, models: e.target.value }))} placeholder="model ids, comma or newline separated" aria-label="Models list" spellCheck={false} rows={3} className={`${inputClass} min-h-16 resize-y`} />
-                      </label>
-                    </>
-                  )}
-                  <div className="flex items-center justify-end gap-2 pt-1">
-                    <button type="button" onClick={cancelEdit} className="rounded-md px-3 py-1.5 text-[10px] text-ink-muted hover:text-ink-primary">Cancel</button>
-                    <button type="button" onClick={() => void saveEdit(row)} disabled={busy || (editForm.kind === "acp-agent" ? !editForm.command.trim() : !editForm.url.trim())} className="rounded-md bg-accent px-3 py-1.5 text-[10px] text-accent-ink disabled:bg-hover disabled:text-ink-dim">{busy ? "saving…" : "Save"}</button>
-                  </div>
-                </div>
-              ) : null}
-            </article>
-          );
-        })}
-      </section>
+        {llmRows.length === 0 ? <div className="rounded-xl border border-subtle bg-surface px-3 py-4 text-center text-[11px] text-ink-dim">no model providers on this host</div> : llmRows.map(renderModelProvider)}
 
-      <section className="space-y-2" aria-label="Add model provider">
+      <div className="space-y-2">
         <div>
           <div className="text-[10px] uppercase tracking-wider text-ink-muted">add model provider</div>
           <div className="mt-0.5 text-[10px] text-ink-dim">one-click curated setup; no manifest plumbing</div>
@@ -510,65 +606,45 @@ export function ProvidersPanel({
             <button type="button" onClick={() => void enablePreset()} disabled={busy || (!!preset.keyEnv && !presetKey.trim()) || (!preset.keyEnv && !presetUrl.trim())} className="w-full rounded-xl bg-accent px-4 py-2.5 text-[11px] text-accent-ink disabled:bg-hover disabled:text-ink-dim">{busy ? "setting up…" : `Add ${preset.label}`}</button>
           </div>
         ) : null}
-      </section>
-
-      <section className="space-y-2" aria-label="Coding agents">
-        <div>
-          <div className="text-[10px] uppercase tracking-wider text-ink-muted">coding agents · ACP</div>
-          <div className="mt-0.5 text-[10px] text-ink-dim">auto-detected host CLIs, enabled as acp.* providers</div>
-        </div>
-        {agents.map((agent) => {
-          const configured = isAcpConfigured(rows, agent.id);
-          const providerName = `acp.${agent.id}`;
-          const agentProbe = probeOut[providerName];
-          return (
-            <div key={agent.id} className="rounded-xl border border-strong bg-surface p-3">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Bot className="h-3.5 w-3.5 text-ink-muted" />
-                    <span className="text-[12px] text-ink-primary">{agent.label}</span>
-                    {agent.installed ? <span className="rounded-md border border-success/50 px-1.5 py-0.5 text-[9px] uppercase text-success" title={agent.path || "installed"}>installed</span> : <span className="rounded-md border border-strong px-1.5 py-0.5 text-[9px] uppercase text-ink-muted">{agent.detectionUnavailable ? "not detected" : "not installed"}</span>}
-                    {configured ? <span className="rounded-md border border-success/50 px-1.5 py-0.5 text-[9px] uppercase text-success">enabled</span> : null}
-                  </div>
-                  <div className="mt-1 truncate font-mono text-[10px] text-ink-dim" title={agent.command}>{agent.command}</div>
-                  <div className="mt-1 text-[10px] text-ink-dim">{agent.detectionUnavailable ? "Restart local relay to refresh CLI detection" : agent.hint}</div>
-                  {agent.error ? <div className="mt-1 text-[10px] text-danger">{agent.error}</div> : null}
-                  {agentProbe && agentProbe.status !== "ok" ? <div className="mt-1 text-[10px] text-danger">probe: {probeText(agentProbe)}</div> : null}
-                </div>
-                <button type="button" onClick={() => void enableAgent(agent.id, agent.command)} disabled={configured || agentBusy === agent.id} className="shrink-0 rounded-md bg-accent px-3 py-2 text-[10px] text-accent-ink disabled:bg-hover disabled:text-ink-dim">{agentBusy === agent.id ? "enabling…" : configured ? "enabled" : "Enable"}</button>
+        <section className="rounded-xl border border-subtle bg-surface">
+          <button type="button" onClick={() => setCustomProviderOpen((v) => !v)} className="flex w-full items-center justify-between px-3 py-2.5 text-left text-[11px] text-ink-secondary hover:text-ink-primary">
+            <span>+ Custom OpenAI-compatible provider…</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${customProviderOpen ? "rotate-180" : ""}`} />
+          </button>
+          {customProviderOpen ? (
+            <div className="space-y-2 border-t border-subtle p-3">
+              <input value={customProviderForm.name} onChange={(e) => setCustomProviderForm((f) => ({ ...f, name: e.target.value }))} placeholder="lmstudio.local" aria-label="Custom provider name" spellCheck={false} className={inputClass} />
+              <input value={customProviderForm.url} onChange={(e) => setCustomProviderForm((f) => ({ ...f, url: e.target.value }))} placeholder="base url" aria-label="Custom provider base URL" spellCheck={false} className={inputClass} />
+              <div className="grid grid-cols-2 gap-2">
+                <input value={customProviderForm.key_env} onChange={(e) => setCustomProviderForm((f) => ({ ...f, key_env: e.target.value }))} placeholder="key env var" aria-label="Custom provider key env var" spellCheck={false} className={inputClass} />
+                <input value={customProviderForm.model} onChange={(e) => setCustomProviderForm((f) => ({ ...f, model: e.target.value }))} placeholder="default model" aria-label="Custom provider default model" spellCheck={false} className={inputClass} />
               </div>
+              <button type="button" onClick={() => void submitCustomProvider()} disabled={busy || !customProviderForm.name.trim() || !customProviderForm.url.trim()} className="w-full rounded-xl bg-accent px-4 py-2.5 text-[11px] text-accent-ink disabled:bg-hover disabled:text-ink-dim">{busy ? "saving…" : "Add custom provider"}</button>
             </div>
-          );
-        })}
-        {agents.length === 0 ? <div className="text-[10px] text-ink-dim">no ACP agent catalog entries available</div> : null}
+          ) : null}
+        </section>
+      </div>
       </section>
 
-      <section className="rounded-xl border border-subtle bg-surface">
-        <button type="button" onClick={() => setCustomOpen((v) => !v)} className="flex w-full items-center justify-between px-3 py-2.5 text-left text-[11px] text-ink-secondary hover:text-ink-primary">
-          <span>Custom provider or ACP agent…</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${customOpen ? "rotate-180" : ""}`} />
-        </button>
-        {customOpen ? (
-          <div className="space-y-2 border-t border-subtle p-3">
-            <div className="grid grid-cols-2 gap-2">
-              <button type="button" onClick={() => setForm((f) => ({ ...f, kind: "openai_compat" }))} className={`rounded-md border px-2 py-1.5 text-[11px] ${form.kind === "openai_compat" ? "border-accent bg-accent text-accent-ink" : "border-strong bg-surface text-ink-secondary"}`}>OpenAI-compatible</button>
-              <button type="button" onClick={() => setForm((f) => ({ ...f, kind: "acp-agent" }))} className={`rounded-md border px-2 py-1.5 text-[11px] ${form.kind === "acp-agent" ? "border-accent bg-accent text-accent-ink" : "border-strong bg-surface text-ink-secondary"}`}>ACP agent</button>
+      <section className="space-y-2" aria-label="Coding Agents · ACP">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-ink-muted">Coding Agents · ACP</div>
+          <div className="mt-0.5 text-[10px] text-ink-dim">external coding agents; models stay agent-owned</div>
+        </div>
+        {agents.map(renderCodingAgent)}
+        {agents.length === 0 ? <div className="text-[10px] text-ink-dim">no ACP agent catalog entries available</div> : null}
+        <section className="rounded-xl border border-subtle bg-surface">
+          <button type="button" onClick={() => setCustomAcpOpen((v) => !v)} className="flex w-full items-center justify-between px-3 py-2.5 text-left text-[11px] text-ink-secondary hover:text-ink-primary">
+            <span>+ Custom ACP agent…</span><ChevronDown className={`h-3.5 w-3.5 transition-transform ${customAcpOpen ? "rotate-180" : ""}`} />
+          </button>
+          {customAcpOpen ? (
+            <div className="space-y-2 border-t border-subtle p-3">
+              <input value={customAcpForm.name} onChange={(e) => setCustomAcpForm((f) => ({ ...f, name: e.target.value }))} placeholder="acp.myagent" aria-label="Custom ACP agent name" spellCheck={false} className={inputClass} />
+              <input value={customAcpForm.label} onChange={(e) => setCustomAcpForm((f) => ({ ...f, label: e.target.value }))} placeholder="display name (optional)" aria-label="Custom ACP agent display name" spellCheck={false} className={inputClass} />
+              <input value={customAcpForm.command} onChange={(e) => setCustomAcpForm((f) => ({ ...f, command: e.target.value }))} placeholder='spawn command, e.g. "my-agent acp"' aria-label="Custom ACP agent command" spellCheck={false} className={inputClass} />
+              <button type="button" onClick={() => void submitCustomAcp()} disabled={busy || !customAcpForm.name.trim() || !customAcpForm.command.trim()} className="w-full rounded-xl bg-accent px-4 py-2.5 text-[11px] text-accent-ink disabled:bg-hover disabled:text-ink-dim">{busy ? "saving…" : "Add custom ACP agent"}</button>
             </div>
-            <input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder={form.kind === "acp-agent" ? "acp.devin" : "lmstudio.local"} spellCheck={false} className={inputClass} />
-            {form.kind === "acp-agent" ? (
-              <input value={form.command} onChange={(e) => setForm((f) => ({ ...f, command: e.target.value }))} placeholder='spawn command, e.g. "devin acp"' spellCheck={false} className={inputClass} />
-            ) : (
-              <>
-                <input value={form.url} onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))} placeholder="base url" spellCheck={false} className={inputClass} />
-                <div className="grid grid-cols-2 gap-2">
-                  <input value={form.key_env} onChange={(e) => setForm((f) => ({ ...f, key_env: e.target.value }))} placeholder="key env var" spellCheck={false} className={inputClass} />
-                  <input value={form.model} onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))} placeholder="default model" spellCheck={false} className={inputClass} />
-                </div>
-              </>
-            )}
-            <button type="button" onClick={() => void submitCustom()} disabled={busy || !form.name.trim() || (form.kind === "acp-agent" ? !form.command.trim() : !form.url.trim())} className="w-full rounded-xl bg-accent px-4 py-2.5 text-[11px] text-accent-ink disabled:bg-hover disabled:text-ink-dim">{busy ? "saving…" : "Add custom provider"}</button>
-          </div>
-        ) : null}
+          ) : null}
+        </section>
       </section>
     </div>
   );

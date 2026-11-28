@@ -122,10 +122,9 @@ def main(argv: list[str] | None = None) -> int:
         # Dynamic per-turn prompt: built for THIS workspace, never a frozen
         # entry-workspace prompt baked into LOOP_CMD at serve boot.
         try:
-            from .prompt import save_system_prompt
-            from .sensing import probe_host
+            from .prompt import system_prompt_file
 
-            prompt_file = save_system_prompt(probe_host(), workspace=ws)
+            prompt_file = system_prompt_file(workspace=ws)
             args = ["--system", str(prompt_file)] + args
         except Exception:
             log.warning("dynamic system prompt unavailable", exc_info=True)

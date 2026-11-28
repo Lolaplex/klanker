@@ -7,6 +7,7 @@ import { listWorkspaceFiles, transcribeVoice } from "../services/streamExtrasApi
 import type { OutAttachment } from "./ChatConsole";
 import type { UsageStats } from "./ToolTimeline";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { Select } from "./ui/Select";
 
 export const SLASH_COMMANDS = [
   { cmd: "/retry", help: "regenerate the last answer" },
@@ -90,7 +91,9 @@ export function PowerComposer(props: {
   const chunksRef = useRef<Blob[]>([]);
   const slashes = useMemo(() => slashMatches(input), [input]);
   const mquery = useMemo(() => mentionQuery(input), [input]);
-  const modes = useMemo(() => providers.find((p) => p.name === pickProvider)?.modes || [], [providers, pickProvider]);
+  const activeProvider = pick?.provider || pickProvider || "";
+  const isAcp = activeProvider.toLowerCase().startsWith("acp.");
+  const modes = useMemo(() => providers.find((p) => p.name === activeProvider)?.modes || [], [providers, activeProvider]);
   const [turnMode, setTurnMode] = useState<TurnMode>(() => readTurnMode());
 
   useEffect(() => {
@@ -346,31 +349,41 @@ export function PowerComposer(props: {
             <button type="button" onClick={() => fileRef.current?.click()} title="Attach files" aria-label="Attach files" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-hover hover:text-ink-primary">
               <Paperclip className="h-3.5 w-3.5" />
             </button>
-            <div role="radiogroup" aria-label="Turn mode" data-testid="turn-mode-selector" className="inline-flex shrink-0 items-center rounded-full border border-subtle bg-surface p-0.5 font-mono leading-none">
-              {([
-                ["auto", "Auto", "Auto — fast-path smalltalk, full tools for tasks"],
-                ["fast", "Fast", "Fast — instant conversational reply, reasoning off"],
-                ["agent", "Agent", "Agent — full workspace tool context"],
-              ] as const).map(([mode, label, title]) => (
-                <button
-                  key={mode}
-                  type="button"
-                  role="radio"
-                  aria-checked={turnMode === mode}
-                  title={title}
-                  data-turn-mode={mode}
-                  onClick={() => { writeTurnMode(mode); setTurnMode(mode); }}
-                  className={`rounded-full px-1.5 py-1 text-[9px] uppercase tracking-wide transition-colors ${turnMode === mode ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-hover hover:text-ink-primary"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            {modes.length ? (
-              <select aria-label="ACP mode" value={acpMode || modes[0] || ""} className="h-7 max-w-28 rounded-md border border-subtle bg-surface px-1.5 text-[10px] text-ink-secondary outline-none hover:border-strong" onChange={(e) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode: e.target.value, provider: pickProvider } }))}>
-                {modes.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            ) : null}
+            {!isAcp ? (
+              <div role="radiogroup" aria-label="Turn mode" data-testid="turn-mode-selector" className="inline-flex shrink-0 items-center rounded-full border border-subtle bg-surface p-0.5 font-mono leading-none">
+                {([
+                  ["auto", "Auto", "Auto — fast-path smalltalk, full tools for tasks"],
+                  ["fast", "Fast", "Fast — instant conversational reply, reasoning off"],
+                  ["agent", "Agent", "Agent — full workspace tool context"],
+                ] as const).map(([mode, label, title]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={turnMode === mode}
+                    title={title}
+                    data-turn-mode={mode}
+                    onClick={() => { writeTurnMode(mode); setTurnMode(mode); }}
+                    className={`rounded-full px-1.5 py-1 text-[9px] uppercase tracking-wide transition-colors ${turnMode === mode ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-hover hover:text-ink-primary"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="flex shrink-0 items-center gap-1" data-testid="acp-mode-controls">
+                <span className="inline-flex h-7 items-center rounded-full border border-subtle bg-surface px-2 text-[9px] uppercase tracking-wide text-ink-muted">ACP</span>
+                {modes.length ? (
+                  <Select
+                    ariaLabel="ACP mode"
+                    value={acpMode || modes[0] || ""}
+                    className="h-7 min-h-7 w-28 border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                    options={modes.map((m) => ({ value: m, label: m }))}
+                    onChange={(mode) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode, provider: activeProvider } }))}
+                  />
+                ) : null}
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             {usage && (usage.tokensIn || usage.tokensOut) ? <span className="hidden text-[10px] text-ink-dim sm:inline">{usage.tokensIn + usage.tokensOut} tok{usage.costUsd ? ` · $${usage.costUsd.toFixed(6)}` : ""}</span> : null}

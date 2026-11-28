@@ -176,7 +176,7 @@ describe("modal primitive consolidation", () => {
   });
 
   it("boolean toggles consume ui/Switch", () => {
-    for (const f of ["SettingsPanel", "WorkspaceModal", "ProvidersPanel", "WsManageTabs"]) {
+    for (const f of ["SettingsPanel", "WorkspaceModal", "WsManageTabs"]) {
       const src = readFileSync(`src/components/${f}.tsx`, "utf-8");
       assert.ok(src.includes('from "./ui/Switch"'), `${f} does not use ui/Switch`);
     }

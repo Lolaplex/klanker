@@ -44,7 +44,7 @@ import {
   providerScope,
   runHostSwitch,
 } from "./hostPicker";
-import { filterVisibleProviders, readShowTestProviders } from "./services/providerCatalog";
+import { filterVisibleProviders } from "./services/providerCatalog";
 import { refreshProviders as forceHostProviderRefresh } from "./services/streamExtrasApi";
 import { Kicker, runResumableTurn } from "./turnStream";
 import { MIN_RELAY } from "./relayCompat";
@@ -743,7 +743,7 @@ export function App() {
     const remoteDevice = scope.kind === "remote" ? scope.deviceId : "";
     const cacheKey = providerRowsKey(inst.id, remoteDevice);
     const applyRows = (r: { rows: ProviderRow[]; stale: boolean }) => {
-      setChatProviders(filterVisibleProviders(r.rows, readShowTestProviders()));
+      setChatProviders(filterVisibleProviders(r.rows));
       setProvidersStale(r.stale);
     };
     const cached = peekSWR<{ rows: ProviderRow[]; stale: boolean }>(cacheKey);

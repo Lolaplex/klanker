@@ -230,7 +230,7 @@ export const WorkspaceModal: React.FC<Props> = ({
   const dirtyTab = tab === "general" || tab === "sharing";
 
   return (
-    <Dialog open onClose={onClose} title={<>workspace · {workspace.label || workspace.id}</>} wide>
+    <Dialog open onClose={onClose} title={<>workspace · {workspace.label || workspace.id}</>} wide fixedHeight>
         <Tabs
           value={tab}
           onValueChange={(v) => setTab(v as typeof tab)}
@@ -238,7 +238,7 @@ export const WorkspaceModal: React.FC<Props> = ({
           tabs={TABS.map((t) => ({ value: t.id, label: t.label }))}
         />
 
-        <div className="p-4 flex flex-col gap-3 overflow-y-auto overscroll-y-contain">
+        <div className="flex-1 min-h-0 p-4 flex flex-col gap-3 overflow-y-auto overscroll-y-contain">
           {tab === "general" && (
             <>
               <label className="flex flex-col gap-1">
