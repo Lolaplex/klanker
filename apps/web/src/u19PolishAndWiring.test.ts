@@ -100,7 +100,7 @@ describe("U19 workbench clipping and resize persistence", () => {
     assert.ok(app.includes('localStorage.setItem("klanker.sidebar.width"'), "sidebar width persistence missing");
     assert.ok(app.includes('localStorage.getItem("klanker.workbench.width")'), "workbench width restore missing");
     assert.ok(app.includes('localStorage.setItem("klanker.workbench.width"'), "workbench width persistence missing");
-    assert.ok(list.includes("Math.max(200, Math.min(420"), "sidebar 200–420 clamp missing");
+    assert.ok(list.includes("Math.max(208, Math.min(420"), "sidebar 208–420 clamp missing");
     assert.ok(list.includes('aria-label="Resize sidebar"') && list.includes("hover:bg-strong"), "sidebar drag handle missing");
     assert.ok(list.includes("md:w-[var(--sidebar-width)]"), "sidebar width is not applied on desktop");
     assert.ok(rail.includes("Math.max(320, Math.min(640"), "workbench 320–640 clamp missing");
@@ -200,9 +200,11 @@ describe("U19 event wiring and ACP mode persistence", () => {
     }
     const app = src("src/App.tsx");
     const consoleSrc = src("src/components/ChatConsole.tsx");
+    const composerSrc = src("src/components/PowerComposer.tsx");
     for (const name of names) {
       if (name === "klanker:turn-event") assert.ok(consoleSrc.includes("TURN_EVENT_NAME"), "turn stream listener missing");
       else if (name === "klanker:focus-composer") assert.ok(consoleSrc.includes('"klanker:focus-composer"'), "composer focus listener missing");
+      else if (name === "klanker:insert-mention") assert.ok(composerSrc.includes('"klanker:insert-mention"'), "composer mention listener missing");
       else assert.ok(app.includes(`"${name}"`), `${name} dispatched without an App listener`);
     }
     for (const required of ["klanker:open-detail", "klanker:fork-session", "klanker:clear-chat", "klanker:providers-refreshed", "klanker:acp-mode"]) {

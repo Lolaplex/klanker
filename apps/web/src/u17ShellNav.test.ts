@@ -131,7 +131,7 @@ describe("sidebar navigation", () => {
     }
   });
 
-  it("filters sessions by title and collapses to zero width when requested", async () => {
+  it("filters sessions by title and collapses to the 52px icon rail when requested", async () => {
     const r = await renderInDom(React.createElement(KlankerList, listProps));
     try {
       const input = document.querySelector('input[aria-label="Filter sidebar"]') as HTMLInputElement;
@@ -149,6 +149,8 @@ describe("sidebar navigation", () => {
     const collapsed = await renderInDom(React.createElement(KlankerList, { ...listProps, collapsed: true }));
     try {
       assert.ok(collapsed.html().includes("sidebar-collapsed"), "collapsed marker missing");
+      assert.ok(collapsed.html().includes("sidebar-icon-rail"), "collapsed icon rail missing");
+      assert.ok(collapsed.html().includes("md:w-[52px]"), "52px rail width missing");
     } finally {
       collapsed.unmount();
     }

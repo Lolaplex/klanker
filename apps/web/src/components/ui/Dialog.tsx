@@ -24,10 +24,10 @@ export function Dialog({
   return (
     <BaseDialog.Root open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop className="fixed inset-0 z-[60] bg-black/70" />
+        <BaseDialog.Backdrop className="fixed inset-0 z-[60] bg-black/70 klanker-backdrop-enter" />
         <BaseDialog.Viewport className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <BaseDialog.Popup
-            className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-surface border border-strong rounded-lg font-mono text-xs flex flex-col max-h-[90vh] outline-none`}
+            className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-surface border border-strong rounded-lg font-mono text-xs flex flex-col max-h-[90vh] outline-none klanker-modal-enter`}
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-subtle shrink-0">
               <BaseDialog.Title className="text-ink-primary tracking-wider uppercase truncate">

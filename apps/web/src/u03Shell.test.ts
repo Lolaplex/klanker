@@ -149,7 +149,7 @@ describe("KlankerList compact badges", () => {
     const html = renderList(() => undefined as never);
     assert.ok(html.includes("md:w-[var(--sidebar-width)]"), "sidebar css-var width missing");
     assert.ok(!html.includes("md:w-52"), "old narrow width still present");
-    assert.ok(html.includes("md:min-w-[200px]") && html.includes("md:max-w-[420px]"), "U19 width bounds missing");
+    assert.ok(html.includes("md:min-w-[208px]") && html.includes("md:max-w-[420px]"), "U19 width bounds missing");
     assert.ok(html.includes("md:group-hover:flex"), "overlay hover actions missing");
     // The old in-flow hover buttons (opacity-based, width-stealing) are gone.
     assert.ok(!html.includes("md:group-hover:opacity-100"), "in-flow opacity actions still present");

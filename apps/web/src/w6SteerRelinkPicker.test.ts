@@ -325,7 +325,7 @@ describe("W6 quick-ask open-session bridge", () => {
     assert.ok(app.includes("tree.refreshWorkspaces()"), "workspace refresh missing");
     assert.ok(app.includes("tree.refreshPersonas(ws)"), "persona refresh missing");
     assert.ok(app.includes("tree.refreshSessions(ws, persona)"), "session refresh missing");
-    assert.ok(app.includes("selectChat(ws, persona, session)"), "session selection missing");
+    assert.ok(app.includes("selectChat(ws, persona, session, true)"), "focused session selection missing");
     assert.ok(app.includes('new Event("klanker:focus-composer")'), "composer focus dispatch missing");
   });
 });

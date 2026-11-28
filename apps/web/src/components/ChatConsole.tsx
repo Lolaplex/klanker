@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Bot, User, Paperclip, RotateCcw, GitFork, Volume2 } from "lucide-react";
+import { Bot, Copy, User, Paperclip, RotateCcw, GitFork, Volume2 } from "lucide-react";
 import { shouldSubmitOnEnter, focusWithoutScroll } from "../chatUi";
 import { splitThinking } from "../thinkingParse";
 import { ChatMessage, KlankerInstance, ModelPick, PendingApproval, ProviderRow } from "../types/klanker";
@@ -13,6 +13,7 @@ import { injectSteer, speakText } from "../services/streamExtrasApi";
 import { asSteerEvent, TURN_EVENT_NAME, type TurnEvent } from "../turnStream";
 import { PowerComposer } from "./PowerComposer";
 import { applyLiveTurnEvent, stepsFromSessionEvents, ToolTimeline, usageFromTurnEvent, type TimelineStep, type UsageStats } from "./ToolTimeline";
+import { useContextMenu } from "./ui/ContextMenu";
 
 export interface OutAttachment {
   data: string;
@@ -569,6 +570,7 @@ const MessageBubble = React.memo(function MessageBubble({
 }) {
   const mine = message.role === "user";
   const [speaking, setSpeaking] = useState(false);
+  const { openMenu } = useContextMenu();
   // <think> extraction: reasoning sits in a collapsible accordion above
   // the answer body; while streaming an unclosed trailing tag counts too.
   const thinkSplit = !mine && message.content ? splitThinking(message.content) : null;
@@ -582,8 +584,19 @@ const MessageBubble = React.memo(function MessageBubble({
       setSpeaking(false);
     }
   };
+  const copyMarkdown = () => {
+    void navigator.clipboard?.writeText(message.content || "");
+  };
+  const openMessageMenu = (e: React.MouseEvent) => {
+    openMenu(e, [
+      { id: "copy-markdown", label: "Copy Markdown", icon: <Copy className="h-3 w-3" />, disabled: !message.content, onSelect: copyMarkdown },
+      { id: "fork-from-here", label: "Fork from here", icon: <GitFork className="h-3 w-3" />, disabled: !onFork, onSelect: () => onFork?.() },
+      { id: "regenerate", label: "Regenerate", icon: <RotateCcw className="h-3 w-3" />, disabled: !onRegenerate, onSelect: () => onRegenerate?.() },
+      { id: "read-aloud", label: "Read aloud", icon: <Volume2 className="h-3 w-3" />, disabled: !spokenText.trim(), onSelect: () => void speak() },
+    ]);
+  };
   return (
-    <div className={`group flex w-full ${mine ? "justify-end" : "justify-start"}`}>
+    <div onContextMenu={openMessageMenu} className={`group flex w-full ${mine ? "justify-end" : "justify-start"}`}>
       <div className={`flex min-w-0 flex-col ${mine ? "max-w-[85%] items-end" : "w-full max-w-full items-start"}`}>
         <div className="mb-1 flex select-none items-center space-x-1.5 px-1 text-[10px] text-ink-dim">
           {mine ? (

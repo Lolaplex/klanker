@@ -1,7 +1,7 @@
 import React from "react";
-import { Command, Menu, Minus, PanelLeftOpen, PanelRight, Settings, Square, X } from "lucide-react";
+import { Command, Menu, Minus, Moon, PanelLeftOpen, PanelRight, Settings, Square, Sun, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
-import { ThemeSwitcher } from "./ui/ThemeSwitcher";
+import { useThemeMode } from "../theme";
 import { KlankerMark } from "./KlankerMark";
 
 interface HeaderProps {
@@ -83,6 +83,8 @@ export const Header: React.FC<HeaderProps> = ({
     if (win) void fn(win).catch(() => undefined);
   };
   const pill = statusMeta(status);
+  const { resolvedMode, setPreference } = useThemeMode();
+  const nextMode = resolvedMode === "dark" ? "light" : "dark";
 
   return (
     <header data-tauri-drag-region className="h-11 shrink-0 select-none border-b border-subtle bg-main z-30 touch-none">
@@ -168,9 +170,15 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <PanelRight className="h-3.5 w-3.5" />
           </button>
-          <div className="hidden sm:block">
-            <ThemeSwitcher compact />
-          </div>
+          <button
+            type="button"
+            onClick={() => setPreference(nextMode)}
+            aria-label="Toggle dark / white theme"
+            title={nextMode === "light" ? "Switch to White mode" : "Switch to Dark mode"}
+            className={`${ghostBtn} klanker-press hidden sm:inline-flex`}
+          >
+            {resolvedMode === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+          </button>
           <button type="button" onClick={onOpenSettings} aria-label="Settings" title="Settings" className={ghostBtn}>
             <Settings className="h-3.5 w-3.5" />
           </button>

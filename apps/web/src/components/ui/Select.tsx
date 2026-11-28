@@ -46,7 +46,7 @@ export function Select({
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
         <BaseSelect.Positioner className="z-[70]" sideOffset={4}>
-          <BaseSelect.Popup className="min-w-40 max-h-64 overflow-y-auto border border-strong bg-surface rounded-md shadow-lg font-mono text-xs py-1 outline-none">
+          <BaseSelect.Popup className="min-w-40 max-h-64 overflow-y-auto border border-strong bg-surface rounded-md shadow-lg font-mono text-xs py-1 outline-none klanker-menu-enter">
             {options.map((o) => (
               <BaseSelect.Item
                 key={o.value}
