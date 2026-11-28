@@ -2,7 +2,7 @@
 
 **Status:** Rev 4 — §13's nine sample gaps are `DECIDED (2026-11-27)`; the original eight decisions stay `DECIDED`  
 **Date:** 2026-11-27  
-**References:** [`docs/plans/klanker-ui-evolution.md`](klanker-ui-evolution.md) (the UI review and its addendum), [`Cypoe/koru-orisha-media`](https://github.com/Cypoe/koru-orisha-media) @ `f52bf2b2769a257c399c702484f316939aeb0464`
+**References:** [`klanker-ui-evolution.md`](klanker-ui-evolution.md), [`../research/klanker-ui-review.md`](../research/klanker-ui-review.md), [`../research/klanker-ui-review-addendum.md`](../research/klanker-ui-review-addendum.md). Rev 2 and Rev 3 were not published as separate files; their deltas are the changelog below. External tree: [`Cypoe/koru-orisha-media`](https://github.com/Cypoe/koru-orisha-media) @ `f52bf2b2769a257c399c702484f316939aeb0464`.
 
 ### What Changed in Rev 4
 - Marked the nine §13 gaps **`DECIDED (2026-11-27)`** from Fabian's answers (t263u). The eight decisions in §9 are unchanged.

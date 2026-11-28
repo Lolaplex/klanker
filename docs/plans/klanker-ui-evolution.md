@@ -1,7 +1,12 @@
 # Klanker UI evolution
 
 **Status:** Research filed as the UI plan (2026-11-27). The eight architectural choices it fed are `DECIDED` in [`klanker-plugin-architecture.md`](klanker-plugin-architecture.md).
-**Sources:** the UI architecture review and the `dsh` / `pi` / `omp` addendum, kept in full below.
+**Sources:** the UI architecture review and the `dsh` / `pi` / `omp` addendum. Canonical copies in this repo:
+
+- [`docs/research/klanker-ui-review.md`](../research/klanker-ui-review.md)
+- [`docs/research/klanker-ui-review-addendum.md`](../research/klanker-ui-review-addendum.md)
+
+The same text is kept below so this plan can be read in one file. Rev 2 and Rev 3 of the plugin architecture were not separate documents; their deltas are the changelog inside [`klanker-plugin-architecture.md`](klanker-plugin-architecture.md).
 
 This is the plan for how Klanker's shell should evolve: two piles of state, a `web-engine` shell, and a small persistent plugin model. The research was written before the neutral-naming rule. Where the review says `klanker.plugin/v1`, `klanker-app-*`, or `klanker/state/*`, use the names in the plugin architecture plan instead (`plugin/v1`, `ui-state/v2`, `host/state/get`, `host/state/set`, `jobs.call:<verb>`, `turn.submit`, `stream.subscribe`).
 
@@ -30,7 +35,7 @@ The lines in the research that say "no repository edits" describe how the notes 
 
 ### Terminology Resolution
 
-- **`cordis harness` (Resolved):** Found in [`Lolaplex/agents-harness`](https://github.com/Lolaplex/agents-harness) (`README.md`), [`Lolaplex/klanker`](https://github.com/Lolaplex/klanker) (`README.md`), and `Lolaplex/agents-board` (`concepts/frag-clanker-fleet-vision.md`). `agents-harness` is the per-request agent loop and Cordis job kernel (`runner.kernel`, `runner.cordis_tools`, `runner/modules/*.json`, `runner.mcp_server` exposing `list_catalog`, `load_schema`, `call_job`), with strict layering ("executor owns no domain state; strictly executes declared CLI verbs and inspects exit codes"), `AGENTS_APPROVAL_MODE` (`ask`/`strict`), and `<untrusted_data>` fencing.
+- **`cordis harness` (Resolved):** Found in [`Lolaplex/agents-harness`](https://github.com/Lolaplex/agents-harness) (`README.md`), [`Lolaplex/klanker`](https://github.com/Lolaplex/klanker) (`README.md`), and [`Lolaplex/agents-board` `concepts/frag-clanker-fleet-vision.md`](https://github.com/Lolaplex/agents-board/blob/main/concepts/frag-clanker-fleet-vision.md). `agents-harness` is the per-request agent loop and Cordis job kernel (`runner.kernel`, `runner.cordis_tools`, `runner/modules/*.json`, `runner.mcp_server` exposing `list_catalog`, `load_schema`, `call_job`), with strict layering ("executor owns no domain state; strictly executes declared CLI verbs and inspects exit codes"), `AGENTS_APPROVAL_MODE` (`ask`/`strict`), and `<untrusted_data>` fencing.
 - **`dhs` (Unresolved — not guessed):** Searched `/agent/repos/*` and `org:Lolaplex` repositories/code via GitHub search; zero matches for `dhs`. Left unresolved as requested.
 
 ---
@@ -252,7 +257,7 @@ Extends [`Lolaplex/agents-workspace`](https://github.com/Lolaplex/agents-workspa
 # Klanker UI Review — Addendum: `dsh`, `pi`, and `omp` (+ `omp` v2)
 
 **Date:** 2026-11-27  
-**Mode:** Read-only research addendum to `/cursor/stores/self/klanker-ui-review.md` (no code edits, no commits, no PRs).
+**Mode:** Read-only research addendum to [`docs/research/klanker-ui-review.md`](../research/klanker-ui-review.md) (gathered with no repository edits).
 
 ---
 
