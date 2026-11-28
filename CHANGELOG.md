@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Dev install is one command: `python scripts/dev-suite.py` installs every `agents-*` dependency from source (sibling checkout or `SUITE_REF`, default `dev`), then installs klanker editable. The lockstep floors are not on PyPI yet, so that order is what a clean venv can resolve. `agents-workspace`, `agents-harness`, `agents-relay`, `agents-sync`, `agents-traces`, and `agents-calendar` are pinned `>=0.2.0,<1`, matching the rest of the suite.
+
 ### Added
 - Wave 13C multi-host pairing and thinking controls: local workspaces now keep local turn leases on hub-connected spokes, workspace host maps and guest invites accurately proxy through paired hubs, generated QR codes follow ISO/IEC 18004 format placement, device linking and hub joining use role-clear QR/code flows, sharing separates paired devices from restricted guest access, and the composer exposes persisted reasoning plus ACP thinking/speed controls.
 - Wave 12D turn-start prompt cache: valid per-workspace system-prompt artifacts now skip the full host probe on warm turns, with version/workspace/git/deploy/memory fingerprints, atomic writes, a 300s TTL, and `KLANKER_NO_PROMPT_CACHE=1` as an explicit bypass.

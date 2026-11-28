@@ -59,14 +59,22 @@ pip install "klanker[repl]"      # interactive shell/TUI
 pip install "klanker[all]"       # every optional extension
 ```
 
+From a checkout, one command installs the suite from source and then
+klanker editable (`SUITE_REF` defaults to `dev`, `<NAME>_REF` overrides
+a single package):
+
+```bash
+git clone https://github.com/Lolaplex/klanker.git && cd klanker
+python scripts/dev-suite.py
+```
+
 Suite layering (workspace/store/sync/relay/harness/klanker):
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Dev lock-step, Docker images, NAS self-deploy: [INSTALL.md](INSTALL.md).
 
 > [!TIP]
 > **🤖 Agent-driven setup:** point your coding agent at this repo and
 > tell it to *"install klanker, sense the host, and run my assistant"*.
-
-Dev lock-step, Docker images, NAS self-deploy: [INSTALL.md](INSTALL.md).
 
 ## Screenshots
 
