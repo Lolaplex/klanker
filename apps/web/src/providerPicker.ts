@@ -1,4 +1,5 @@
 import type { ModelPick, ProviderRow } from "./types/klanker";
+import { modelDisplayName, providerDisplayName } from "./providerDisplay";
 
 export interface PickRow {
   provider: string;
@@ -11,6 +12,8 @@ export interface PickRow {
   error?: string;
   /** this row selects the provider's own default model. */
   isDefault?: boolean;
+  /** manifest default model behind a provider-default pick row. */
+  displayModel?: string;
 }
 
 const samePick = (a: ModelPick, b: ModelPick): boolean =>
@@ -27,10 +30,11 @@ export function expandRows(providers: ProviderRow[]): PickRow[] {
       out.push({
         provider: p.name,
         model: "",
-        label: p.model ? `${p.name} · ${p.model}` : p.name,
+        label: p.model || providerDisplayName(p.name),
         group: p.name,
         error: p.error,
         isDefault: true,
+        displayModel: p.model || "",
       });
       continue;
     }
@@ -57,11 +61,19 @@ export function pickerRows(
   filter = ""
 ): { favorites: PickRow[]; rows: PickRow[] } {
   const q = filter.trim().toLowerCase();
-  const match = (r: PickRow) =>
-    !q ||
-    r.provider.toLowerCase().includes(q) ||
-    r.model.toLowerCase().includes(q) ||
-    `${r.provider}:${r.model}`.includes(q);
+  const match = (r: PickRow) => {
+    if (!q) return true;
+    const displayProvider = providerDisplayName(r.provider).toLowerCase();
+    const displayModel = modelDisplayName(r.displayModel || r.model, r.provider).primary.toLowerCase();
+    return (
+      r.provider.toLowerCase().includes(q) ||
+      r.model.toLowerCase().includes(q) ||
+      `${r.provider}:${r.model}`.includes(q) ||
+      r.label.toLowerCase().includes(q) ||
+      displayProvider.includes(q) ||
+      displayModel.includes(q)
+    );
+  };
   const favSet = new Set(favorites.map((f) => `${f.provider} ${f.model}`));
   const byPick = new Map<string, PickRow>();
   for (const r of expandRows(providers)) byPick.set(`${r.provider} ${r.model}`, r);
@@ -70,7 +82,7 @@ export function pickerRows(
     const row = byPick.get(`${f.provider} ${f.model}`) ?? {
       provider: f.provider,
       model: f.model,
-      label: f.model || f.provider,
+      label: f.model || providerDisplayName(f.provider),
       group: f.provider,
     };
     if (match(row)) favoritesOut.push(row);

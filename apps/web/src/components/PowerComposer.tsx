@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Mic, Paperclip, Volume2, X } from "lucide-react";
-import type { KlankerInstance, ProviderRow } from "../types/klanker";
+import { ArrowUp, Mic, Paperclip, Square, X } from "lucide-react";
+import type { KlankerInstance, ModelPick, ProviderRow } from "../types/klanker";
 import { api } from "../services/api";
 import { readTurnMode, writeTurnMode, type TurnMode } from "../services/turnMode";
-import { listWorkspaceFiles, speakText, transcribeVoice } from "../services/streamExtrasApi";
+import { listWorkspaceFiles, transcribeVoice } from "../services/streamExtrasApi";
 import type { OutAttachment } from "./ChatConsole";
 import type { UsageStats } from "./ToolTimeline";
+import { ProviderModelPicker } from "./ProviderModelPicker";
 
 export const SLASH_COMMANDS = [
   { cmd: "/retry", help: "regenerate the last answer" },
@@ -43,6 +44,7 @@ export function PowerComposer(props: {
   onPickFiles: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDrop: (e: React.DragEvent<HTMLFormElement>) => void;
   onSteer: () => Promise<void>;
+  onStop?: () => void;
   steerNote?: string;
   acpMode?: string;
   files: OutAttachment[];
@@ -57,12 +59,22 @@ export function PowerComposer(props: {
   persona: string;
   usage?: UsageStats;
   providers?: ProviderRow[];
+  favorites?: ModelPick[];
+  pick?: ModelPick;
+  providersStale?: boolean;
+  providersDisabled?: boolean;
+  onPick?: (p: ModelPick) => void;
+  onStar?: (p: ModelPick, star: boolean) => void;
+  onRefreshProviders?: () => void;
+  onOpenProviderSettings?: () => void;
   pickProvider?: string;
 }) {
   const {
     instance, input, onInput, onSubmit, onKeyDown, onPaste, onPickFiles, onDrop,
     files, setFiles, textareaRef, fileRef, isLoading, sendHold, displaySpeaker,
-    session, workspace, usage, providers = [], pickProvider, onSteer, steerNote, acpMode = "",
+    session, workspace, usage, providers = [], pickProvider, onSteer, onStop, steerNote, acpMode = "",
+    favorites = [], pick, providersStale = false, providersDisabled = false,
+    onPick, onStar, onRefreshProviders, onOpenProviderSettings,
   } = props;
   const [dragOver, setDragOver] = useState(false);
   const dragDepthRef = useRef(0);
@@ -218,12 +230,48 @@ export function PowerComposer(props: {
     setNote("");
   };
 
-  const speakLast = async () => {
-    const text = [...document.querySelectorAll(".klanker-md")].pop()?.textContent || "";
-    if (!text) return;
-    const ok = await speakText(instance, text);
-    if (!ok) setNote("voice unavailable");
-  };
+  const hasDraft = !!input.trim() || files.length > 0;
+  const sendButton = isLoading && !input.trim() ? (
+    <button
+      type="button"
+      onClick={onStop}
+      disabled={!onStop}
+      aria-label="Stop current turn"
+      title="Stop (Ctrl/⌘ .)"
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-ink transition-all hover:bg-accent-hover disabled:opacity-40"
+    >
+      <Square className="h-3 w-3 fill-current" />
+    </button>
+  ) : isLoading ? (
+    <button
+      type="submit"
+      aria-label="Steer turn"
+      title="Steer turn"
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-ink transition-all hover:bg-accent-hover"
+    >
+      <ArrowUp className="h-4 w-4" />
+    </button>
+  ) : hasDraft ? (
+    <button
+      type="submit"
+      disabled={sendHold}
+      aria-label="Send message"
+      title="Send"
+      className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-accent-ink transition-all hover:bg-accent-hover disabled:bg-hover disabled:text-ink-dim"
+    >
+      <ArrowUp className="h-4 w-4" />
+    </button>
+  ) : (
+    <button
+      type="button"
+      disabled
+      aria-label="Send message"
+      title="Send"
+      className="inline-flex h-8 w-8 shrink-0 cursor-default items-center justify-center rounded-full border border-subtle bg-hover/70 text-ink-dim/60"
+    >
+      <ArrowUp className="h-4 w-4" />
+    </button>
+  );
 
   return (
     <div className="composer touch-none px-3 pt-3 bg-main border-t border-subtle md:min-h-[73px] md:p-3 md:flex md:items-center">
@@ -248,7 +296,7 @@ export function PowerComposer(props: {
           setDragOver(false);
           onDrop(e);
         }}
-        className={`mx-auto flex w-full max-w-3xl flex-col min-h-12 bg-elevated border focus-within:border-strong rounded-md transition-colors ${dragOver ? "border-accent" : "border-subtle"}`}
+        className={`mx-auto flex w-full max-w-3xl flex-col min-h-12 rounded-xl border bg-elevated transition-colors focus-within:border-strong ${dragOver ? "border-accent" : "border-subtle"}`}
       >
         {files.length > 0 && (
           <div className="flex flex-wrap gap-1.5 px-2.5 pt-2">
@@ -266,7 +314,7 @@ export function PowerComposer(props: {
             })}
           </div>
         )}
-        <div className="relative flex items-stretch gap-0.5 pl-1 pr-[5px] min-h-[46px]">
+        <div className="relative flex min-h-[46px] items-stretch">
           {(slashes.length > 0 || mentions.length > 0) && (
             <div className="absolute bottom-full left-2 z-20 mb-1 max-h-56 min-w-56 overflow-y-auto rounded-md border border-strong bg-elevated shadow-lg" data-testid="composer-popup">
               {slashes.map((c, i) => (
@@ -282,9 +330,6 @@ export function PowerComposer(props: {
             </div>
           )}
           <input ref={fileRef} type="file" multiple className="hidden" onChange={onPickFiles} />
-          <button type="button" onClick={() => fileRef.current?.click()} title="Attach files" aria-label="Attach files" className="inline-flex w-11 min-h-0 min-w-0 shrink-0 items-center justify-center text-ink-muted hover:text-ink-primary transition-colors">
-            <Paperclip className="w-4 h-4" />
-          </button>
           <textarea
             ref={textareaRef}
             rows={1}
@@ -293,50 +338,62 @@ export function PowerComposer(props: {
             onKeyDown={keyDown}
             onPaste={onPaste}
             placeholder={`Message ${displaySpeaker}...`}
-            className="w-full min-w-0 flex-1 self-center bg-transparent border-0 py-2 text-ink-primary outline-none resize-none overscroll-y-contain font-mono text-base leading-snug placeholder-ink-dim md:text-sm"
+            className="w-full min-w-0 flex-1 resize-none self-center overflow-hidden border-0 bg-transparent px-3.5 py-3 font-mono text-sm leading-snug text-ink-primary outline-none placeholder-ink-dim"
           />
-          <button type="submit" disabled={(!input.trim() && files.length === 0) || (!isLoading && sendHold)} title={isLoading ? "Steer turn" : "Send"} aria-label={isLoading ? "Steer turn" : "Send message"} className="self-center inline-flex h-11 w-11 md:h-9 md:w-9 shrink-0 items-center justify-center rounded-md bg-accent hover:bg-accent-hover disabled:bg-hover disabled:text-ink-dim text-accent-ink transition-colors">
-            <ArrowUp className="w-4 h-4" />
-          </button>
         </div>
-        <div className="flex min-h-7 items-center gap-1 border-t border-subtle px-2 text-[10px] text-ink-muted">
-          <div role="radiogroup" aria-label="Turn mode" data-testid="turn-mode-selector" className="inline-flex shrink-0 items-center rounded-full border border-subtle bg-surface p-0.5 font-mono leading-none">
-            {([
-              ["auto", "Auto", "Auto — fast-path smalltalk, full tools for tasks"],
-              ["fast", "Fast", "Fast — instant conversational reply, reasoning off"],
-              ["agent", "Agent", "Agent — full workspace tool context"],
-            ] as const).map(([mode, label, title]) => (
-              <button
-                key={mode}
-                type="button"
-                role="radio"
-                aria-checked={turnMode === mode}
-                title={title}
-                data-turn-mode={mode}
-                onClick={() => { writeTurnMode(mode); setTurnMode(mode); }}
-                className={`rounded-full px-1.5 py-1 text-[9px] uppercase tracking-wide transition-colors ${turnMode === mode ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-hover hover:text-ink-primary"}`}
-              >
-                {label}
-              </button>
-            ))}
+        <div className="flex items-center justify-between gap-2 border-t border-subtle px-2.5 pb-2 pt-1 text-[10px] text-ink-muted">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <button type="button" onClick={() => fileRef.current?.click()} title="Attach files" aria-label="Attach files" className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors hover:bg-hover hover:text-ink-primary">
+              <Paperclip className="h-3.5 w-3.5" />
+            </button>
+            <div role="radiogroup" aria-label="Turn mode" data-testid="turn-mode-selector" className="inline-flex shrink-0 items-center rounded-full border border-subtle bg-surface p-0.5 font-mono leading-none">
+              {([
+                ["auto", "Auto", "Auto — fast-path smalltalk, full tools for tasks"],
+                ["fast", "Fast", "Fast — instant conversational reply, reasoning off"],
+                ["agent", "Agent", "Agent — full workspace tool context"],
+              ] as const).map(([mode, label, title]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="radio"
+                  aria-checked={turnMode === mode}
+                  title={title}
+                  data-turn-mode={mode}
+                  onClick={() => { writeTurnMode(mode); setTurnMode(mode); }}
+                  className={`rounded-full px-1.5 py-1 text-[9px] uppercase tracking-wide transition-colors ${turnMode === mode ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-hover hover:text-ink-primary"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {modes.length ? (
+              <select aria-label="ACP mode" value={acpMode || modes[0] || ""} className="h-7 max-w-28 rounded-md border border-subtle bg-surface px-1.5 text-[10px] text-ink-secondary outline-none hover:border-strong" onChange={(e) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode: e.target.value, provider: pickProvider } }))}>
+                {modes.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            ) : null}
           </div>
-          <button type="button" onClick={recording ? stopRecording : () => void startRecording()} className="rounded p-1 hover:bg-hover hover:text-ink-primary" aria-label="Voice input" title="Voice input">
-            <Mic className={`h-3.5 w-3.5 ${recording ? "animate-pulse text-ink-primary" : ""}`} />
-          </button>
-          <button type="button" onClick={() => void speakLast()} className="rounded p-1 hover:bg-hover hover:text-ink-primary" aria-label="Read latest reply" title="Read latest reply">
-            <Volume2 className="h-3.5 w-3.5" />
-          </button>
-          {usage && (usage.tokensIn || usage.tokensOut) ? <span>{usage.tokensIn + usage.tokensOut} tok{usage.costUsd ? ` · $${usage.costUsd.toFixed(6)}` : ""}</span> : null}
-          {modes.length ? (
-            <select aria-label="ACP mode" value={acpMode || modes[0] || ""} className="bg-transparent text-ink-secondary outline-none" onChange={(e) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode: e.target.value, provider: pickProvider } }))}>
-              {modes.map((m) => <option key={m} value={m}>{m}</option>)}
-            </select>
-          ) : null}
-          <span className="flex-1 min-w-0" aria-hidden="true" />
-          {note || steerNote ? (
-            <span className="min-w-0 max-w-56 truncate" title={note || steerNote}>{note || steerNote}</span>
-          ) : null}
-          <span className="hidden md:inline shrink-0 text-[10px] font-mono text-ink-dim">{isLoading ? "enter steer · shift+enter newline" : "enter send · / commands · @ mention"}</span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {usage && (usage.tokensIn || usage.tokensOut) ? <span className="hidden text-[10px] text-ink-dim sm:inline">{usage.tokensIn + usage.tokensOut} tok{usage.costUsd ? ` · $${usage.costUsd.toFixed(6)}` : ""}</span> : null}
+            {note || steerNote ? (
+              <span className="hidden min-w-0 max-w-40 truncate text-[10px] text-ink-muted md:inline" title={note || steerNote}>{note || steerNote}</span>
+            ) : null}
+            <ProviderModelPicker
+              placement="composer"
+              providers={providers}
+              favorites={favorites}
+              pick={pick ?? { provider: pickProvider || "", model: "" }}
+              stale={providersStale}
+              disabled={providersDisabled}
+              onPick={onPick ?? (() => {})}
+              onStar={onStar ?? (() => {})}
+              onRefresh={onRefreshProviders}
+              onOpenSettings={onOpenProviderSettings}
+            />
+            <button type="button" onClick={recording ? stopRecording : () => void startRecording()} className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-hover hover:text-ink-primary" aria-label="Voice input" title="Voice input">
+              <Mic className={`h-3.5 w-3.5 ${recording ? "animate-pulse text-ink-primary" : ""}`} />
+            </button>
+            {sendButton}
+          </div>
         </div>
       </form>
     </div>

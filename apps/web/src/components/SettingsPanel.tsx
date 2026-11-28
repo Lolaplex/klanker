@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import { DesktopSettings, KlankerInstance } from "../types/klanker";
 import { getPushSubscription, pushSupported, subscribePush, unsubscribePush } from "../push";
-import { api } from "../services/api";
+import { api, caps } from "../services/api";
 import { getQuickAskConfig, quickAskShortcutFormatError, setQuickAskConfig, type QuickAskConfig } from "../services/desktopApi";
 import { ThemeSwitcher } from "./ui/ThemeSwitcher";
 import { ProvidersPanel } from "./ProvidersPanel";
@@ -65,6 +65,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   const [quickAskShortcut, setQuickAskShortcut] = useState("Alt+Space");
   const [quickAskBusy, setQuickAskBusy] = useState(false);
   const [quickAskError, setQuickAskError] = useState<string | null>(null);
+  const [relayRestartBusy, setRelayRestartBusy] = useState(false);
+  const [relayRestartNote, setRelayRestartNote] = useState<string | null>(null);
   const desktop = typeof window !== "undefined" && "__TAURI__" in window;
 
   // Desktop truth wins over the stored flag (user may have toggled the OS
@@ -188,6 +190,20 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
     }
   };
 
+  const restartLocalRelay = async () => {
+    if (relayRestartBusy) return;
+    setRelayRestartBusy(true);
+    setRelayRestartNote(null);
+    try {
+      await api.serveRestart(draft.hub_mode);
+      setRelayRestartNote("local relay restarted");
+    } catch (e) {
+      setRelayRestartNote(`restart failed: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setRelayRestartBusy(false);
+    }
+  };
+
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     setHostNote(null);
@@ -260,6 +276,19 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
                     On: the local serve binds 0.0.0.0 so tailnet/LAN peers can reach the hub. Off: 127.0.0.1 only.
                     Applies to the next spawn/restart.
                   </p>
+                  {(desktop || caps.spawn) ? (
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() => void restartLocalRelay()}
+                        disabled={relayRestartBusy}
+                        className="inline-flex min-h-9 items-center rounded-md border border-subtle bg-surface px-3 py-1.5 text-[11px] text-ink-secondary hover:border-strong hover:bg-elevated hover:text-ink-primary disabled:opacity-50"
+                      >
+                        {relayRestartBusy ? "restarting…" : "Restart local relay"}
+                      </button>
+                      {relayRestartNote ? <p className="pt-1 text-[10px] text-ink-dim">{relayRestartNote}</p> : null}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="mt-2 space-y-2 border-t border-subtle pt-2">
                   <label className="inline-flex min-h-9 items-center gap-2 px-3 py-1.5 bg-surface border border-subtle rounded-md text-[11px] text-ink-secondary hover:border-strong hover:text-ink-primary cursor-pointer">

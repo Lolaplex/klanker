@@ -63,6 +63,8 @@ interface ChatConsoleProps {
   providersStale?: boolean;
   /** Bound host offline — picker stays read-only on cached rows. */
   providersDisabled?: boolean;
+  onRefreshProviders?: () => void;
+  onOpenProviderSettings?: () => void;
   /** Per-chat host picker state (klanker#152); null hides the chip. */
   host?: {
     rows: HostRow[];
@@ -92,6 +94,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   input,
   onInput,
   onSendMessage,
+  onStop,
   isLoading,
   remoteActive,
   sendHold,
@@ -102,6 +105,13 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   providers = [],
   pick,
   acpMode = "",
+  favorites = [],
+  onPick,
+  onStar,
+  providersStale = false,
+  providersDisabled = false,
+  onRefreshProviders,
+  onOpenProviderSettings,
   remoteApprovalLabel = null,
   pending,
   deciding,
@@ -506,6 +516,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         onPickFiles={onPickFiles}
         onDrop={onDrop}
         onSteer={steer}
+        onStop={onStop}
         steerNote={steerNote}
         files={files}
         setFiles={setFiles}
@@ -519,6 +530,14 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         persona={personaId}
         usage={usage}
         providers={providers}
+        favorites={favorites}
+        pick={pick}
+        providersStale={providersStale}
+        providersDisabled={providersDisabled}
+        onPick={onPick}
+        onStar={onStar}
+        onRefreshProviders={onRefreshProviders}
+        onOpenProviderSettings={onOpenProviderSettings}
         pickProvider={pick?.provider}
         acpMode={acpMode}
       />
@@ -526,14 +545,11 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   );
 };
 
-function TurnStatusInline({ status }: { status?: string | null }) {
+export function TurnStatusInline({ status }: { status?: string | null }) {
   return (
     <div className="flex min-w-0 items-center gap-2 text-[11px] text-ink-secondary" data-testid="turn-start-status">
-      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent animate-pulse" />
-      <span className="shrink-0">{status || "Connecting…"}</span>
-      <span className="relative h-1 w-28 max-w-40 flex-1 overflow-hidden rounded-full bg-hover" aria-hidden="true">
-        <span className="turn-status-scan absolute inset-y-0 w-1/3 rounded-full bg-accent/50" />
-      </span>
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ink-muted animate-pulse" />
+      <span className="shrink-0 text-ink-muted">{status || "Thinking…"}</span>
     </div>
   );
 }
@@ -708,7 +724,7 @@ const MessageBubble = React.memo(function MessageBubble({
             )
           ) : (
             <div className="whitespace-pre-wrap break-words font-sans text-[14px] leading-[1.65]">
-              {message.content || (thinking ? streamStatus || "Connecting…" : "")}
+              {message.content || (thinking ? streamStatus || "Thinking…" : "")}
             </div>
           )}
           {streaming && message.content && streamStatus ? (

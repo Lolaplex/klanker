@@ -83,7 +83,8 @@ describe("ChatConsole cleanup", () => {
       messages: [{ id: "m1", role: "user", content: "hi", timestamp: 1 }],
     });
     assert.ok(!html.includes("Streaming tokens"), "jargon still present");
-    assert.ok(html.includes("Connecting…"), `pre-stream Connecting fallback missing`);
+    assert.ok(html.includes("Thinking…"), `pre-stream Thinking fallback missing`);
+    assert.ok(!html.includes("Connecting…"), "obsolete Connecting fallback still rendered");
   });
 
   it("composer placeholder addresses the speaker, not the instance", () => {
@@ -93,7 +94,7 @@ describe("ChatConsole cleanup", () => {
 
   it("keeps breadcrumb/host/provider controls out of the transcript surface", () => {
     const html = renderConsole();
-    // U17 moved these controls into the single app header; the console must
+    // W11 moved provider/model selection into the composer; the console must
     // never recreate a second horizontal toolbar.
     assert.ok(!html.includes("Console Top Toolbar"), "duplicate console toolbar still rendered");
     const leftBreadcrumb = html.includes("tracking-wider uppercase truncate");

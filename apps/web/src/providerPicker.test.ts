@@ -21,7 +21,7 @@ describe("expandRows", () => {
     assert.equal(echo?.isDefault, true);
     assert.equal(echo?.model, "");
     const orr = rows.find((r) => r.provider === "openrouter");
-    assert.equal(orr?.label, "openrouter · auto");
+    assert.equal(orr?.label, "auto");
   });
 });
 

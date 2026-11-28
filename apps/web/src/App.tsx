@@ -1,5 +1,4 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { Square } from "lucide-react";
 import { Header } from "./components/Header";
 import { KlankerList } from "./components/KlankerList";
 import { ChatConsole, type ChatPick } from "./components/ChatConsole";
@@ -33,7 +32,7 @@ import {
   normBucket,
   sendHeld,
 } from "./chatBuckets";
-import { eventsToMessages, reconcileChat } from "./chatSync";
+import { eventsToMessages, mergeMessages, reconcileChat } from "./chatSync";
 import {
   applyPresence,
   checkpointBranch,
@@ -64,7 +63,6 @@ import { useChatSync } from "./hooks/useChatSync";
 import { useApprovals } from "./hooks/useApprovals";
 import { useRelayCompat } from "./hooks/useRelayCompat";
 import { HostPicker } from "./components/HostPicker";
-import { ProviderModelPicker } from "./components/ProviderModelPicker";
 import { CommandPalette, type PaletteItem } from "./components/CommandPalette";
 import { ShortcutsModal, isEditableTarget } from "./components/ShortcutsModal";
 import { ToastStack, type ToastItem } from "./components/ToastStack";
@@ -1109,9 +1107,48 @@ export function App() {
       deltas.flush();
       if (outcome === "detached") {
         // The run is no longer attachable (finished + reaped, relay restart,
-        // or an old relay without /v1/runs/stream). The reconcile in
-        // `finally` converges the bubble to the session history.
+        // or an old relay without /v1/runs/stream). Reconcile once right now;
+        // when no fresh server reply exists yet the turn must fail loudly,
+        // never vanish as an empty bubble. The background reconcile in
+        // `finally` still converges a late server reply over that error.
         setStreamStatusFor(bk, null);
+        let detachedMerged = false;
+        try {
+          const events = await api.sessionEvents(inst0, selWs, selPersona, session);
+          if (events) {
+            const serverMsgs = eventsToMessages(events);
+            evCache.current.set(`${selWs} ${selPersona} ${session}`, serverMsgs);
+            const cutoff = started - 5000;
+            const freshReply = serverMsgs.some((m) => m.role === "klanker" && Date.parse(m.timestamp) >= cutoff);
+            if (freshReply) {
+              setChats((prev) =>
+                mapChat(prev, selKey, chatId, (item) => ({
+                  ...item,
+                  messages: mergeMessages(item.messages, serverMsgs),
+                }))
+              );
+              detachedMerged = true;
+            }
+          }
+        } catch {}
+        if (!detachedMerged) {
+          setChats((prev) =>
+            mapChat(prev, selKey, chatId, (item) => ({
+              ...item,
+              messages: item.messages.map((m) =>
+                m.id === assistantId
+                  ? {
+                      ...m,
+                      content: "Turn failed: stream disconnected before a reply arrived. Check the relay or retry.",
+                      error: true,
+                      thinking: thoughtBuf || undefined,
+                      elapsed_ms: Date.now() - started,
+                    }
+                  : m
+              ),
+            }))
+          );
+        }
         return;
       }
       if (voiceSupported && voiceEnabled && replyBuf.trim() && typeof SpeechSynthesisUtterance !== "undefined") {
@@ -1592,51 +1629,14 @@ export function App() {
           sidebarCollapsed={effectiveSidebarCollapsed}
           onToggleSidebar={() => toggleSidebar()}
           pendingApprovals={approvals.pendingCount}
-          controls={activeInstance ? (
-            <>
-              {wsHosts && hostPickerVisible(wsHosts) && (
-                <HostPicker
-                  rows={hostPickerRows(wsHosts)}
-                  binding={chatHostBinding}
-                  switching={hostSwitching}
-                  note={null}
-                  onSwitch={(id) => void handleSwitchHost(id)}
-                />
-              )}
-              <ProviderModelPicker
-                providers={chatProviders}
-                favorites={chatFavorites}
-                stale={providersStale}
-                disabled={providersDisabled}
-                pick={chatPicks[pickKey] ?? { provider: "", model: "" }}
-                onPick={(p) => {
-                  setChatPicks((prev) => {
-                    const next = { ...prev };
-                    if (p.provider || p.model) next[pickKey] = p;
-                    else delete next[pickKey];
-                    return next;
-                  });
-                  if (activeInstance && chatProviderScope.kind !== "remote") {
-                    void api.setModelPick(activeInstance, selWs, p.provider || "", p.model || "", openChat?.session || "").catch(() => {});
-                  }
-                }}
-                onStar={(p, star) => {
-                  if (activeInstance) void api.starFavorite(activeInstance, p.provider, p.model, star).then(setChatFavorites).catch(() => {});
-                }}
-                onRefresh={() => {
-                  if (chatProviderScope.kind !== "remote" && activeInstance) {
-                    void forceHostProviderRefresh(activeInstance).catch(() => refreshProviders());
-                  } else {
-                    refreshProviders();
-                  }
-                }}
-              />
-              {isLoadingTurn && (
-                <button type="button" onClick={handleStop} title="Stop current turn (Ctrl/⌘ .)" aria-label="Stop current turn" className="inline-flex h-8 items-center gap-1 rounded-md border border-subtle bg-transparent px-2 text-[11px] font-mono text-ink-secondary hover:bg-hover hover:border-strong hover:text-ink-primary">
-                  <Square className="h-3 w-3" /> stop
-                </button>
-              )}
-            </>
+          controls={activeInstance && wsHosts && hostPickerVisible(wsHosts) ? (
+            <HostPicker
+              rows={hostPickerRows(wsHosts)}
+              binding={chatHostBinding}
+              switching={hostSwitching}
+              note={null}
+              onSwitch={(id) => void handleSwitchHost(id)}
+            />
           ) : undefined}
         />
 
@@ -1693,6 +1693,14 @@ export function App() {
                     favorites={chatFavorites}
                     providersStale={providersStale}
                     providersDisabled={providersDisabled}
+                    onRefreshProviders={() => {
+                      if (chatProviderScope.kind !== "remote" && activeInstance) {
+                        void forceHostProviderRefresh(activeInstance).catch(() => refreshProviders());
+                      } else {
+                        refreshProviders();
+                      }
+                    }}
+                    onOpenProviderSettings={openSettings}
                     host={
                       wsHosts && hostPickerVisible(wsHosts)
                         ? {

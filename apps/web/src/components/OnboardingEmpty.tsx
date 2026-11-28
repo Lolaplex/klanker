@@ -1,4 +1,4 @@
-import { Check, FolderPlus, MessageSquarePlus, TerminalSquare } from "lucide-react";
+import { Check, FolderPlus, MessageSquarePlus } from "lucide-react";
 
 const STARTERS = [
   "Inspect this workspace and summarize what changed recently.",
@@ -66,9 +66,6 @@ export function OnboardingEmpty({
         </div>
       )}
 
-      <div className="hidden md:flex items-center gap-2 text-[10px] uppercase tracking-wider text-ink-dim">
-        <TerminalSquare className="h-3 w-3" /> ctrl/cmd+k commands · ctrl/cmd+b sidebar · ctrl/cmd+j workbench
-      </div>
     </div>
   );
 }

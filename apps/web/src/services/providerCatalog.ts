@@ -77,11 +77,45 @@ export const ACP_AGENT_PRESETS: AcpAgentPreset[] = [
   },
 ];
 
-/** Central visibility rule for picker and settings: test fixtures and broken
- * legacy ACP stubs are dev scaffolding unless explicitly requested. */
+const LS_HIDDEN_PROVIDERS = "klanker.hiddenProviders";
+
+function uniqueNames(names: string[]): string[] {
+  return [...new Set(names.map((n) => n.trim()).filter(Boolean))];
+}
+
+/** Locally mirrored hidden-provider set. The relay endpoint is the source of
+ * truth on newer hosts; this mirror keeps hides instant and is the whole
+ * fallback on relays that predate /v1/providers/hidden. */
+export function readHiddenProviders(): string[] {
+  try {
+    const raw = localStorage.getItem(LS_HIDDEN_PROVIDERS);
+    const list = raw ? (JSON.parse(raw) as unknown[]) : [];
+    return Array.isArray(list) ? uniqueNames(list.filter((n): n is string => typeof n === "string")) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeHiddenProviders(names: string[]): void {
+  try {
+    localStorage.setItem(LS_HIDDEN_PROVIDERS, JSON.stringify(uniqueNames(names)));
+  } catch {}
+}
+
+export function mergeHiddenProviders(serverHidden?: string[]): string[] {
+  const merged = uniqueNames([...(serverHidden || []), ...readHiddenProviders()]);
+  writeHiddenProviders(merged);
+  return merged;
+}
+
+/** Central visibility rule for picker and settings: hidden built-ins stay
+ * operator-controlled, and test fixtures/broken legacy ACP stubs are dev
+ * scaffolding unless explicitly requested. */
 export function filterVisibleProviders(rows: ProviderRow[], showTest: boolean): ProviderRow[] {
-  if (showTest) return rows;
+  const hidden = new Set(readHiddenProviders());
   return rows.filter((row) => {
+    if (hidden.has(row.name)) return false;
+    if (showTest) return true;
     const kind = (row.kind || "").toLowerCase();
     if (kind === "echo" || kind === "scripted" || kind === "scripted.tool") return false;
     if (kind === "acp") return false;

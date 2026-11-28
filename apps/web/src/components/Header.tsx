@@ -1,5 +1,5 @@
 import React from "react";
-import { Command, Menu, Minus, Moon, PanelLeftOpen, PanelRight, Settings, Square, Sun, X } from "lucide-react";
+import { Menu, Minus, Moon, PanelLeftOpen, PanelRight, Search, Settings, Square, Sun, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
 import { useThemeMode } from "../theme";
 import { KlankerMark } from "./KlankerMark";
@@ -85,6 +85,7 @@ export const Header: React.FC<HeaderProps> = ({
   const pill = statusMeta(status);
   const { resolvedMode, setPreference } = useThemeMode();
   const nextMode = resolvedMode === "dark" ? "light" : "dark";
+  const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform || "");
 
   return (
     <header data-tauri-drag-region className="h-11 shrink-0 select-none border-b border-subtle bg-main z-30 touch-none">
@@ -151,8 +152,8 @@ export const Header: React.FC<HeaderProps> = ({
           )}
           {controls}
           <button type="button" onClick={onOpenPalette} aria-label="Open command palette" title="Command palette (Ctrl/⌘ K)" className={iconBtn}>
-            <Command className="h-3.5 w-3.5" />
-            <kbd className="hidden lg:inline text-[9px] text-ink-dim">⌘K</kbd>
+            <Search className="h-3.5 w-3.5" />
+            <kbd className="hidden lg:inline font-mono text-[10px] text-ink-dim">{isMac ? "⌘K" : "Ctrl K"}</kbd>
           </button>
           {activeInstance && onOpenDevices && (
             <button type="button" onClick={onOpenDevices} aria-label="Devices" title={`Devices · ${pill.label}`} className={iconBtn}>
