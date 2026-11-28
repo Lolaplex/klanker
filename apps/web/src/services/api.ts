@@ -33,6 +33,7 @@ import type {
 } from "../types/klanker";
 import { parseSseChunk, parseStoreListResponse } from "../relayEvents.ts";
 import { remoteMountId } from "../hostPicker.ts";
+import { mergeHiddenProviders, readHiddenProviders, writeHiddenProviders } from "./providerCatalog.ts";
 
 const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false, hub_mode: false };
 
@@ -1143,13 +1144,14 @@ export const api = {
   /** Provider manifests known to the host loop. Successful fetches are
    *  cached per instance so an offline host still shows its last rows
    *  (marked via `stale`). */
-  async listProviders(inst: KlankerInstance): Promise<{ rows: ProviderRow[]; stale: boolean }> {
+  async listProviders(inst: KlankerInstance): Promise<{ rows: ProviderRow[]; stale: boolean; hidden: string[] }> {
     const cacheKey = `klanker.providers.${inst.id}`;
     try {
-      const r = await req<{ providers?: WireRow[] }>(inst, "/v1/providers", { headers: headers(inst) });
+      const r = await req<{ providers?: WireRow[]; hidden?: unknown[] }>(inst, "/v1/providers", { headers: headers(inst) });
       const rows = (r.providers || [])
         .map((p) => ({
           name: wstr(p.name) || "",
+          label: wstr(p.label),
           kind: wstr(p.kind),
           model: wstr(p.model),
           when: wstr(p.when),
@@ -1179,10 +1181,14 @@ export const api = {
       try {
         localStorage.setItem(cacheKey, JSON.stringify(rows));
       } catch {}
-      return { rows, stale: false };
+      const serverHidden = Array.isArray(r.hidden)
+        ? r.hidden.filter((n): n is string => typeof n === "string" && n.trim() !== "")
+        : undefined;
+      const hidden = mergeHiddenProviders(serverHidden);
+      return { rows, stale: false, hidden };
     } catch {
       const cached = this.cachedProviders(inst);
-      return { rows: cached, stale: cached.length > 0 };
+      return { rows: cached, stale: cached.length > 0, hidden: readHiddenProviders() };
     }
   },
 
@@ -1213,6 +1219,7 @@ export const api = {
       const rows = (r.providers || [])
         .map((p) => ({
           name: wstr(p.name) || "",
+          label: wstr(p.label),
           kind: wstr(p.kind),
           model: wstr(p.model),
           when: wstr(p.when),
@@ -1268,6 +1275,7 @@ export const api = {
     body: {
       name: string;
       kind?: string;
+      label?: string;
       url?: string;
       url_env?: string;
       key_env?: string;
@@ -1285,6 +1293,35 @@ export const api = {
       method: "DELETE",
       headers: headers(inst),
     });
+  },
+
+  /** Hide or unhide an env/built-in provider. Newer relays persist this
+   *  host-side; older relays 404/501 and the localStorage mirror is the
+   *  supported fallback, never a hard failure. */
+  async setProviderHidden(inst: KlankerInstance, name: string, hidden: boolean): Promise<void> {
+    const writeLocal = () => {
+      const cur = readHiddenProviders();
+      writeHiddenProviders(hidden ? [...cur, name] : cur.filter((n) => n !== name));
+    };
+    try {
+      await jsonReq(inst, "/v1/providers/hidden", { name, hidden });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/^(404|405|501):/.test(msg)) throw e;
+    }
+    writeLocal();
+  },
+
+  /** Restore every hidden built-in provider. Server and local fallback are
+   *  both cleared so a relay upgrade never resurrects stale client state. */
+  async restoreHiddenProviders(inst: KlankerInstance): Promise<void> {
+    try {
+      await jsonReq(inst, "/v1/providers/hidden", { restore: true });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/^(404|405|501):/.test(msg)) throw e;
+    }
+    writeHiddenProviders([]);
   },
 
   /** GET /v1/providers/<name>/probe — health/auth status for the settings

@@ -71,7 +71,8 @@ describe("W8 chat streaming, thinking and failure surface", () => {
     const src = readFileSync("src/components/ChatConsole.tsx", "utf8");
     assert.ok(src.includes("TurnStatusInline"));
     assert.ok(src.includes('data-testid="turn-start-status"'));
-    assert.ok(src.includes('status || "Connecting…"'));
+    assert.ok(src.includes('status || "Thinking…"'));
+    assert.ok(!src.includes("Connecting…"), "obsolete Connecting label remains");
   });
 
   it("turn failures are loud error annotations, never masked as (no reply)", () => {

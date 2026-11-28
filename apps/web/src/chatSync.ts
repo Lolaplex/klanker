@@ -28,9 +28,9 @@ export function mergeMessages(local: ChatMessage[], server: ChatMessage[]): Chat
   const serverReplied = !lastUserTs || server.some((m) => m.role === "klanker" && m.timestamp >= lastUserTs);
   const extra = local.filter((m) => {
     if (!m.content) return false;
-    if (seen.has(`${m.role}\n${m.content}`)) return false;
     if (m.timestamp > lastTs) return true;
-    return m.role === "klanker" && (m.content.startsWith("Error") || m.content.startsWith("Turn failed:")) && !serverReplied;
+    if (seen.has(`${m.role}\n${m.content}`)) return false;
+    return m.role === "klanker" && (m.error || m.content.startsWith("Error") || m.content.startsWith("Turn failed:")) && !serverReplied;
   });
   return [...server, ...extra];
 }

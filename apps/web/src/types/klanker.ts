@@ -13,6 +13,8 @@ export interface InstanceTailscale {
 /** Host provider manifest row as served by GET /v1/providers. */
 export interface ProviderRow {
   name: string;
+  /** Optional display label authored in the manifest. */
+  label?: string;
   kind?: string;
   model?: string;
   when?: string;

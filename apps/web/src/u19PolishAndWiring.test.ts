@@ -67,10 +67,10 @@ describe("U19 border hierarchy and monochrome chrome", () => {
     const picker = src("src/components/ProviderModelPicker.tsx");
     assert.ok(picker.includes('aria-label="Refresh providers"') && picker.includes("RefreshCw"), "provider refresh picker icon missing");
     assert.ok(!composer.includes('aria-label="Refresh providers"'), "duplicate composer refresh icon remains");
-    assert.ok(composer.includes("enter send · / commands · @ mention"), "idle composer hint missing");
-    assert.ok(composer.includes("enter steer · shift+enter newline"), "loading composer hint missing");
+    assert.ok(!composer.includes("enter send · / commands · @ mention"), "obsolete idle composer hint remains");
+    assert.ok(!composer.includes("enter steer · shift+enter newline"), "obsolete loading composer hint remains");
     assert.ok(rail.includes("border-l border-subtle") && rail.includes("h-11"), "rail hairline/height alignment missing");
-    assert.ok(src("src/components/OnboardingEmpty.tsx").includes("hidden md:flex"), "mobile shortcut hint still visible");
+    assert.ok(!src("src/components/OnboardingEmpty.tsx").includes("ctrl/cmd+k commands"), "redundant onboarding shortcut legend remains");
     assert.ok(src("src/components/CommandPalette.tsx").includes("py-1 pb-2"), "palette bottom breathing room missing");
   });
 });

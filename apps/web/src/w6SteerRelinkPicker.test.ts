@@ -178,7 +178,7 @@ describe("W6 unified offline provider picker", () => {
       onStar: () => { starred = true; },
     }));
     try {
-      const trigger = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("lmstudio:qwen")) as HTMLButtonElement;
+      const trigger = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("qwen")) as HTMLButtonElement;
       assert.ok(trigger, "picker trigger missing");
       assert.equal(trigger.disabled, false, "offline trigger must remain openable");
       await act(async () => trigger.click());
@@ -213,7 +213,7 @@ describe("W6 unified offline provider picker", () => {
       onStar: () => {},
     }));
     try {
-      const trigger = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("auto")) as HTMLButtonElement;
+      const trigger = [...document.querySelectorAll("button")].find((b) => b.textContent?.toLowerCase().includes("auto")) as HTMLButtonElement;
       await act(async () => trigger.click());
       await settle();
       const row = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes("qwen")) as HTMLButtonElement;
@@ -230,7 +230,8 @@ describe("W6 unified offline provider picker", () => {
     const picker = src("src/components/ProviderModelPicker.tsx");
     const app = src("src/App.tsx");
     assert.ok(picker.includes("disabled={disabled}") && picker.includes('aria-label="Refresh providers"'), "picker refresh disable binding missing");
-    assert.ok(app.includes("disabled={providersDisabled}"), "offline providersDisabled binding missing");
+    assert.ok(app.includes("providersDisabled={providersDisabled}"), "offline providersDisabled binding missing");
+    assert.ok(src("src/components/PowerComposer.tsx").includes("disabled={providersDisabled}"), "composer picker disable binding missing");
   });
 });
 

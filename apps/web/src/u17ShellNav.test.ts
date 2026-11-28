@@ -110,7 +110,8 @@ describe("unified 44px shell header", () => {
     const src = readFileSync("src/components/ChatConsole.tsx", "utf-8");
     assert.ok(!src.includes("Console Top Toolbar"), "duplicate chat toolbar remains");
     assert.ok(!src.includes("HostPicker"), "HostPicker must live in the unified header");
-    assert.ok(!src.includes("ProviderModelPicker"), "ProviderModelPicker must live in the unified header");
+    assert.ok(!src.includes("Console Top Toolbar"), "duplicate chat toolbar remains");
+    assert.ok(readFileSync("src/components/PowerComposer.tsx", "utf-8").includes("ProviderModelPicker"), "ProviderModelPicker must live in the composer");
   });
 });
 

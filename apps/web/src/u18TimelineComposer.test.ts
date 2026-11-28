@@ -84,14 +84,16 @@ describe("U18 power composer contracts", () => {
     assert.ok(cc.includes("jump to latest"));
     assert.ok(cc.includes("klanker:fork-session"), "fork must be an App-owned CustomEvent intent");
     assert.ok(cc.includes("injectSteer"), "steer API call must be owned by ChatConsole");
-    assert.ok(pc.includes("isLoading ? \"Steer turn\" : \"Send\""));
+    assert.ok(pc.includes('aria-label="Steer turn"'));
+    assert.ok(pc.includes('aria-label="Send message"'));
+    assert.ok(pc.includes('aria-label="Stop current turn"'));
     assert.ok(pc.includes("aria-label=\"ACP mode\""));
     const picker = readFileSync("src/components/ProviderModelPicker.tsx", "utf-8");
     assert.ok(picker.includes("onRefresh") && picker.includes("RefreshCw"), "provider refresh lives inside the picker");
     assert.ok(!pc.includes("refreshProviders"), "duplicate composer refresh button returned");
     assert.ok(readFileSync("src/services/streamExtrasApi.ts", "utf-8").includes("/v1/providers?refresh=1"));
     assert.ok(pc.includes("transcribeVoice"));
-    assert.ok(pc.includes("speakText"));
+    assert.ok(!pc.includes("speakText"), "composer-level read-aloud button returned");
     assert.ok(readFileSync("src/services/streamExtrasApi.ts", "utf-8").includes("speechSynthesis"), "browser fallback on 503/unconfigured voice");
     assert.ok(pc.includes("data:") && pc.includes("image attachment"), "image thumbnails in composer staging");
     assert.ok(cc.includes("imageCacheRef"), "sent image thumbnail lookup survives attachment clearing");
