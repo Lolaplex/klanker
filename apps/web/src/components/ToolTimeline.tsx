@@ -109,7 +109,7 @@ function icon(step: TimelineStep) {
   return <Check className="h-3.5 w-3.5 text-ink-secondary" />;
 }
 
-export function ToolTimeline({ steps, usage, defaultOpen = false }: { steps: TimelineStep[]; usage?: UsageStats; defaultOpen?: boolean }) {
+export function ToolTimeline({ steps, usage, defaultOpen = false, scopeLabel = "latest turn" }: { steps: TimelineStep[]; usage?: UsageStats; defaultOpen?: boolean; scopeLabel?: string }) {
   const [open, setOpen] = useState(defaultOpen);
   useEffect(() => setOpen(defaultOpen), [defaultOpen]);
   const rows = useMemo(() => steps.slice(-80), [steps]);
@@ -120,7 +120,7 @@ export function ToolTimeline({ steps, usage, defaultOpen = false }: { steps: Tim
         {open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
         <Hammer className="h-3.5 w-3.5" />
         <span className="font-semibold text-ink-primary">Tool timeline</span>
-        <span className="text-ink-muted">{rows.length} step{rows.length === 1 ? "" : "s"}</span>
+        <span className="text-ink-muted">{scopeLabel} · {rows.length} step{rows.length === 1 ? "" : "s"}</span>
         {usage && (usage.tokensIn || usage.tokensOut) ? (
           <span className="ml-auto text-ink-muted" data-testid="usage-meter">
             {usage.tokensIn + usage.tokensOut} tok{usage.costUsd ? ` · $${usage.costUsd.toFixed(6)}` : ""}{usage.model ? ` · ${usage.model}` : ""}

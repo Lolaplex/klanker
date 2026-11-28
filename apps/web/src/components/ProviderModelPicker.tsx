@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Group, Star } from "lucide-react";
+import { Check, Group, RefreshCw, Star } from "lucide-react";
 import type { ModelPick, ProviderRow } from "../types/klanker";
 import { groupRows, isStarred, parseFreeId, pickerRows, picksEqual } from "../providerPicker";
 import { Popover } from "./ui/Popover";
@@ -17,6 +17,7 @@ export function ProviderModelPicker({
   disabled = false,
   onPick,
   onStar,
+  onRefresh,
 }: {
   providers: ProviderRow[];
   favorites: ModelPick[];
@@ -28,6 +29,7 @@ export function ProviderModelPicker({
   disabled?: boolean;
   onPick: (p: ModelPick) => void;
   onStar: (p: ModelPick, star: boolean) => void;
+  onRefresh?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -139,6 +141,18 @@ export function ProviderModelPicker({
               }}
               className="w-full min-w-0 bg-elevated border border-subtle hover:border-strong focus:border-strong rounded-md px-2 py-1.5 text-ink-primary outline-none"
             />
+            {onRefresh ? (
+              <button
+                type="button"
+                title="Refresh providers"
+                aria-label="Refresh providers"
+                disabled={disabled}
+                onClick={onRefresh}
+                className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-md border border-strong text-ink-muted hover:text-ink-primary disabled:opacity-40"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+              </button>
+            ) : null}
             <button
               type="button"
               title={grouped ? "flat list" : "group by provider"}

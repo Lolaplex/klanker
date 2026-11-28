@@ -45,6 +45,8 @@ import {
   providerScope,
   runHostSwitch,
 } from "./hostPicker";
+import { filterVisibleProviders, readShowTestProviders } from "./services/providerCatalog";
+import { refreshProviders as forceHostProviderRefresh } from "./services/streamExtrasApi";
 import { Kicker, runResumableTurn } from "./turnStream";
 import { MIN_RELAY } from "./relayCompat";
 import { AuthGate } from "./components/AuthGate";
@@ -684,12 +686,12 @@ export function App() {
     const scope = chatProviderScopeRef.current;
     if (scope.kind === "remote") {
       void api.listRemoteProviders(scope.deviceId).then((r) => {
-        setChatProviders(r.rows);
+        setChatProviders(filterVisibleProviders(r.rows, readShowTestProviders()));
         setProvidersStale(r.stale);
       });
     } else {
       void api.listProviders(inst).then((r) => {
-        setChatProviders(r.rows);
+        setChatProviders(filterVisibleProviders(r.rows, readShowTestProviders()));
         setProvidersStale(r.stale);
       });
     }
@@ -897,7 +899,7 @@ export function App() {
         draft: false,
         input: "",
         messages: reuseId
-          ? item.messages.map((m) => (m.id === reuseId ? { ...m, content: "", elapsed_ms: undefined } : m))
+          ? item.messages.map((m) => (m.id === reuseId ? { ...m, content: "", elapsed_ms: undefined, thinking: undefined, error: undefined } : m))
           : asCommand
             ? [...item.messages, assistantMessage]
             : [...item.messages, userMessage, assistantMessage],
@@ -915,6 +917,8 @@ export function App() {
     setTurnBusy(turnBusyRef.current);
     const started = Date.now();
     let sawTrailer = false;
+    let turnFailure = "";
+    let lastStatus = "";
 
     setStreamStatusFor(bk, null);
 
@@ -932,6 +936,7 @@ export function App() {
     deltaFlush.current.add(deltas.flush);
 
     let replyBuf = "";
+    let thoughtBuf = "";
     try {
       // Provider = raw host manifest name (acp.devin, lmstudio.local, …);
       // "" = host default. The relay resolves session pick > ws pick > env.
@@ -976,7 +981,10 @@ export function App() {
             if (ev.type === "delta" && ev.text) {
               replyBuf += ev.text;
               deltas.push(ev.text);
+            } else if (ev.type === "thought" && ev.text) {
+              thoughtBuf += ev.text;
             } else if (ev.type === "status" && ev.text) {
+              lastStatus = ev.text;
               setStreamStatusFor(bk, ev.text);
             } else if (ev.type === "trailer") {
               deltas.flush();
@@ -986,18 +994,23 @@ export function App() {
                   ...item,
                   session: ev.session || item.session,
                   messages: item.messages.map((m) =>
-                    m.id === assistantId ? { ...m, elapsed_ms: Date.now() - started } : m
+                    m.id === assistantId ? { ...m, elapsed_ms: Date.now() - started, thinking: thoughtBuf || undefined } : m
                   ),
                 }))
               );
               if (ev.returncode && ev.returncode !== 0) {
+                turnFailure = ev.error || lastStatus || `exit code ${ev.returncode}`;
                 setStreamStatusFor(bk, `turn exited ${ev.returncode}`);
+              } else if (ev.error) {
+                turnFailure = ev.error;
               }
             }
           },
           onReset: () => {
             deltas.flush();
             replyBuf = "";
+            thoughtBuf = "";
+            turnFailure = "";
             lastEventAt = Date.now();
             setChats((prev) =>
               mapChat(prev, selKey, chatId, (item) => ({
@@ -1043,9 +1056,17 @@ export function App() {
       setChats((prev) =>
         mapChat(prev, selKey, chatId, (item) => ({
           ...item,
-          messages: item.messages.map((m) =>
-            m.id === assistantId && !m.content ? { ...m, content: "(no reply)", elapsed_ms: Date.now() - started } : m
-          ),
+          messages: item.messages.map((m) => {
+            if (m.id !== assistantId) return m;
+            const thinking = thoughtBuf || undefined;
+            if (!m.content && turnFailure) {
+              return { ...m, content: `Turn failed: ${turnFailure}`, error: true, thinking, elapsed_ms: Date.now() - started };
+            }
+            if (!m.content) {
+              return { ...m, content: "(no reply)", thinking, elapsed_ms: Date.now() - started };
+            }
+            return thinking && !m.thinking ? { ...m, thinking } : m;
+          }),
         }))
       );
     } catch (e: unknown) {
@@ -1055,7 +1076,7 @@ export function App() {
         mapChat(prev, selKey, chatId, (item) => ({
           ...item,
           messages: item.messages.map((m) =>
-            m.id === assistantId ? { ...m, content: `Error executing turn: ${message}` } : m
+            m.id === assistantId ? { ...m, content: `Turn failed: ${message}`, error: true, thinking: thoughtBuf || undefined } : m
           ),
         }))
       );
@@ -1464,6 +1485,13 @@ export function App() {
                 }}
                 onStar={(p, star) => {
                   if (activeInstance) void api.starFavorite(activeInstance, p.provider, p.model, star).then(setChatFavorites).catch(() => {});
+                }}
+                onRefresh={() => {
+                  if (chatProviderScope.kind !== "remote" && activeInstance) {
+                    void forceHostProviderRefresh(activeInstance).catch(() => refreshProviders());
+                  } else {
+                    refreshProviders();
+                  }
                 }}
               />
               {isLoadingTurn && (

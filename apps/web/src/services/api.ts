@@ -1276,6 +1276,19 @@ export const api = {
     }
   },
 
+  /** Optional GET /v1/providers/agents — auto-detected ACP agents. Older
+   *  relays omit the endpoint; null is the explicit graceful-fallback state. */
+  async listProviderAgents(inst: KlankerInstance): Promise<unknown[] | null> {
+    try {
+      const r = await req<{ agents?: unknown[]; rows?: unknown[] }>(inst, "/v1/providers/agents", {
+        headers: headers(inst),
+      });
+      return r.agents || r.rows || [];
+    } catch {
+      return null;
+    }
+  },
+
   /** Host-side {provider,model} stars (agents-relay#39). Older relays 404 —
    *  localStorage keeps the stars per instance in that case. */
   async listFavorites(inst: KlankerInstance): Promise<ModelPick[]> {

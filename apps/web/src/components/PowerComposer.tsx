@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, Mic, Paperclip, RefreshCw, Volume2, X } from "lucide-react";
+import { ArrowUp, Mic, Paperclip, Volume2, X } from "lucide-react";
 import type { KlankerInstance, ProviderRow } from "../types/klanker";
 import { api } from "../services/api";
-import { listWorkspaceFiles, speakText, transcribeVoice, refreshProviders } from "../services/streamExtrasApi";
+import { listWorkspaceFiles, speakText, transcribeVoice } from "../services/streamExtrasApi";
 import type { OutAttachment } from "./ChatConsole";
 import type { UsageStats } from "./ToolTimeline";
 
@@ -57,12 +57,11 @@ export function PowerComposer(props: {
   usage?: UsageStats;
   providers?: ProviderRow[];
   pickProvider?: string;
-  providersDisabled?: boolean;
 }) {
   const {
     instance, input, onInput, onSubmit, onKeyDown, onPaste, onPickFiles, onDrop,
     files, setFiles, textareaRef, fileRef, isLoading, sendHold, displaySpeaker,
-    session, workspace, usage, providers = [], pickProvider, onSteer, steerNote, acpMode = "", providersDisabled = false,
+    session, workspace, usage, providers = [], pickProvider, onSteer, steerNote, acpMode = "",
   } = props;
   const [dragOver, setDragOver] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
@@ -74,6 +73,12 @@ export function PowerComposer(props: {
   const slashes = useMemo(() => slashMatches(input), [input]);
   const mquery = useMemo(() => mentionQuery(input), [input]);
   const modes = useMemo(() => providers.find((p) => p.name === pickProvider)?.modes || [], [providers, pickProvider]);
+
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(""), 4000);
+    return () => clearTimeout(t);
+  }, [note]);
 
   useEffect(() => {
     if (mquery === null) {
@@ -271,15 +276,16 @@ export function PowerComposer(props: {
             <Volume2 className="h-3.5 w-3.5" />
           </button>
           {usage && (usage.tokensIn || usage.tokensOut) ? <span>{usage.tokensIn + usage.tokensOut} tok{usage.costUsd ? ` · $${usage.costUsd.toFixed(6)}` : ""}</span> : null}
-          <button type="button" disabled={providersDisabled} onClick={() => void refreshProviders(instance).catch(() => setNote("provider refresh failed"))} className="rounded p-1 hover:bg-hover hover:text-ink-primary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-ink-muted" aria-label="Refresh providers" title={providersDisabled ? "Host offline — provider refresh unavailable" : "Refresh providers"}><RefreshCw className="h-3.5 w-3.5" /></button>
           {modes.length ? (
             <select aria-label="ACP mode" value={acpMode || modes[0] || ""} className="bg-transparent text-ink-secondary outline-none" onChange={(e) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode: e.target.value, provider: pickProvider } }))}>
               {modes.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           ) : null}
-          <span className="flex-1" aria-hidden="true" />
-          {note || steerNote ? <span>{note || steerNote}</span> : null}
-          <span className="hidden md:inline text-[10px] font-mono text-ink-dim">{isLoading ? "enter steer · shift+enter newline" : "enter send · / commands · @ mention"}</span>
+          <span className="flex-1 min-w-0" aria-hidden="true" />
+          {note || steerNote ? (
+            <span className="min-w-0 max-w-56 truncate" title={note || steerNote}>{note || steerNote}</span>
+          ) : null}
+          <span className="hidden md:inline shrink-0 text-[10px] font-mono text-ink-dim">{isLoading ? "enter steer · shift+enter newline" : "enter send · / commands · @ mention"}</span>
         </div>
       </form>
     </div>

@@ -130,6 +130,12 @@ describe("U20 inline tool timeline discipline", () => {
 
       await act(async () => rootRender(r.root, { ...baseChatProps, messages, isLoading: true }));
       await flush(30);
+      await act(async () => {
+        window.dispatchEvent(new CustomEvent(TURN_EVENT_NAME, {
+          detail: { type: "tool_start", id: "t2", tool: "grep", args_preview: "needle" },
+        }));
+      });
+      await flush(30);
       html = r.html();
       assert.ok(html.includes("args: needle"), "live timeline must auto-expand");
 

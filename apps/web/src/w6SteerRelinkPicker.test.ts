@@ -226,10 +226,11 @@ describe("W6 unified offline provider picker", () => {
     }
   });
 
-  it("disables the composer provider refresh loudly while the remote host is offline", () => {
-    const composer = src("src/components/PowerComposer.tsx");
-    assert.ok(composer.includes("disabled={providersDisabled}"), "refresh disable binding missing");
-    assert.ok(composer.includes("Host offline — provider refresh unavailable"), "refresh offline tooltip missing");
+  it("disables the picker-owned provider refresh while the remote host is offline", () => {
+    const picker = src("src/components/ProviderModelPicker.tsx");
+    const app = src("src/App.tsx");
+    assert.ok(picker.includes("disabled={disabled}") && picker.includes('aria-label="Refresh providers"'), "picker refresh disable binding missing");
+    assert.ok(app.includes("disabled={providersDisabled}"), "offline providersDisabled binding missing");
   });
 });
 

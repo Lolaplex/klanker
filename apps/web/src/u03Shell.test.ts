@@ -83,7 +83,7 @@ describe("ChatConsole cleanup", () => {
       messages: [{ id: "m1", role: "user", content: "hi", timestamp: 1 }],
     });
     assert.ok(!html.includes("Streaming tokens"), "jargon still present");
-    assert.ok(html.includes("Working..."), `Working fallback missing`);
+    assert.ok(html.includes("Connecting…"), `pre-stream Connecting fallback missing`);
   });
 
   it("composer placeholder addresses the speaker, not the instance", () => {
