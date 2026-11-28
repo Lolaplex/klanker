@@ -26,6 +26,59 @@ def coding_block(workspace: Path) -> list[str]:
         "   - NEVER push to `main` and never open a PR against `main`. Without an explicit PR request, leave commits, pushes and remotes to the user.",
     ]
 
+_MEMORY_CONFIG_NAMES = {
+    "config.md",
+    "layout.md",
+    "chats-index.md",
+    "projects-index.md",
+    "index.md",
+}
+
+
+def _memory_text_has_content(path: Path) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")[:8192]
+    except OSError:
+        return False
+    for line in text.splitlines():
+        stripped = line.strip().strip("#").strip()
+        if stripped and not stripped.startswith("---"):
+            return True
+    return False
+
+
+def _probe_user_memory_empty(workspace_dir: Path | None) -> bool | None:
+    """Fast local memory-state probe; None means the filesystem answer is uncertain."""
+    if workspace_dir is None:
+        return None
+    ws = Path(workspace_dir)
+    if ws.name == "work":
+        ws = ws.parent
+    memory = ws / "memory"
+    host_memory = ws.parent.parent / "memory" if ws.parent.name == "workspaces" else ws.parent / "memory"
+    candidates = [
+        memory / "USER.md",
+        memory / "user" / "USER.md",
+        host_memory / "USER.md",
+    ]
+    try:
+        if any(path.is_file() and path.stat().st_size > 0 and _memory_text_has_content(path) for path in candidates):
+            return False
+        if not memory.exists():
+            return True
+        scanned = 0
+        for path in memory.rglob("*.md"):
+            if scanned >= 100:
+                break
+            scanned += 1
+            if path.name.lower() in _MEMORY_CONFIG_NAMES or path.name.startswith("_"):
+                continue
+            if path.is_file() and path.stat().st_size > 0 and _memory_text_has_content(path):
+                return False
+        return True
+    except OSError:
+        return None
+
 
 def build_system_prompt(caps: HostCapabilities) -> str:
     """Render Klanker's adaptive system prompt based on probed host feelers."""
@@ -36,6 +89,19 @@ def build_system_prompt(caps: HostCapabilities) -> str:
     missing_str = ", ".join(missing) if missing else "none (fully equipped)"
 
     workspace_env = workspace_path().as_posix()
+    try:
+        user_memory_empty = _probe_user_memory_empty(Workspace.from_env().dir)
+    except (OSError, ValueError):
+        user_memory_empty = None
+    if user_memory_empty is True:
+        memory_state = "   - User memory state: EMPTY (no facts stored yet). Do NOT call mcp.memory.search to check if memory is empty. On a greeting or first message, reply directly in 1–2 concise sentences in the user's language (no tool calls needed) to establish communication style and current focus."
+        onboarding_memory = "   - User memory is empty. Do not dump a questionnaire; answer greetings directly and establish style/focus in 1–2 concise sentences."
+    elif user_memory_empty is False:
+        memory_state = "   - User memory state: POPULATED. Only call mcp.memory.search when the user's request actually depends on personal context, preferences, or project standards — skip tool calls for simple greetings or self-contained questions."
+        onboarding_memory = "   - User memory is populated. Use it when the request depends on personal context or project standards; simple greetings need no memory lookup."
+    else:
+        memory_state = "   - If 'memory' is active, use `mcp.memory.search` to ground yourself in user facts, project standards, and rules."
+        onboarding_memory = "   - If user memory is empty (no facts about user in memory), do NOT dump a giant questionnaire or essay."
 
     lines = [
         f"You are Klanker (v{__version__}), an autonomous machine actor.",
@@ -57,7 +123,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "",
         "Adaptive Rules & Behavior:",
         "1. Organic Onboarding & Discovery (Low friction):",
-        "   - If user memory is empty (no facts about user in memory), do NOT dump a giant questionnaire or essay.",
+        onboarding_memory,
         "   - Greet briefly (1-2 sentences) and establish a fast baseline:",
         f"     'Klanker hier (v{__version__}). Alles läuft lokal auf diesem Host. Wie soll ich mit dir kommunizieren (z.B. Caveman, Sprache) und woran arbeiten wir?'",
         "   - In ongoing conversation: As you work, if you notice a missing context (e.g. project paths, stack preferences, rules), ask ONE concise, targeted question in context. Never interrogate on suspicion.",
@@ -65,7 +131,7 @@ def build_system_prompt(caps: HostCapabilities) -> str:
         "",
         "2. Memory & Cloud Sync:",
         "   - Local Agent Memory: All memory files live in local agent memory (never call it 'vault').",
-        "   - If 'memory' is active, use `mcp.memory.search` to ground yourself in user facts, project standards, and rules.",
+        memory_state,
         "   - Hard rules from local agent memory may appear in the system prefix as a `<memory_rules>` block (injected by the harness). Follow them. They are not tool output.",
         "   - mcp.memory.read takes `file_id` (e.g. USER.md, PROJECTS.md).",
         "   - NEVER hallucinate or invent file content if a tool call returns an error or usage hint. If a tool fails, report the actual tool result or fix the invocation.",

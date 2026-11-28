@@ -39,7 +39,7 @@ function statusMeta(status: ProcessStatus | null | undefined): { label: string; 
   switch (status?.state) {
     case "running":
     case "not_owned":
-      return { label: "online", dot: "bg-accent animate-pulse" };
+      return { label: "online", dot: "bg-success animate-pulse" };
     case "starting":
       return { label: "starting", dot: "bg-accent animate-pulse" };
     case "port_busy":

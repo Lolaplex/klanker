@@ -205,7 +205,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({
   };
 
   return (
-    <Dialog open onClose={onClose} title="SETTINGS">
+    <Dialog open onClose={onClose} title="SETTINGS" wide>
         <Tabs
           value={tab}
           onValueChange={(v) => setTab(v as typeof tab)}

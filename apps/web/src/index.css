@@ -102,22 +102,38 @@
      default; [data-theme="light"] inverts the same semantic slots. Zero
      hue anywhere — every shade is pure neutral. */
   :root, [data-theme="dark"] {
-    --bg-main: #000000;
-    --bg-surface: #0a0a0a;
-    --bg-elevated: #141414;
-    --bg-hover: #1a1a1a;
-    --border-subtle: #1c1c1c;
-    --border-strong: #2e2e2e;
-    --ink-primary: #ffffff;
-    --ink-secondary: #a3a3a3;
-    --ink-muted: #737373;
-    --ink-dim: #525252;
-    --accent: #ffffff;
-    --accent-ink: #000000;
-    --accent-hover: #e5e5e5;
-    --danger: #ef4444;
-    --warn: #f59e0b;
-    --success: #10b981;
+    --bg-main-rgb: 0 0 0;
+    --bg-surface-rgb: 10 10 10;
+    --bg-elevated-rgb: 20 20 20;
+    --bg-hover-rgb: 26 26 26;
+    --border-subtle-rgb: 28 28 28;
+    --border-strong-rgb: 46 46 46;
+    --ink-primary-rgb: 255 255 255;
+    --ink-secondary-rgb: 163 163 163;
+    --ink-muted-rgb: 115 115 115;
+    --ink-dim-rgb: 82 82 82;
+    --accent-rgb: 255 255 255;
+    --accent-ink-rgb: 0 0 0;
+    --accent-hover-rgb: 229 229 229;
+    --danger-rgb: 239 68 68;
+    --warn-rgb: 245 158 11;
+    --success-rgb: 16 185 129;
+    --bg-main: rgb(var(--bg-main-rgb));
+    --bg-surface: rgb(var(--bg-surface-rgb));
+    --bg-elevated: rgb(var(--bg-elevated-rgb));
+    --bg-hover: rgb(var(--bg-hover-rgb));
+    --border-subtle: rgb(var(--border-subtle-rgb));
+    --border-strong: rgb(var(--border-strong-rgb));
+    --ink-primary: rgb(var(--ink-primary-rgb));
+    --ink-secondary: rgb(var(--ink-secondary-rgb));
+    --ink-muted: rgb(var(--ink-muted-rgb));
+    --ink-dim: rgb(var(--ink-dim-rgb));
+    --accent: rgb(var(--accent-rgb));
+    --accent-ink: rgb(var(--accent-ink-rgb));
+    --accent-hover: rgb(var(--accent-hover-rgb));
+    --danger: rgb(var(--danger-rgb));
+    --warn: rgb(var(--warn-rgb));
+    --success: rgb(var(--success-rgb));
     /* legacy aliases — converging consumers read the semantic slots */
     --bg-card: var(--bg-surface);
     --border-dim: var(--border-strong);
@@ -130,22 +146,38 @@
   }
 
   [data-theme="light"] {
-    --bg-main: #ffffff;
-    --bg-surface: #f7f7f7;
-    --bg-elevated: #efefef;
-    --bg-hover: #e5e5e5;
-    --border-subtle: #e5e5e5;
-    --border-strong: #c8c8c8;
-    --ink-primary: #000000;
-    --ink-secondary: #525252;
-    --ink-muted: #737373;
-    --ink-dim: #a3a3a3;
-    --accent: #000000;
-    --accent-ink: #ffffff;
-    --accent-hover: #333333;
-    --danger: #b91c1c;
-    --warn: #b45309;
-    --success: #047857;
+    --bg-main-rgb: 255 255 255;
+    --bg-surface-rgb: 247 247 247;
+    --bg-elevated-rgb: 239 239 239;
+    --bg-hover-rgb: 229 229 229;
+    --border-subtle-rgb: 229 229 229;
+    --border-strong-rgb: 200 200 200;
+    --ink-primary-rgb: 0 0 0;
+    --ink-secondary-rgb: 82 82 82;
+    --ink-muted-rgb: 115 115 115;
+    --ink-dim-rgb: 163 163 163;
+    --accent-rgb: 0 0 0;
+    --accent-ink-rgb: 255 255 255;
+    --accent-hover-rgb: 51 51 51;
+    --danger-rgb: 185 28 28;
+    --warn-rgb: 180 83 9;
+    --success-rgb: 4 120 87;
+    --bg-main: rgb(var(--bg-main-rgb));
+    --bg-surface: rgb(var(--bg-surface-rgb));
+    --bg-elevated: rgb(var(--bg-elevated-rgb));
+    --bg-hover: rgb(var(--bg-hover-rgb));
+    --border-subtle: rgb(var(--border-subtle-rgb));
+    --border-strong: rgb(var(--border-strong-rgb));
+    --ink-primary: rgb(var(--ink-primary-rgb));
+    --ink-secondary: rgb(var(--ink-secondary-rgb));
+    --ink-muted: rgb(var(--ink-muted-rgb));
+    --ink-dim: rgb(var(--ink-dim-rgb));
+    --accent: rgb(var(--accent-rgb));
+    --accent-ink: rgb(var(--accent-ink-rgb));
+    --accent-hover: rgb(var(--accent-hover-rgb));
+    --danger: rgb(var(--danger-rgb));
+    --warn: rgb(var(--warn-rgb));
+    --success: rgb(var(--success-rgb));
     --sab: env(safe-area-inset-bottom, 0px);
     --kb-dur: 0.42s;
     color-scheme: light;
@@ -299,6 +331,24 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--ink-muted);
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes klanker-turn-scan {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(310%); }
+}
+
+.turn-status-scan {
+  animation: klanker-turn-scan 1.35s cubic-bezier(0.32, 0.72, 0, 1) infinite;
 }
 
 .klanker-md {

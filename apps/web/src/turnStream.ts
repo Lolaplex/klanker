@@ -137,7 +137,11 @@ async function consume(source: AsyncIterable<TurnEvent>, o: ResumableOpts): Prom
       if (next.done) throw new StreamLost("stream ended before the turn finished");
       const ev = next.value;
       if (!ev || ev.type === "attach" || ev.type === "start") continue;
-      if (ev.type === "error") throw new TurnError(ev.text || "turn failed");
+      if (ev.type === "error") {
+        publishTurnEvent(ev);
+        o.onEvent(ev);
+        throw new TurnError(ev.text || "turn failed");
+      }
       publishTurnEvent(ev);
       o.onEvent(ev);
       if (ev.type === "trailer") return;

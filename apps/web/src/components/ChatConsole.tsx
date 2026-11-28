@@ -101,7 +101,6 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   providers = [],
   pick,
   acpMode = "",
-  providersDisabled = false,
   remoteApprovalLabel = null,
   pending,
   deciding,
@@ -117,6 +116,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const imageCacheRef = useRef(new Map<string, string>());
   const [timelineSteps, setTimelineSteps] = useState<TimelineStep[]>([]);
+  const [timelineScope, setTimelineScope] = useState<"latest turn" | "session total">("latest turn");
   const [usage, setUsage] = useState<UsageStats>({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
   const [liveThought, setLiveThought] = useState("");
   const [steerNote, setSteerNote] = useState("");
@@ -126,6 +126,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
   const liveRafRef = useRef(0);
   const steerSeenRef = useRef(new Set<string>());
   const activeSessionRef = useRef("");
+  const liveTimelineRef = useRef(false);
+  const wasLoadingRef = useRef(false);
 
   const scrollToBottom = () => {
     const el = listRef.current;
@@ -162,11 +164,25 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
 
   useEffect(() => {
     setTimelineSteps([]);
+    setTimelineScope("latest turn");
     setUsage({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
     setLiveThought("");
     setSteerEvents([]);
+    liveTimelineRef.current = false;
     steerSeenRef.current.clear();
   }, [activeSession, workspace, persona, instance.id]);
+
+  useEffect(() => {
+    if (isLoading && !wasLoadingRef.current) {
+      setTimelineSteps([]);
+      setTimelineScope("latest turn");
+      setUsage({ tokensIn: 0, tokensOut: 0, costUsd: 0 });
+      setLiveThought("");
+      liveTimelineRef.current = false;
+    }
+    if (!isLoading && wasLoadingRef.current) setLiveThought("");
+    wasLoadingRef.current = isLoading;
+  }, [isLoading]);
 
   useEffect(() => {
     const flush = () => {
@@ -187,9 +203,13 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
             }
           }
         }
+        if (["tool_start", "tool_end", "error", "usage"].includes(ev.type)) {
+          liveTimelineRef.current = true;
+          setTimelineScope("latest turn");
+        }
         setTimelineSteps((cur) => applyLiveTurnEvent(cur, ev));
         setUsage((cur) => usageFromTurnEvent(cur, ev));
-        if (ev.type === "thought" && ev.text) setLiveThought((cur) => `${cur}${cur ? "\n" : ""}${ev.text}`);
+        if (ev.type === "thought" && ev.text) setLiveThought((cur) => `${cur}${ev.text}`);
       }
     };
     const listener = (event: Event) => {
@@ -208,13 +228,19 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
     if (!activeSession) return;
     let dead = false;
     void api.sessionEvents(instance, wsId, personaId, activeSession).then((events) => {
-      if (!dead && events) setTimelineSteps((live) => {
-        const historical = stepsFromSessionEvents(events);
-        return live.some((s) => s.status === "running") ? live : historical;
-      });
+      if (!dead && events && !liveTimelineRef.current) {
+        setTimelineScope("session total");
+        setTimelineSteps(stepsFromSessionEvents(events));
+      }
     });
     return () => { dead = true; };
-  }, [instance, activeSession, wsId, personaId, isLoading]);
+  }, [instance, activeSession, wsId, personaId]);
+
+  useEffect(() => {
+    if (!steerNote) return;
+    const t = setTimeout(() => setSteerNote(""), 4000);
+    return () => clearTimeout(t);
+  }, [steerNote]);
 
   useEffect(() => {
     const focus = () => focusWithoutScroll(textareaRef.current);
@@ -374,7 +400,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
       detail: { workspace: wsId, persona: personaId, session: activeSession, message_index: messageIndex },
     }));
   };
-  const timelineNode = <ToolTimeline steps={timelineSteps} usage={usage} defaultOpen={isLoading} />;
+  const timelineNode = <ToolTimeline steps={timelineSteps} usage={usage} defaultOpen={isLoading} scopeLabel={timelineScope} />;
 
   return (
     <div className="relative flex-1 flex flex-col bg-main overflow-hidden font-mono text-xs">
@@ -437,7 +463,7 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
                 thinking={streamingBubble && m.id === last?.id && !m.content}
                 streaming={streamingBubble && m.id === last?.id}
                 streamStatus={streamingBubble && m.id === last?.id ? streamStatus : undefined}
-                liveThought={m.id === last?.id ? liveThought : ""}
+                liveThought={streamingBubble && m.id === last?.id ? liveThought : ""}
                 imageFor={(name) => imageCacheRef.current.get(name) || null}
                 onRegenerate={i === lastAssistantIdx && !isLoading ? regenerate : undefined}
                 onFork={forkFrom(m)}
@@ -455,9 +481,8 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
               <span>•</span>
               <span className="animate-pulse text-ink-primary">thinking...</span>
             </div>
-            <div className="bg-surface border border-subtle rounded-md p-3 text-ink-muted flex items-center space-x-2">
-              <span className="w-2 h-2 bg-accent rounded-full animate-ping"></span>
-              <span>{streamStatus || "Working..."}</span>
+            <div className="bg-surface border border-subtle rounded-md p-3 text-ink-muted">
+              <TurnStatusInline status={streamStatus} />
             </div>
           </div>
         )}
@@ -495,11 +520,22 @@ export const ChatConsole: React.FC<ChatConsoleProps> = ({
         providers={providers}
         pickProvider={pick?.provider}
         acpMode={acpMode}
-        providersDisabled={providersDisabled}
       />
     </div>
   );
 };
+
+function TurnStatusInline({ status }: { status?: string | null }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-[11px] text-ink-secondary" data-testid="turn-start-status">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent animate-pulse" />
+      <span className="shrink-0">{status || "Connecting…"}</span>
+      <span className="relative h-1 w-28 max-w-40 flex-1 overflow-hidden rounded-full bg-hover" aria-hidden="true">
+        <span className="turn-status-scan absolute inset-y-0 w-1/3 rounded-full bg-accent/50" />
+      </span>
+    </div>
+  );
+}
 
 const MessageBubble = React.memo(function MessageBubble({
   instance,
@@ -620,7 +656,7 @@ const MessageBubble = React.memo(function MessageBubble({
           className={`min-w-0 max-w-full rounded-md border p-3 leading-relaxed select-text ${
             mine
               ? "border-subtle bg-elevated text-ink-primary"
-              : "border-subtle bg-surface text-ink-primary"
+              : `${message.error ? "border-danger/50" : "border-subtle"} bg-surface text-ink-primary`
           }`}
         >
           {message.attachments?.length ? (
@@ -636,16 +672,22 @@ const MessageBubble = React.memo(function MessageBubble({
               ))}
             </div>
           ) : null}
-          {thinkSplit?.thinking || liveThought ? (
-            <ThinkingAccordion thinking={[thinkSplit?.thinking, liveThought].filter(Boolean).join(String.fromCharCode(10))} streaming={streaming && (thinkSplit?.thinkingOpen || !!liveThought)} />
+          {thinkSplit?.thinking || message.thinking || liveThought ? (
+            <ThinkingAccordion thinking={[thinkSplit?.thinking, message.thinking, liveThought].filter(Boolean).join(String.fromCharCode(10))} streaming={streaming && (thinkSplit?.thinkingOpen || !!liveThought)} />
           ) : null}
-          {message.role === "klanker" && message.content ? (
+          {message.error ? (
+            <div className="rounded-md border border-danger/50 bg-main px-2.5 py-2 text-[12px] leading-relaxed text-danger" data-testid="turn-error-message">
+              {message.content}
+            </div>
+          ) : streaming && !message.content ? (
+            <TurnStatusInline status={streamStatus} />
+          ) : message.role === "klanker" && message.content ? (
             thinkSplit?.thinking && !thinkSplit.body && thinkSplit.thinkingOpen ? null : (
               <MarkdownMessage text={thinkSplit ? thinkSplit.body : message.content} />
             )
           ) : (
             <div className="whitespace-pre-wrap break-words font-sans text-[14px] leading-[1.65]">
-              {message.content || (thinking ? streamStatus || "thinking..." : "")}
+              {message.content || (thinking ? streamStatus || "Connecting…" : "")}
             </div>
           )}
           {streaming && message.content && streamStatus ? (

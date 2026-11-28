@@ -107,6 +107,10 @@ export interface ChatMessage {
   elapsed_ms?: number;
   /** Names of files sent with this message (echo only — blobs are not kept). */
   attachments?: string[];
+  /** Reasoning stream captured for this completed assistant turn. */
+  thinking?: string;
+  /** Client-side turn failure annotation — never a model answer. */
+  error?: boolean;
 }
 
 export interface TurnResponse {

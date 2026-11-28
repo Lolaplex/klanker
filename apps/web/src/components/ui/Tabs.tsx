@@ -20,7 +20,7 @@ export function Tabs({
 }) {
   return (
     <BaseTabs.Root value={value} onValueChange={(v) => onValueChange(v as string)}>
-      <BaseTabs.List aria-label={ariaLabel} className="flex items-center justify-start gap-1 border-b border-subtle px-1 overflow-x-auto">
+      <BaseTabs.List aria-label={ariaLabel} className="flex items-center justify-start gap-1 border-b border-subtle px-1 overflow-x-auto overflow-y-hidden no-scrollbar">
         {tabs.map((t) => (
           <BaseTabs.Tab
             key={t.value}

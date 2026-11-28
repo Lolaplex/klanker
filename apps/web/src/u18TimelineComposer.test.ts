@@ -86,7 +86,9 @@ describe("U18 power composer contracts", () => {
     assert.ok(cc.includes("injectSteer"), "steer API call must be owned by ChatConsole");
     assert.ok(pc.includes("isLoading ? \"Steer turn\" : \"Send\""));
     assert.ok(pc.includes("aria-label=\"ACP mode\""));
-    assert.ok(pc.includes("refreshProviders"));
+    const picker = readFileSync("src/components/ProviderModelPicker.tsx", "utf-8");
+    assert.ok(picker.includes("onRefresh") && picker.includes("RefreshCw"), "provider refresh lives inside the picker");
+    assert.ok(!pc.includes("refreshProviders"), "duplicate composer refresh button returned");
     assert.ok(readFileSync("src/services/streamExtrasApi.ts", "utf-8").includes("/v1/providers?refresh=1"));
     assert.ok(pc.includes("transcribeVoice"));
     assert.ok(pc.includes("speakText"));

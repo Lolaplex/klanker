@@ -48,10 +48,10 @@ describe("U19 border hierarchy and monochrome chrome", () => {
     const css = src("src/index.css");
     assert.ok(css.includes("*, ::before, ::after"), "universal preflight selector missing");
     assert.ok(css.includes("border-color: var(--border-subtle);"), "preflight border token missing");
-    assert.ok(css.includes("--border-subtle: #1c1c1c;"), "dark subtle token mismatch");
-    assert.ok(css.includes("--border-strong: #2e2e2e;"), "dark strong token mismatch");
-    assert.ok(css.includes("--border-subtle: #e5e5e5;"), "light subtle token mismatch");
-    assert.ok(css.includes("--border-strong: #c8c8c8;"), "light strong token mismatch");
+    assert.ok(css.includes("--border-subtle-rgb: 28 28 28;"), "dark subtle channel mismatch");
+    assert.ok(css.includes("--border-strong-rgb: 46 46 46;"), "dark strong channel mismatch");
+    assert.ok(css.includes("--border-subtle-rgb: 229 229 229;"), "light subtle channel mismatch");
+    assert.ok(css.includes("--border-strong-rgb: 200 200 200;"), "light strong channel mismatch");
   });
 
   it("moves structural shell chrome to subtle hairlines with strong reserved for interaction", () => {
@@ -64,7 +64,9 @@ describe("U19 border hierarchy and monochrome chrome", () => {
     assert.ok(list.includes("border-r border-subtle") && list.includes("border-b border-subtle"), "sidebar structural hairlines missing");
     assert.ok(list.includes("h-8 w-full") && list.includes("bg-elevated") && list.includes("hover:border-strong"), "+ new chat restraint missing");
     assert.ok(composer.includes("max-w-3xl") && composer.includes("border-t border-subtle"), "composer centering/top hairline missing");
-    assert.ok(composer.includes('aria-label="Refresh providers"') && composer.includes("RefreshCw"), "provider refresh is not an icon button");
+    const picker = src("src/components/ProviderModelPicker.tsx");
+    assert.ok(picker.includes('aria-label="Refresh providers"') && picker.includes("RefreshCw"), "provider refresh picker icon missing");
+    assert.ok(!composer.includes('aria-label="Refresh providers"'), "duplicate composer refresh icon remains");
     assert.ok(composer.includes("enter send · / commands · @ mention"), "idle composer hint missing");
     assert.ok(composer.includes("enter steer · shift+enter newline"), "loading composer hint missing");
     assert.ok(rail.includes("border-l border-subtle") && rail.includes("h-11"), "rail hairline/height alignment missing");

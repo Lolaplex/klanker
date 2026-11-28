@@ -30,7 +30,7 @@ export function mergeMessages(local: ChatMessage[], server: ChatMessage[]): Chat
     if (!m.content) return false;
     if (seen.has(`${m.role}\n${m.content}`)) return false;
     if (m.timestamp > lastTs) return true;
-    return m.role === "klanker" && m.content.startsWith("Error") && !serverReplied;
+    return m.role === "klanker" && (m.content.startsWith("Error") || m.content.startsWith("Turn failed:")) && !serverReplied;
   });
   return [...server, ...extra];
 }
