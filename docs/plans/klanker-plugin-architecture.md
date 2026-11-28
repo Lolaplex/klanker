@@ -17,6 +17,11 @@
 - **Weights** are instance-global. The capability binding may be per workspace. Blobs and Modelfiles are not replicated across instances.
 - Neutral naming unchanged: product names stay in prose. They do not appear in functions, capabilities, verbs, or schemas.
 
+### Draft follow-up (2026-11-28)
+- Research sources the plans cite now live in `docs/research/`. Rev 2 and Rev 3 were never separate files.
+- Added **§12.5**, an early issue-board connector: HTTP MCP plus a host-owned webview tab. Auth goes through the keyring.
+- Added **§15**, the core control plane, and **§15.2**, open proposals. Those proposals are not decided.
+
 ### What Changed in Rev 3
 - Added **§10 Central Capability Registry & Resolver**, modelled on the host capability register + semantic graph + resolver already shipped in [`Cypoe/koru-orisha-media`](https://github.com/Cypoe/koru-orisha-media) (found there; `Lolaplex/koru-orisha-media` was not accessible to Cursor's GitHub App).
 - Plugins declare **provides** / **needs** in `plugin.json` for file extension/MIME handlers, viewers/editors, explorers/browsers, speech/voice capabilities, and triggers/events.
@@ -678,6 +683,79 @@ The plugin is a **view over `agents-store` data**. It does not own a second even
 | **State** | `state.json`: `{ habits[{ id, title, schedule, streak }], checkins{} }` |
 | **OSS refs** | [zamai/open-habit](https://github.com/zamai/open-habit) (**MIT**, iOS/iPadOS — JSON check-in shape only); avoid GPL trackers (Loop Habit Tracker, OpenHabitTracker) for copy-paste |
 
+### 12.5 Issue board — `plugin.issues` (early)
+
+First connector to mount. It comes before the calendar, map, flashcard, habit, and meeting-recorder samples. The hosted service is the board at `https://board.lolaplex.org` ([`Lolaplex/agents-board`](https://github.com/Lolaplex/agents-board) `docs/mcp.md`). Product names stay in this prose. They are not capability ids.
+
+Two surfaces, one plugin:
+
+1. **Tools.** The host opens the board's MCP endpoint, `https://board.lolaplex.org/mcp` (Streamable HTTP, protocol `2025-06-18`). A browser cookie is not a credential there. Every call sends `Authorization: Bearer`, and the bearer is checked on each request. `Mcp-Session-Id` is a transport handle, not a secret.
+2. **Tab.** A host-owned webview whose document is `https://board.lolaplex.org/`. The frame is a navigation the host owns. It is not plugin-supplied HTML, and it does not receive the bearer.
+
+**Tier:** `iframe-mcp`. The page is the hosted board. Plugin script stays on the MCP bridge, in the sandbox from §7, and never shares the board origin. That is what keeps `allow-same-origin` off the bridge.
+
+**Rollout:** early. Ship it with the first shell that can open an HTTP MCP client and a webview tab.
+
+**Auth.** The plugin does not store a token.
+
+| Permission | Who acts |
+|---|---|
+| `identity.use` | The host resolves the caller in the keyring (`agents-keys`). The plugin never reads a private key. |
+| `secret.use` | The host attaches the bearer paired with that identity. The token is not written into `plugin.json`, `state.json`, the webview, or plugin script. |
+
+If no bearer is paired, the host shows the core sign-in surface. The plugin does not prompt for the token.
+
+```json
+{
+  "id": "plugin.issues",
+  "name": "Issues",
+  "version": "0.1.0",
+  "tier": "iframe-mcp",
+  "rollout": "early",
+  "contributes": [
+    { "point": "sidebarItem", "id": "issues", "title": "Issues", "order": 20 },
+    { "point": "tab", "id": "issue-board", "title": "Issues", "webview": "https://board.lolaplex.org/" }
+  ],
+  "provides": [
+    { "capability": "file.explore:issues", "affordances": ["view", "search"], "rank": 100 },
+    { "capability": "issue.read", "affordances": ["list", "get", "search"], "rank": 100 },
+    { "capability": "issue.write", "affordances": ["create", "update", "delete", "restore", "transfer"], "rank": 100 },
+    { "capability": "project.read", "affordances": ["list"], "rank": 100 },
+    { "capability": "project.write", "affordances": ["create", "update", "delete", "restore"], "rank": 100 },
+    { "capability": "thread.read", "affordances": ["list", "get"], "rank": 100 },
+    { "capability": "thread.write", "affordances": ["create"], "rank": 100 },
+    { "capability": "note.read", "affordances": ["get"], "rank": 100 },
+    { "capability": "note.write", "affordances": ["put"], "rank": 100 }
+  ],
+  "needs": [
+    { "capability": "identity.use", "optional": false },
+    { "capability": "secret.use", "optional": false }
+  ],
+  "permissions": ["identity.use", "secret.use", "network.connect"],
+  "mcp": {
+    "transport": "http",
+    "url": "https://board.lolaplex.org/mcp"
+  }
+}
+```
+
+`note.read` / `note.write` are the remote project notes. They are not the core memory surface in §15.
+
+The hosted server's tool names are its wire API, not this schema. The host maps them:
+
+| Capability | Hosted tool names |
+|---|---|
+| `issue.read` | `issue_list`, `issue_get`, `issue_search` |
+| `issue.write` | `issue_create`, `issue_update`, `issue_delete`, `issue_restore`, `issue_transfer` |
+| `project.read` | `project_list` |
+| `project.write` | `project_create`, `project_update`, `project_delete`, `project_restore` |
+| `thread.read` | `thread_list`, `thread_get`, `mail_get` |
+| `thread.write` | `thread_create`, `mail_put`, `mail_ack` |
+| `note.read` | `memory_get`, `fragment_get`, `fragment_search` |
+| `note.write` | `memory_write` |
+
+`state.json` holds view chrome only: `{ "activeProject": "", "tab": "issues" }`. No token, no key.
+
 ---
 
 ## 13. Decisions from the samples — All 9 DECIDED (2026-11-27)
@@ -732,3 +810,36 @@ Cut these onto the board later. They are not scheduled here.
 8. Flashcards: host SM-2 behind a scheduler enum, review UI, and due/reminder triggers. Leave a later enum value for an RWKV scheduler.
 9. Meeting recorder as an `iframe-mcp` plugin: capture, transcript, summary, tasks, blobs in the workspace, weights in the instance cache.
 10. Habit tracker as a `shadow-wc` check-in view driven by `trigger:habit.due`.
+11. Early issue-board connector (§12.5): HTTP MCP plus a host-owned webview, bearer released by the keyring.
+
+---
+
+## 15. Core control plane
+
+These surfaces belong to the host. A plugin may call them through a capability. It does not replace them, and it does not ship a second copy.
+
+| Surface | Role | Lives with |
+|---|---|---|
+| **Memory** | Durable notes and typed facts for the workspace | `agents-memory` |
+| **Skills** | Instruction packages the harness loads (`SKILL.md`) | `agents-harness` skill directory |
+| **MCP / connectors** | Outbound connections to external tool servers, including the issue board in §12.5 | harness MCP client, `mcp.json` |
+| **Usage** | Ledger of provider calls and bytes for the instance | host ledger, not a plugin `state.json` |
+| **Session history** | Turns, branches, and the messages a chat can reopen | relay sessions and the workspace session log |
+| **Keyring** | DID keys for the caller. Private keys never enter a plugin or a workspace database | `agents-keys` |
+| **Secrets** | Bearers and provider keys, paired with a keyring identity, released by the host per call | host secret store, separate from the keyring |
+| **Files, docs, uploads** | Workspace files, documentation search, and bytes the user dropped in | `agents-docs`, `agents-workspace`, the `blobs` domain |
+
+The issue-board plugin is a connector on top of this plane. Memory, the keyring, and secrets stay here.
+
+### 15.2 Open proposals
+
+Not decided. Each item is a gap in the plane above, proposed for Fabian to accept or reject.
+
+1. **Personas, workspaces, and access grants — `PROPOSED`.** Workspace roots exist. A persona (who a session speaks as) and the grants that persona holds are not specified. Proposal: personas and grants are core records, and a plugin only receives the grant the host already allowed.
+2. **Schedules and triggers — `PROPOSED`.** §13.7 decided the plugin trigger contract: declared, at-least-once, workspace-local, and able to wake a workflow with or without inference. Proposal: the scheduler and the trigger catalog are core surfaces, not something a plugin owns. This does not reopen §13.7.
+3. **Traces and logs — `PROPOSED`.** Append-only turn logs exist (`agents-traces`). Proposal: the trace and log browser is core chrome, not a plugin.
+4. **Model and provider configuration — `PROPOSED`.** Which model and endpoint an instance uses, and which binding a workspace selects. Proposal: this is core, next to the instance-global weight cache in §13.9. A plugin does not store provider keys.
+5. **Plugin manager — `PROPOSED`.** The registry and the contribution points are specified. Proposal: install, enable, disable, and order are a core screen, not a plugin that manages plugins.
+6. **Updates — `PROPOSED`.** How the host and installed plugins learn about a newer build. Proposal: one core update channel, with plugins declared in the manifest rather than fetching their own.
+7. **Backup and export — `PROPOSED`.** A single export of workspace state, memory, session history, and plugin `state.json`, without copying the keyring or the secret store. Proposal: core, with secrets omitted unless the operator opts in.
+8. **Approvals and notifications — `PROPOSED`.** The approval gate exists (`AGENTS_APPROVAL_MODE`). Proposal: the inbox that shows an approval or a notification is core chrome. A plugin may raise a notice only through a host capability.
