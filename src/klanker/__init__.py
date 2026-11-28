@@ -1,8 +1,5 @@
 """Klanker — adaptive autonomous agent runtime and terminal companion."""
 
-from importlib.metadata import PackageNotFoundError, version
+from .version import current_version
 
-try:
-    __version__ = version("klanker")
-except PackageNotFoundError:  # a source checkout that was never installed
-    __version__ = "0.0.0+source"
+__version__ = current_version()

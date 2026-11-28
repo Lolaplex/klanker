@@ -2,17 +2,21 @@
 """dev-suite.py — one dev switch for the whole agents-* suite.
 
 Reads pyproject.toml (the only dep list — it cannot drift) and installs
-every ``agents-*`` requirement from source, never from PyPI:
+every ``agents-*`` requirement from source, never from PyPI, then installs
+this repo editable. That order is the whole dev install: the lockstep
+floors are not on PyPI yet, so ``pip install -e .`` on a clean venv fails
+if it runs first.
 
   - a sibling checkout exists (``<repo-parent>/agents-*``) → ``pip install -e``
     so uncommitted local work flows through — true lock-step with dev work
   - no sibling → ``pip install "name @ git+https://github.com/Lolaplex/<name>.git@<ref>"``
     (in CI, probes GITHUB_HEAD_REF first so multi-repo feature branches resolve
     against matching remote branches before falling back to SUITE_REF / dev)
+  - then ``pip install -e <this repo>`` so klanker itself is on the path
 
 Usage:
 
-    python scripts/dev-suite.py            # install the suite from source
+    python scripts/dev-suite.py            # suite from source, then klanker editable
     python scripts/dev-suite.py --emit     # print git-ref requirement lines
     python scripts/dev-suite.py --dry-run  # show what would run
 
@@ -168,6 +172,24 @@ def git_req(name: str, extras: str, ref: str | None = None) -> str:
     return f"{name}{extras} @ {GIT_URL.format(name=name, ref=chosen)}"
 
 
+def _pip_install(args: list[str], *, dry_run: bool) -> int:
+    cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", *args]
+    if dry_run:
+        print("$ " + " ".join(cmd))
+        return 0
+    return subprocess.run(cmd, env=_git_env()).returncode
+
+
+def _install_self(*, dry_run: bool) -> int:
+    """Editable install of this repo once the suite floors are already present."""
+    print(f"klanker: editable {REPO}")
+    code = _pip_install(["-e", str(REPO)], dry_run=dry_run)
+    if dry_run or code == 0:
+        return code
+    print("dev-suite: editable klanker could not resolve deps; retrying with --no-deps")
+    return _pip_install(["--no-deps", "-e", str(REPO)], dry_run=False)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--emit", action="store_true", help="print git-ref requirements and exit")
@@ -182,7 +204,7 @@ def main() -> int:
 
     if not deps:
         print("dev-suite: no agents-* dependencies in pyproject.toml")
-        return 0
+        return _install_self(dry_run=args.dry_run)
 
     suite_dir = Path(os.environ.get("AGENTS_SUITE_DIR", REPO.parent))
     reqs, plan = [], []
@@ -199,14 +221,13 @@ def main() -> int:
             else:
                 plan.append(f"{name}{extras}: fallback to index (remote branch unreachable)")
 
-    print("\n".join(plan))
-    if not reqs:
-        return 0
-    cmd = [sys.executable, "-m", "pip", "install", "--no-cache-dir", *reqs]
-    if args.dry_run:
-        print("$ " + " ".join(cmd))
-        return 0
-    return subprocess.run(cmd, env=_git_env()).returncode
+    if plan:
+        print("\n".join(plan))
+    if reqs:
+        code = _pip_install(reqs, dry_run=args.dry_run)
+        if code != 0:
+            return code
+    return _install_self(dry_run=args.dry_run)
 
 
 if __name__ == "__main__":

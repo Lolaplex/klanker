@@ -40,6 +40,37 @@ class DevSuiteRefTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=True):
             self.assertEqual(dev_suite.ref_for("agents-store"), "custom")
 
+    def test_dry_run_installs_klanker_after_the_suite(self):
+        env = {k: v for k, v in os.environ.items() if not k.endswith("_REF")}
+        env["SUITE_REF"] = "dev"
+        env["AGENTS_SUITE_DIR"] = str(Path("/no/such/suite"))
+        buf = io.StringIO()
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(sys, "argv", ["dev-suite.py", "--dry-run"]), \
+             redirect_stdout(buf):
+            rc = dev_suite.main()
+        self.assertEqual(rc, 0)
+        text = buf.getvalue()
+        suite_at = text.find("agents-workspace")
+        self_at = text.find(f"klanker: editable {dev_suite.REPO}")
+        self.assertGreaterEqual(suite_at, 0)
+        self.assertGreater(self_at, suite_at)
+        self.assertIn(f"-e {dev_suite.REPO}", text)
+        self.assertLess(text.find("agents-workspace"), text.find(f"-e {dev_suite.REPO}"))
+
+    def test_emit_stays_suite_requirements_only(self):
+        env = {"SUITE_REF": "dev"}
+        buf = io.StringIO()
+        with patch.dict(os.environ, env, clear=True), \
+             patch.object(sys, "argv", ["dev-suite.py", "--emit"]), \
+             redirect_stdout(buf):
+            rc = dev_suite.main()
+        self.assertEqual(rc, 0)
+        text = buf.getvalue()
+        self.assertNotIn(str(dev_suite.REPO), text)
+        self.assertNotIn("klanker:", text)
+        self.assertTrue(all("@dev" in line for line in text.splitlines() if line.strip()))
+
 
 if __name__ == "__main__":
     unittest.main()

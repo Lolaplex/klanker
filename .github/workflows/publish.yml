@@ -114,6 +114,8 @@ jobs:
 
       - name: Build
         if: steps.check.outputs.exists == 'false'
+        env:
+          KLANKER_RELEASE: "1"
         run: python -m build
 
       - name: Check metadata

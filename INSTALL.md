@@ -4,21 +4,22 @@
 
 ```bash
 pip install klanker
-pip install "klanker[repl]"      # shell + gateway + TUI
-pip install "klanker[browser]"   # CDP browser automation
-pip install "klanker[keys]"      # Ed25519 agent keys, DID resolution
-pip install "klanker[calendar]"  # CalDAV
-pip install "klanker[all]"       # everything
+pip install "klanker[repl]"      # interactive shell + TUI
+pip install "klanker[all]"       # every optional extra (same as repl)
 ```
+
+Browser, keys, calendar, voice, and the workspace sync line install
+with the package. They are not extras.
 
 ## Dev lock-step (source)
 
-Clone the repo, then flip every `agents-*` dependency from PyPI to dev
-sources — one command:
+One command. It installs every `agents-*` dependency from source, then
+installs this repo editable. The lockstep floors (`agents-*>=0.2.0,<1`
+and the matching floors of the packages that version on their own line)
+are not on PyPI yet, so this has to be the first install on a clean venv.
 
 ```bash
 git clone https://github.com/Lolaplex/klanker.git && cd klanker
-pip install -e .
 python scripts/dev-suite.py
 ```
 
@@ -28,6 +29,7 @@ python scripts/dev-suite.py
 - **sibling checkout exists** (`../agents-*`) → `pip install -e` it, so
   uncommitted local work flows through
 - **no sibling** → `git+https://github.com/Lolaplex/<name>.git@dev`
+- **then this repo** → `pip install -e .`
 
 ```bash
 python scripts/dev-suite.py --dry-run   # show the plan
