@@ -618,6 +618,14 @@ const MessageBubble = React.memo(function MessageBubble({
               <span className="text-ink-muted">{message.elapsed_ms}ms</span>
             </>
           ) : null}
+          {!mine && message.tier ? (
+            <>
+              <span>•</span>
+              <span data-testid="turn-tier" title={message.turn_mode ? `turn mode: ${message.turn_mode}` : "turn tier"} className="rounded-full border border-subtle px-1 py-px font-mono text-[8px] uppercase tracking-wide text-ink-dim">
+                {message.tier}
+              </span>
+            </>
+          ) : null}
           {(message.content || onRegenerate || onFork) ? (
             <div data-testid="message-actions" className="ml-1 inline-flex shrink-0 items-center gap-0.5 rounded-md border border-subtle bg-surface px-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
               {message.content ? (

@@ -3,6 +3,8 @@ import type { ChatMessage, KlankerInstance } from "../types/klanker";
 import { api } from "../services/api";
 import { ChatBucket, DeskChat, TurnBusy, busyForChat, clipTitle, mapChat } from "../chatBuckets";
 import { eventsToMessages, mergeMessages } from "../chatSync";
+import { fetchSWR, peekSWR, subscribeSWR } from "../services/swrCache";
+import { sessionEventsKey } from "../services/sessionCache";
 
 /**
  * Session history sync for the open chat: reconcile against server trace
@@ -60,13 +62,8 @@ export function useChatSync(args: {
       const first = restored.find((m) => m.role === "user")?.content;
       if (first) setSessionTitles((prev) => (prev[ck] ? prev : { ...prev, [ck]: clipTitle(first) }));
     };
-    const run = async () => {
-      const cached = evCache.current.get(ck);
-      if (cached && chat.messages.length === 0) {
-        apply(cached);
-      }
-      const events = await api.sessionEvents(inst, ws, persona, session);
-      if (!events) return;
+    const eventsKey = sessionEventsKey(inst.id, ws, persona, session);
+    const processEvents = (events: NonNullable<Awaited<ReturnType<typeof api.sessionEvents>>>) => {
       // A foreign turn is in flight when the newest trace event is anything
       // but an assistant message (user msg awaiting reply, tool_call, …) and
       // is recent. Stale tails don't pretend a dead turn still runs.
@@ -81,6 +78,22 @@ export function useChatSync(args: {
       const restored = eventsToMessages(events);
       evCache.current.set(ck, restored);
       apply(restored);
+    };
+    const offCache = subscribeSWR(eventsKey, () => {
+      const events = peekSWR<NonNullable<Awaited<ReturnType<typeof api.sessionEvents>>>>(eventsKey);
+      if (events) processEvents(events);
+    });
+    const run = async (force = false) => {
+      const cached = evCache.current.get(ck);
+      if (cached && chat.messages.length === 0) {
+        apply(cached);
+      }
+      const events = await fetchSWR(
+        sessionEventsKey(inst.id, ws, persona, session),
+        () => api.sessionEvents(inst, ws, persona, session),
+        { ttlMs: 15_000, persist: "session", force }
+      );
+      if (events) processEvents(events);
     };
     const onVisible = () => {
       if (document.visibilityState === "visible") void run();
@@ -143,7 +156,7 @@ export function useChatSync(args: {
         }
         dropRemoteBubble();
         setStreamStatus(`${ws}::${session}`, null);
-        if (ended || remoteActiveRef.current) void run();
+        if (ended || remoteActiveRef.current) void run(true);
       })();
     };
     void run();
@@ -171,7 +184,7 @@ export function useChatSync(args: {
                 if (!lastTs) lastTs = ts;
                 else if (ts !== lastTs) {
                   lastTs = ts;
-                  void run();
+                  void run(true);
                 }
               }
             })
@@ -182,6 +195,7 @@ export function useChatSync(args: {
     };
     tickPoll();
     return () => {
+      offCache();
       document.removeEventListener("visibilitychange", onVisible);
       window.clearTimeout(pollTimer);
       remoteActiveRef.current = false;

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Mic, Paperclip, Volume2, X } from "lucide-react";
 import type { KlankerInstance, ProviderRow } from "../types/klanker";
 import { api } from "../services/api";
+import { readTurnMode, writeTurnMode, type TurnMode } from "../services/turnMode";
 import { listWorkspaceFiles, speakText, transcribeVoice } from "../services/streamExtrasApi";
 import type { OutAttachment } from "./ChatConsole";
 import type { UsageStats } from "./ToolTimeline";
@@ -78,6 +79,7 @@ export function PowerComposer(props: {
   const slashes = useMemo(() => slashMatches(input), [input]);
   const mquery = useMemo(() => mentionQuery(input), [input]);
   const modes = useMemo(() => providers.find((p) => p.name === pickProvider)?.modes || [], [providers, pickProvider]);
+  const [turnMode, setTurnMode] = useState<TurnMode>(() => readTurnMode());
 
   useEffect(() => {
     if (!note) return;
@@ -298,6 +300,26 @@ export function PowerComposer(props: {
           </button>
         </div>
         <div className="flex min-h-7 items-center gap-1 border-t border-subtle px-2 text-[10px] text-ink-muted">
+          <div role="radiogroup" aria-label="Turn mode" data-testid="turn-mode-selector" className="inline-flex shrink-0 items-center rounded-full border border-subtle bg-surface p-0.5 font-mono leading-none">
+            {([
+              ["auto", "Auto", "Auto — fast-path smalltalk, full tools for tasks"],
+              ["fast", "Fast", "Fast — instant conversational reply, reasoning off"],
+              ["agent", "Agent", "Agent — full workspace tool context"],
+            ] as const).map(([mode, label, title]) => (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={turnMode === mode}
+                title={title}
+                data-turn-mode={mode}
+                onClick={() => { writeTurnMode(mode); setTurnMode(mode); }}
+                className={`rounded-full px-1.5 py-1 text-[9px] uppercase tracking-wide transition-colors ${turnMode === mode ? "bg-accent text-accent-ink" : "text-ink-dim hover:bg-hover hover:text-ink-primary"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <button type="button" onClick={recording ? stopRecording : () => void startRecording()} className="rounded p-1 hover:bg-hover hover:text-ink-primary" aria-label="Voice input" title="Voice input">
             <Mic className={`h-3.5 w-3.5 ${recording ? "animate-pulse text-ink-primary" : ""}`} />
           </button>

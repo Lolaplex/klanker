@@ -111,6 +111,10 @@ export interface ChatMessage {
   thinking?: string;
   /** Client-side turn failure annotation — never a model answer. */
   error?: boolean;
+  /** Relay-emitted execution tier for this assistant turn. */
+  tier?: string;
+  /** Requested/resolved turn mode accompanying the tier frame. */
+  turn_mode?: string;
 }
 
 export interface TurnResponse {

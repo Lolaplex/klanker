@@ -3,6 +3,8 @@ import { Bot, ChevronDown, Pencil, Play, Plus, RefreshCw, Trash2, X } from "luci
 import type { KlankerInstance, ProviderRow } from "../types/klanker";
 import { api } from "../services/api";
 import { dialogs } from "../services/dialogs";
+import { fetchSWR, invalidateSWR, mutateSWR, peekSWR, swrKey, useSWR } from "../services/swrCache";
+import { providerCatalogKey, providerRowsKey } from "../services/sessionCache";
 import {
   CURATED_PROVIDER_PRESETS,
   filterVisibleProviders,
@@ -44,8 +46,13 @@ export function ProvidersPanel({
   instance: KlankerInstance;
   onChanged?: () => void;
 }) {
-  const [rows, setRows] = useState<ProviderRow[]>([]);
-  const [stale, setStale] = useState(false);
+  const providersKey = providerRowsKey(instance.id);
+  const catalogKey = providerCatalogKey(instance.id);
+  const cachedProviders = peekSWR<{ rows: ProviderRow[]; stale: boolean }>(providersKey);
+  const providersSwr = useSWR(providersKey, () => api.listProviders(instance), { ttlMs: 60_000, persist: "session", revalidateOnFocus: true });
+  const agentsSwr = useSWR(catalogKey, () => api.listProviderAgents(instance), { ttlMs: 300_000, persist: "local" });
+  const [rows, setRows] = useState<ProviderRow[]>(cachedProviders?.rows ?? []);
+  const [stale, setStale] = useState(cachedProviders?.stale ?? false);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [probeBusy, setProbeBusy] = useState<string | null>(null);
@@ -71,15 +78,25 @@ export function ProvidersPanel({
     command: "",
   });
 
-  const load = useCallback(() => {
-    void api.listProviders(instance).then((r) => {
-      setRows(r.rows);
-      setStale(r.stale);
-    });
-    void api.listProviderAgents(instance).then(setAgentRows);
-  }, [instance]);
+  useEffect(() => {
+    if (!providersSwr.data) return;
+    setRows(providersSwr.data.rows);
+    setStale(providersSwr.data.stale);
+  }, [providersSwr.data]);
 
-  useEffect(() => load(), [load]);
+  useEffect(() => {
+    if (agentsSwr.hasData) setAgentRows(agentsSwr.data ?? null);
+  }, [agentsSwr.data, agentsSwr.hasData]);
+
+  const invalidateProviders = useCallback(() => {
+    invalidateSWR(providersKey);
+    invalidateSWR(catalogKey);
+  }, [catalogKey, providersKey]);
+
+  const load = useCallback(() => {
+    void providersSwr.refresh().catch(() => {});
+    void agentsSwr.refresh().catch(() => {});
+  }, [agentsSwr, providersSwr]);
 
   const setShowTestProviders = (value: boolean) => {
     setShowTestProvidersState(value);
@@ -99,7 +116,8 @@ export function ProvidersPanel({
   const probe = async (name: string) => {
     setProbeBusy(name);
     try {
-      rememberProbe(name, await api.probeProvider(instance, name));
+      rememberProbe(name, await fetchSWR(swrKey(instance.id, "_root", `providers:probe:${name}`), () => api.probeProvider(instance, name), { ttlMs: 15_000, persist: false, force: true }));
+      invalidateProviders();
       load();
     } finally {
       setProbeBusy(null);
@@ -109,7 +127,18 @@ export function ProvidersPanel({
   const drop = async (row: ProviderRow) => {
     if (!(await dialogs.confirm(`Delete provider ${row.name}?`, { danger: true }))) return;
     try {
-      await api.deleteProvider(instance, row.name);
+      await mutateSWR<{ rows: ProviderRow[]; stale: boolean }>(
+        providersKey,
+        (current) => {
+          const baseRows = current?.rows ?? rows;
+          return { rows: baseRows.filter((p) => p.name !== row.name), stale: current?.stale ?? false };
+        },
+        async () => {
+          await api.deleteProvider(instance, row.name);
+        },
+        () => setNote(`delete failed — restored ${row.name}`)
+      );
+      invalidateProviders();
       load();
       onChanged?.();
     } catch (e) {
@@ -150,6 +179,7 @@ export function ProvidersPanel({
       setCustomOpen(false);
       setEditing("");
       setForm({ name: "", url: "", key_env: "LLM_API_KEY", model: "", kind: "openai_compat", command: "" });
+      invalidateProviders();
       load();
       onChanged?.();
     } catch (e) {
@@ -200,6 +230,7 @@ export function ProvidersPanel({
       rememberProbe(preset.id, await api.probeProvider(instance, preset.id));
       setPreset(null);
       setPresetKey("");
+      invalidateProviders();
       load();
       onChanged?.();
     } catch (e) {
@@ -216,6 +247,7 @@ export function ProvidersPanel({
     try {
       await api.addProvider(instance, { name, kind: "acp-agent", command });
       rememberProbe(name, await api.probeProvider(instance, name));
+      invalidateProviders();
       load();
       onChanged?.();
     } catch (e) {

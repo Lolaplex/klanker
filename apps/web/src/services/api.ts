@@ -1114,6 +1114,32 @@ export const api = {
     );
   },
 
+  /** Rename a session when the relay supports custom titles. Current relay
+   *  versions derive titles from the first user message and have no rename
+   *  route; route-absence statuses therefore report `server: false` so the
+   *  caller can keep its local title overlay, while real backend failures
+   *  still reject and roll back. */
+  async renameSession(
+    inst: KlankerInstance,
+    workspace: string,
+    persona: string,
+    session: string,
+    title: string
+  ): Promise<{ server: boolean }> {
+    try {
+      await req(
+        inst,
+        `/v1/workspaces/${encodeURIComponent(workspace)}/personas/${encodeURIComponent(persona)}/sessions/${encodeURIComponent(session)}`,
+        { method: "PATCH", headers: headers(inst, true), body: JSON.stringify({ title }) }
+      );
+      return { server: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/^(404|405|501):/.test(msg)) return { server: false };
+      throw e;
+    }
+  },
+
   /** Provider manifests known to the host loop. Successful fetches are
    *  cached per instance so an offline host still shows its last rows
    *  (marked via `stale`). */
@@ -1396,8 +1422,9 @@ export const api = {
       mode?: string;
       new_session?: boolean;
       attachments?: { data: string; mime?: string; name?: string }[];
+      turn_mode?: "auto" | "fast" | "agent" | "deep";
     }
-  ): AsyncGenerator<{ type: string; text?: string; run?: string; session?: string; user_id?: string; returncode?: number }> {
+  ): AsyncGenerator<{ type: string; text?: string; run?: string; session?: string; user_id?: string; returncode?: number; tier?: string; mode?: string }> {
     const res = await authedFetch(inst, base(inst) + "/v1/chat/stream", {
       method: "POST",
       headers: { ...headers(inst, true), Accept: "text/event-stream" },
@@ -1444,7 +1471,7 @@ export const api = {
   async *attachRun(
     inst: KlankerInstance,
     q: { run?: string; session?: string; workspace?: string; persona?: string }
-  ): AsyncGenerator<{ type: string; text?: string; run?: string; session?: string; meta?: Record<string, string> }> {
+  ): AsyncGenerator<{ type: string; text?: string; run?: string; session?: string; meta?: Record<string, string>; tier?: string; mode?: string }> {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(q)) if (v) qs.set(k, v);
     const res = await authedFetch(inst, `${base(inst)}/v1/runs/stream?${qs}`, {
