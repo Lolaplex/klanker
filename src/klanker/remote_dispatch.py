@@ -527,6 +527,8 @@ def turn_lease_guard(handler, body: dict, ctx: dict) -> dict | None:
                 "holder": held_rec.get("holder"),
                 "run_id": held_rec.get("run_id"),
                 "status": 409}
+    policy = str(getattr(ws, "sync_policy", "local") or "local") \
+        .strip().lower()
     if _is_hub():
         from agents_relay.leases import hub_leases
 
@@ -541,10 +543,23 @@ def turn_lease_guard(handler, body: dict, ctx: dict) -> dict | None:
         rec = {"fence": out.get("fence"), "holder": holder,
                "hub_book": book, "ttl": ttl, "touched": time.time(),
                "run_id": run_id}
+    elif policy == "local":
+        # A local workspace is never a hub resource — pairing this host to
+        # a hub must not make every local chat depend on hub admission.
+        conflict = _local_lock(ws, session, holder, ttl)
+        if conflict is not None:
+            return conflict
+        rec = {"lock": str(_lockfile(Path(ws.dir), session)),
+               "holder": holder, "ttl": ttl,
+               "touched": time.time(), "run_id": run_id}
     else:
         out = _hub_lease_call("acquire", ws_id, session, run_id=run_id)
-        if not out:
-            # hub offline -> ws-local lockfile, never a double-run
+        status = int(out.get("status") or 0) if out else 0
+        if not out or status == 404:
+            # Hub offline — or the hub has not provisioned this workspace
+            # yet. Both are topology, not denial: degrade to the same
+            # ws-local single-runner lockfile. Genuine 401/403 credential
+            # refusals on a shared workspace still surface unchanged.
             conflict = _local_lock(ws, session, holder, ttl)
             if conflict is not None:
                 return conflict

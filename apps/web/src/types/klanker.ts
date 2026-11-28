@@ -20,6 +20,10 @@ export interface ProviderRow {
   when?: string;
   models?: string[];
   modes?: string[];
+  thought_level?: string;
+  thought_levels?: string[];
+  speed?: string;
+  speeds?: string[];
   /** "file" = manifest under <host>/providers (deletable); "env" = managed by the host. */
   source?: string;
   configurable?: boolean;
@@ -394,11 +398,13 @@ export interface WorkspaceHosts {
   owner: string;
   default_host: string;
   hub_offline: boolean;
+  self_device_id?: string;
   hosts: WorkspaceHost[];
 }
 
 export interface WorkspaceHost {
   device_id: string;
+  host_id?: string;
   label: string;
   role: string;
   self: boolean;

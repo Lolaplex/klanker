@@ -48,23 +48,23 @@ describe("PairModal layer-1 tabs", () => {
   const renderModal = () =>
     renderInDom(React.createElement(PairModal, { instance: inst, onClose: () => {} } as never));
 
-  it("renders exactly two tabs — Device/Desktop and Browser/PWA", async () => {
+  it("renders exactly two tabs — Phone/Browser and Desktop/Host", async () => {
     const r = await renderModal();
     try {
       const html = r.html();
-      assert.ok(html.includes("Device / Desktop"), "device tab missing");
-      assert.ok(html.includes("Browser / PWA"), "browser tab missing");
+      assert.ok(html.includes("Desktop / Host"), "desktop tab missing");
+      assert.ok(html.includes("Phone / Browser"), "browser tab missing");
       assert.ok(!html.includes("share ws"), "share ws tab must be gone — layer 2 lives in workspace settings");
     } finally {
       r.unmount();
     }
   });
 
-  it("titles itself Pair device, not pair · instance", async () => {
+  it("titles itself LINK A DEVICE, not pair · instance", async () => {
     const r = await renderModal();
     try {
       const html = r.html();
-      assert.ok(html.includes("Pair device"), "title missing");
+      assert.ok(html.includes("LINK A DEVICE"), "title missing");
       assert.ok(!html.includes("pair ·"), "legacy instance-scoped title still present");
     } finally {
       r.unmount();
@@ -86,7 +86,7 @@ describe("PairMintedBlock remote link surface", () => {
     assert.equal(loopback, true, "127.0.0.1 is loopback");
   });
 
-  it("renders copyable link row, loopback warning and cli hint for mode=remote", () => {
+  it("guards loopback links behind an explicit local-link reveal for mode=remote", () => {
     const { linkUrl, loopback } = pairLinkView(remotePair.pair_url);
     const html = renderToStaticMarkup(
       React.createElement(PairMintedBlock, {
@@ -98,10 +98,9 @@ describe("PairMintedBlock remote link surface", () => {
         mode: "remote",
       } as never)
     );
-    assert.ok(html.includes("copy link"), "copyable link row missing");
-    assert.ok(html.includes("kind=remote&amp;pair=tok") || html.includes("kind=remote&pair=tok"), "full link not rendered");
-    assert.ok(html.includes("not loopback"), "loopback warning missing");
-    assert.ok(html.includes("klanker workspace join"), "cli hint missing");
+    assert.ok(html.includes("Local-only link"), "loopback warning missing");
+    assert.ok(html.includes("Show local link anyway"), "explicit reveal missing");
+    assert.ok(!html.includes("pair-qr"), "loopback QR must not render by default");
   });
 
   it("hides the loopback warning for a reachable tailnet url", () => {
@@ -118,7 +117,7 @@ describe("PairMintedBlock remote link surface", () => {
         mode: "remote",
       } as never)
     );
-    assert.ok(!html.includes("not loopback"), "loopback warning must not render for reachable urls");
+    assert.ok(!html.includes("Local-only link"), "loopback warning must not render for reachable urls");
   });
 });
 
@@ -153,7 +152,7 @@ describe("NewKlankerModal redeem side", () => {
     assert.equal(deviceConnectLabel("", null), "");
   });
 
-  it("renders the device name input and Nearby Tailscale devices title", async () => {
+  it("renders automatic host identity and Nearby Tailscale devices title", async () => {
     const r = await renderInDom(
       React.createElement(NewKlankerModal, {
         isOpen: true,
@@ -164,7 +163,7 @@ describe("NewKlankerModal redeem side", () => {
     );
     try {
       const html = r.html();
-      assert.ok(html.includes("device name"), "device name input missing");
+      assert.ok(html.includes("Connecting as"), "automatic host identity missing");
       assert.ok(html.includes("Nearby Tailscale devices"), "tailscale discovery title missing");
     } finally {
       r.unmount();
@@ -173,7 +172,7 @@ describe("NewKlankerModal redeem side", () => {
 });
 
 describe("DevicesPanel action bar", () => {
-  it("always renders + Pair device and Connect to hub", () => {
+  it("always renders Link a device and Join a hub", () => {
     const html = renderToStaticMarkup(
       React.createElement(DevicesPanel, {
         instance: inst,
@@ -185,8 +184,8 @@ describe("DevicesPanel action bar", () => {
         onClose: () => {},
       } as never)
     );
-    assert.ok(html.includes("+ Pair device"), "pair button missing");
-    assert.ok(html.includes("Connect to hub"), "connect button missing");
+    assert.ok(html.includes("Link a device"), "pair button missing");
+    assert.ok(html.includes("Join a hub"), "connect button missing");
     assert.ok(!html.includes("hub on LAN"), "duplicate hub checkbox must be gone");
     assert.ok(!html.includes("PROVIDERS"), "read-only providers card must be gone");
   });

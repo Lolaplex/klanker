@@ -218,8 +218,8 @@ describe("U19 event wiring and ACP mode persistence", () => {
     const api = src("src/services/api.ts");
     assert.ok(app.includes("klanker.acp-mode."), "ACP mode storage key missing");
     assert.ok(app.includes("setAcpModes"), "ACP mode state missing");
-    assert.ok(app.includes("mode: selectedAcpMode || undefined"), "ACP mode is not passed in the turn payload");
-    assert.ok(composer.includes("value={acpMode || modes[0]"), "ACP mode select is not controlled");
+    assert.ok(app.includes("mode: acpMode"), "ACP mode is not passed in the turn payload");
+    assert.ok(composer.includes("value={acpPref.mode || acpMode || modes[0]"), "ACP mode select is not controlled");
     assert.ok(api.includes("mode?: string"), "streamChat wire type lacks mode");
   });
 });

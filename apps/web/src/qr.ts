@@ -207,16 +207,20 @@ function penaltyScore(mat: boolean[][]): number {
 
 function stampFormat(mat: boolean[][], size: number, maskId: number): void {
   const bits = FORMAT_BITS_L[maskId];
-  for (let i = 0; i < 15; i++) {
-    const bit = Boolean((bits >> i) & 1);
-    if (i < 6) mat[8][i] = bit;
-    else if (i < 8) mat[8][i + 1] = bit;
-    else mat[8][size - 15 + i] = bit;
-
-    if (i < 8) mat[size - 1 - i][8] = bit;
-    else if (i === 8) mat[7][8] = bit;
-    else mat[14 - i][8] = bit;
-  }
+  // ISO/IEC 18004 Figure 25: bit 14 is MSB, bit 0 is LSB.
+  const b = (pos: number) => Boolean((bits >> pos) & 1);
+  // Copy 1: wraps around top-left finder (bits 14..0)
+  // Horizontal row 8, cols 0..5 -> bits 14..9; col 7 -> bit 8; col 8 -> bit 7
+  for (let i = 0; i < 6; i++) mat[8][i] = b(14 - i);
+  mat[8][7] = b(8);
+  mat[8][8] = b(7);
+  // Vertical col 8, row 7 -> bit 6; rows 5..0 -> bits 5..0
+  mat[7][8] = b(6);
+  for (let i = 0; i < 6; i++) mat[5 - i][8] = b(5 - i);
+  // Copy 2: vertical bottom-left (bits 14..8, 7 modules — never touches dark module at size-8)
+  for (let i = 0; i < 7; i++) mat[size - 1 - i][8] = b(14 - i);
+  // Horizontal top-right (bits 7..0, 8 modules)
+  for (let i = 0; i < 8; i++) mat[8][size - 8 + i] = b(7 - i);
 }
 
 function stampVersion(mat: boolean[][], size: number, version: number): void {

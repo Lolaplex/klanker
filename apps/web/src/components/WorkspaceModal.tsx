@@ -311,6 +311,11 @@ export const WorkspaceModal: React.FC<Props> = ({
 
           {tab === "sharing" && showSharing && (
             <>
+              <section className="flex flex-col gap-3" aria-label="Your paired devices">
+                <div className="border-b border-subtle pb-1">
+                  <div className="text-[10px] uppercase tracking-wider text-ink-muted">Your paired devices</div>
+                  <p className="text-[10px] text-ink-dim">Sync this workspace with machines already linked to your herd.</p>
+                </div>
               <label className="flex flex-col gap-1">
                 <span className={labelClass}>sync policy</span>
                 <Select
@@ -475,8 +480,18 @@ export const WorkspaceModal: React.FC<Props> = ({
                       slug + git url + checkout mode sync to members. Checkout path stays local to this device only.
                     </p>
                   </div>
+                </>
+              )}
+              </section>
 
-                  <div className="flex flex-col gap-2">
+              {syncPolicy !== "local" && (
+              <section className="flex flex-col gap-2 border-t border-subtle pt-3" aria-label="Guest invite">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-ink-muted">Guest invite (this workspace only)</div>
+                      <p className="text-[10px] text-ink-dim">
+                        Restricted access — guests can only see and sync this workspace, never your other workspaces, devices, or secrets.
+                      </p>
+                    </div>
                     <button
                       type="button"
                       onClick={() => setInviteOpen((v) => !v)}
@@ -486,8 +501,7 @@ export const WorkspaceModal: React.FC<Props> = ({
                       {inviteOpen ? "hide guest invite" : "+ Invite guest to this workspace only (QR / code)"}
                     </button>
                     {inviteOpen && <WsInviteCard ws={workspace.id} ttlSec={60} />}
-                  </div>
-                </>
+              </section>
               )}
             </>
           )}

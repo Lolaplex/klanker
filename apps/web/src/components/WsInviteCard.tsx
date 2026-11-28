@@ -22,9 +22,9 @@ export function inviteBaseUrl(): string {
   }
 }
 
-/** Single-use ws-share invite: QR + dashed code + copyable link. The
- *  invite mints on the LOCAL relay's /v1/ws/invite — peers redeem it as
- *  "pair device" plus a ws member grant in one step. */
+/** Single-use ws-share invite: QR + dashed code + copyable link. On a
+ *  hub-connected spoke the local relay proxies the mint through the hub so
+ *  the redeemable URL is the hub's reachable origin, never loopback. */
 export const WsInviteCard: React.FC<WsInviteCardProps> = ({ ws, ttlSec = 60 }) => {
   const [invite, setInvite] = useState<WsInvite | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);

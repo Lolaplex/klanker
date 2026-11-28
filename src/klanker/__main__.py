@@ -916,6 +916,8 @@ def main(argv: list[str] | None = None) -> int:
             from agents_relay import workspaces as _wsmod
 
             _http.hub_links_fn = _mgmt.hub_links
+            _http.spoke_hosts_fn = _mgmt.spoke_hosts
+            _http.ws_invite_proxy_fn = _mgmt.ws_invite_proxy
             _http.hub_connect_fn = _mgmt.hub_connect
             _http.hub_disconnect_fn = _mgmt.hub_disconnect
             _http.session_host_switch_fn = _mgmt.session_host_switch

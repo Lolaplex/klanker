@@ -12,6 +12,7 @@ import { api, caps, localRelayBaseUrl } from "../services/api";
 import { dialogs } from "../services/dialogs";
 import { deviceBadge, deviceLeases, deviceWsPills, deviceRoleBadge, linkBadge } from "../wsShare";
 import { friendlyHostName } from "../hostPicker";
+import { isLoopbackOrigin } from "../pairLink";
 
 interface DevicesPanelProps {
   instance: KlankerInstance;
@@ -129,6 +130,9 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
   // port; web = the origin this page was served from — never a hardcoded
   // 127.0.0.1:8787 on a VPS deployment (klanker#159 U04).
   const serveUrl = caps.spawn ? localRelayBaseUrl() : window.location.origin;
+  const isLoopbackHost = isLoopbackOrigin(serveUrl);
+  const primaryBtn = "flex-1 inline-flex items-center justify-center gap-1.5 min-h-9 px-3 py-1.5 bg-accent hover:bg-accent-hover text-accent-ink font-semibold rounded-md transition-colors";
+  const secondaryBtn = "flex-1 inline-flex items-center justify-center gap-1.5 min-h-9 px-3 py-1.5 border border-strong rounded-md bg-elevated hover:bg-hover text-ink-primary transition-colors";
 
   return (
     <div className="fixed inset-0 z-[55] flex items-end md:items-stretch md:justify-end">
@@ -161,16 +165,18 @@ export const DevicesPanel: React.FC<DevicesPanelProps> = ({
           <button
             type="button"
             onClick={onPair}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-9 px-3 py-1.5 bg-accent hover:bg-accent-hover text-accent-ink font-semibold rounded-md transition-colors"
+            title="Generate a QR or code for a phone or another machine to connect here"
+            className={isLoopbackHost ? secondaryBtn : primaryBtn}
           >
-            + Pair device
+            Link a device
           </button>
           <button
             type="button"
             onClick={onConnect}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 min-h-9 px-3 py-1.5 border border-strong rounded-md bg-elevated hover:bg-hover text-ink-primary transition-colors"
+            title="Connect this machine to a hub such as your VPS"
+            className={isLoopbackHost ? primaryBtn : secondaryBtn}
           >
-            Connect to hub
+            Join a hub
           </button>
         </div>
 
