@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Group, RefreshCw, Star } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Bot, Check, ChevronDown, Group, RefreshCw, Star } from "lucide-react";
 import type { ModelPick, ProviderRow } from "../types/klanker";
-import { groupRows, isStarred, parseFreeId, pickerRows, picksEqual, type PickRow } from "../providerPicker";
+import { groupRows, isStarred, parseFreeId, pickerRows, picksEqual, splitProviderRows, type PickRow } from "../providerPicker";
 import { modelDisplayName, providerDisplayName } from "../providerDisplay";
 import { Popover } from "./ui/Popover";
 
 /**
- * The one provider/model picker — flat favorites + all host models.
- * Use-only surface: provider setup lives on the host's providers tab.
- * Free-id input accepts `provider:model` or a bare model id.
+ * The one model/agent picker. Klanker LLM models stay in MODELS; external
+ * ACP coding agents get their own section with expandable agent-owned models.
  */
 export function ProviderModelPicker({
   providers,
@@ -39,22 +38,44 @@ export function ProviderModelPicker({
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
   const [grouped, setGrouped] = useState(false);
+  const [expandedAgents, setExpandedAgents] = useState<Record<string, boolean>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
       setFilter("");
+      setExpandedAgents({});
       window.setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [open]);
 
-  const { favorites: favRows, rows } = pickerRows(providers, favorites, filter);
+  const { llmProviders, acpProviders } = splitProviderRows(providers);
+  const llmPicked = pickerRows(llmProviders, favorites, filter);
+  const acpPicked = pickerRows(acpProviders, favorites, filter);
+  const favoriteMap = new Map<string, PickRow>();
+  for (const row of [...llmPicked.favorites, ...acpPicked.favorites]) {
+    const key = `${row.provider} ${row.model}`;
+    if (!favoriteMap.has(key)) favoriteMap.set(key, row);
+  }
+  const favRows = [...favoriteMap.values()];
+  const rows = llmPicked.rows;
+  const searching = !!filter.trim();
+  const agentEntries = acpProviders
+    .map((provider) => ({ provider, rows: pickerRows([provider], [], filter).rows }))
+    .filter((entry) => entry.rows.length > 0);
+
   const active = !!(pick?.provider || pick?.model);
-  const shortLabel = pick?.model
-    ? modelDisplayName(pick.model, pick.provider).primary
-    : pick?.provider
-      ? providerDisplayName(pick.provider)
-      : "Auto";
+  const isAcpPick = !!pick?.provider?.toLowerCase().startsWith("acp.");
+  const acpAgentLabel = pick?.provider ? providerDisplayName(pick.provider) : "";
+  const shortLabel = isAcpPick
+    ? pick?.model
+      ? `${acpAgentLabel} · ${modelDisplayName(pick.model, pick.provider).primary}`
+      : acpAgentLabel
+    : pick?.model
+      ? modelDisplayName(pick.model, pick.provider).primary
+      : pick?.provider
+        ? providerDisplayName(pick.provider)
+        : "Auto";
   const fullLabel = pick?.provider
     ? `${pick.provider}${pick.model ? `:${pick.model}` : ""}`
     : pick?.model || "workspace default";
@@ -70,11 +91,14 @@ export function ProviderModelPicker({
   };
 
   const primaryFor = (row: PickRow): string => {
-    if (row.isDefault && !row.displayModel) return providerDisplayName(row.provider);
+    if (row.isDefault && !row.displayModel) {
+      const name = providerDisplayName(row.provider);
+      return row.provider.toLowerCase().startsWith("acp.") ? `${name} (default)` : name;
+    }
     return modelDisplayName(row.displayModel || row.model, row.provider).primary;
   };
 
-  const renderRow = (row: PickRow, showProvider: boolean) => {
+  const renderRow = (row: PickRow, showProvider: boolean, trailingAction?: ReactNode) => {
     const selected = picksEqual(pick, row);
     const starred = isStarred(row, favorites);
     const rawId = `${row.provider}:${row.displayModel || row.model}`;
@@ -92,6 +116,7 @@ export function ProviderModelPicker({
           } ${disabled ? "cursor-not-allowed opacity-60 hover:bg-transparent hover:text-ink-secondary" : ""}`}
         >
           <span className="w-3.5 shrink-0 text-center">{selected && <Check className="h-3.5 w-3.5" />}</span>
+          {row.provider.toLowerCase().startsWith("acp.") ? <Bot className="h-3.5 w-3.5 shrink-0 text-ink-muted" /> : null}
           <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-primary">{primaryFor(row)}</span>
           {showProvider ? (
             <span className="shrink-0 rounded border border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-ink-muted">
@@ -111,15 +136,76 @@ export function ProviderModelPicker({
         >
           <Star className="h-3.5 w-3.5" fill={starred ? "currentColor" : "none"} />
         </button>
+        {trailingAction}
       </div>
     );
   };
+
+  const renderAgent = (provider: ProviderRow, agentRows: PickRow[]) => {
+    const label = providerDisplayName(provider);
+    const probedModels = (provider.models ?? []).filter((m) => m && m.trim());
+    const hasModels = probedModels.length > 0;
+    const activeAgent = pick?.provider === provider.name;
+    const expanded = searching || (expandedAgents[provider.name] ?? activeAgent);
+    const count = probedModels.length;
+
+    if (!hasModels) {
+      const defaultRow = agentRows[0];
+      if (!defaultRow) return null;
+      return (
+        <div key={provider.name} className="py-0.5" data-acp-agent={provider.name}>
+          {renderRow(
+            defaultRow,
+            false,
+            onRefresh ? (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={disabled}
+                className="mr-1 inline-flex h-7 shrink-0 items-center rounded-md border border-subtle px-1.5 text-[9px] text-ink-muted hover:border-strong hover:text-ink-primary disabled:opacity-40"
+              >
+                Load models
+              </button>
+            ) : undefined,
+          )}
+          {provider.error ? <div className="px-3 pb-1 text-[10px] text-danger">{provider.error}</div> : null}
+        </div>
+      );
+    }
+
+    return (
+      <div key={provider.name} className="py-0.5" data-acp-agent={provider.name}>
+        <div className="flex items-center gap-1 px-1">
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpandedAgents((cur) => ({ ...cur, [provider.name]: !(expandedAgents[provider.name] ?? activeAgent) }))}
+            className="flex min-h-9 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-ink-secondary hover:bg-hover hover:text-ink-primary"
+          >
+            <Bot className="h-3.5 w-3.5 shrink-0 text-ink-muted" />
+            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-ink-primary">{label}</span>
+            <span className="shrink-0 rounded border border-subtle bg-surface px-1.5 py-0.5 text-[9px] uppercase text-ink-muted">ACP</span>
+            <span className="shrink-0 rounded border border-subtle px-1.5 py-0.5 text-[9px] text-ink-muted">{count} {count === 1 ? "model" : "models"}</span>
+            <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-ink-dim transition-transform ${expanded ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+        {provider.error ? <div className="px-3 pb-1 text-[10px] text-danger">{provider.error}</div> : null}
+        {expanded ? (
+          <div className="max-h-80 overflow-y-auto overscroll-y-contain" data-testid={`acp-models-${provider.name}`}>
+            {agentRows.map((row) => renderRow(row, false))}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  const noRows = rows.length === 0 && favRows.length === 0 && agentEntries.length === 0;
 
   return (
     <Popover
       open={open}
       onOpenChange={setOpen}
-      widthClass="w-[380px] max-w-[92vw]"
+      widthClass="w-[400px] max-w-[92vw]"
       side={placement === "composer" ? "top" : "bottom"}
       align="end"
       trigger={
@@ -128,7 +214,7 @@ export function ProviderModelPicker({
           aria-disabled={disabled || undefined}
           aria-label="Choose provider and model"
           title={disabled ? `Host offline — ${fullLabel} (read-only)` : fullLabel}
-          className={`inline-flex h-8 max-w-[200px] items-center gap-1 rounded-full border px-2.5 text-[11px] outline-none transition-colors ${
+          className={`inline-flex h-8 max-w-[220px] items-center gap-1 rounded-full border px-2.5 text-[11px] outline-none transition-colors ${
             disabled
               ? "border-subtle text-ink-dim cursor-pointer"
               : active
@@ -137,6 +223,7 @@ export function ProviderModelPicker({
           }`}
         >
           {stale ? <RefreshCw className="h-3 w-3 shrink-0 text-ink-dim" /> : null}
+          {isAcpPick ? <Bot className="h-3 w-3 shrink-0 text-ink-secondary" /> : null}
           <span className="min-w-0 truncate font-mono">{shortLabel}</span>
           <ChevronDown className="h-3 w-3 shrink-0 text-ink-dim" />
         </button>
@@ -147,8 +234,8 @@ export function ProviderModelPicker({
           ref={inputRef}
           value={filter}
           spellCheck={false}
-          placeholder="Search models or type provider:model…"
-          aria-label="Search models"
+          placeholder="Search models or agents…"
+          aria-label="Search models or agents"
           onChange={(e) => setFilter(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -186,7 +273,7 @@ export function ProviderModelPicker({
         </button>
       </div>
 
-      <div className="max-h-72 overflow-y-auto py-1">
+      <div className="max-h-80 overflow-y-auto overscroll-y-contain py-1">
         <div className="px-1">
           <button
             type="button"
@@ -218,28 +305,36 @@ export function ProviderModelPicker({
           </>
         )}
 
-        {grouped ? (
-          groupRows(rows).map((g) => (
-            <div key={g.provider}>
-              <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[10px] uppercase tracking-wider text-ink-muted">
-                <span className="truncate">{providerDisplayName(g.provider)}</span>
-                {g.error && <span className="truncate normal-case text-ink-secondary">⚠ {g.error}</span>}
-              </div>
-              {g.rows.map((r) => renderRow(r, false))}
-            </div>
-          ))
-        ) : (
-          <>
-            {rows.length > 0 && (
-              <div className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wider text-ink-muted">
-                models
-              </div>
-            )}
-            {rows.map((r) => renderRow(r, true))}
-          </>
-        )}
+        {rows.length > 0 ? (
+          grouped ? (
+            <>
+              <div className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wider text-ink-muted">MODELS</div>
+              {groupRows(rows).map((g) => (
+                <div key={g.provider}>
+                  <div className="flex items-center gap-2 px-3 pb-1 pt-2 text-[10px] uppercase tracking-wider text-ink-muted">
+                    <span className="truncate">{providerDisplayName(g.provider)}</span>
+                    {g.error && <span className="truncate normal-case text-ink-secondary">⚠ {g.error}</span>}
+                  </div>
+                  {g.rows.map((r) => renderRow(r, false))}
+                </div>
+              ))}
+            </>
+          ) : (
+            <>
+              <div className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wider text-ink-muted">MODELS</div>
+              {rows.map((r) => renderRow(r, true))}
+            </>
+          )
+        ) : null}
 
-        {rows.length === 0 && favRows.length === 0 && (
+        {agentEntries.length > 0 ? (
+          <>
+            <div className="px-3 pb-1 pt-2 text-[10px] uppercase tracking-wider text-ink-muted">CODING AGENTS · ACP</div>
+            {agentEntries.map(({ provider, rows: agentRows }) => renderAgent(provider, agentRows))}
+          </>
+        ) : null}
+
+        {noRows && (
           <div className="px-3 py-3 text-ink-dim">
             {filter ? (disabled ? "no match — host offline, free ids are read-only" : "no match — enter keeps it as a free id") : disabled ? "host offline — no cached models" : "no providers"}
           </div>
@@ -255,7 +350,7 @@ export function ProviderModelPicker({
           }}
           className="flex min-h-8 w-full items-center rounded-md px-2 text-left text-[11px] text-ink-secondary hover:bg-hover hover:text-ink-primary"
         >
-          + Manage providers
+          + Manage providers & agents
         </button>
       </div>
     </Popover>

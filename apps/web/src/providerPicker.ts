@@ -19,6 +19,21 @@ export interface PickRow {
 const samePick = (a: ModelPick, b: ModelPick): boolean =>
   a.provider === b.provider && a.model === b.model;
 
+export function isAcpProvider(provider: Pick<ProviderRow, "name" | "kind">): boolean {
+  return (provider.kind || "").toLowerCase() === "acp-agent" || provider.name.toLowerCase().startsWith("acp.");
+}
+
+/** Split Klanker's own LLM harness providers from external ACP coding agents. */
+export function splitProviderRows(providers: ProviderRow[]): { llmProviders: ProviderRow[]; acpProviders: ProviderRow[] } {
+  const llmProviders: ProviderRow[] = [];
+  const acpProviders: ProviderRow[] = [];
+  for (const provider of providers) {
+    if (isAcpProvider(provider)) acpProviders.push(provider);
+    else llmProviders.push(provider);
+  }
+  return { llmProviders, acpProviders };
+}
+
 /** Expand provider rows into one pick row per model.
  *  A provider without a `models` list still yields one row — its manifest
  *  default model (`model: ""` selects it on the wire). */

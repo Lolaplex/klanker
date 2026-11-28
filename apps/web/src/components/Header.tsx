@@ -1,8 +1,6 @@
 import React from "react";
-import { Menu, Minus, Moon, PanelLeftOpen, PanelRight, Search, Settings, Square, Sun, X } from "lucide-react";
+import { Menu, Minus, PanelRight, Search, Settings, Square, X } from "lucide-react";
 import { KlankerInstance, ProcessStatus } from "../types/klanker";
-import { useThemeMode } from "../theme";
-import { KlankerMark } from "./KlankerMark";
 
 interface HeaderProps {
   activeInstance: KlankerInstance | null;
@@ -72,8 +70,6 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenPalette,
   onToggleWorkbench,
   workbenchOpen = false,
-  sidebarCollapsed = false,
-  onToggleSidebar,
   workspaceUnread = 0,
   pendingApprovals = 0,
   controls,
@@ -83,25 +79,12 @@ export const Header: React.FC<HeaderProps> = ({
     if (win) void fn(win).catch(() => undefined);
   };
   const pill = statusMeta(status);
-  const { resolvedMode, setPreference } = useThemeMode();
-  const nextMode = resolvedMode === "dark" ? "light" : "dark";
   const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform || "");
 
   return (
     <header data-tauri-drag-region className="h-11 shrink-0 select-none border-b border-subtle bg-main z-30 touch-none">
       <div className="grid h-11 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 px-2" data-tauri-drag-region>
         <div className="flex min-w-0 items-center gap-1">
-          {sidebarCollapsed && onToggleSidebar && (
-            <button
-              type="button"
-              onClick={onToggleSidebar}
-              className="hidden md:inline-flex h-8 w-8 items-center justify-center rounded-md border border-subtle bg-transparent text-ink-secondary transition-colors hover:bg-hover hover:border-strong hover:text-ink-primary"
-              aria-label="Expand sidebar"
-              title="Expand sidebar (Ctrl/⌘ B)"
-            >
-              <PanelLeftOpen className="h-3.5 w-3.5" />
-            </button>
-          )}
           <button
             onClick={onOpenNav}
             className="md:hidden inline-flex h-9 w-9 items-center justify-center text-ink-secondary hover:text-ink-primary"
@@ -109,10 +92,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Menu className="w-4 h-4" />
           </button>
-          <div className={`${sidebarCollapsed ? "flex" : "flex md:hidden"} items-center gap-2 pl-1 text-xs font-semibold text-ink-primary`}>
-            <KlankerMark size={16} className="shrink-0" />
-            <span className="tracking-wider">klanker</span>
-          </div>
         </div>
 
         <nav aria-label="Current context" className="flex min-w-0 items-center justify-center gap-1 font-mono text-[11px]" data-tauri-drag-region>
@@ -170,15 +149,6 @@ export const Header: React.FC<HeaderProps> = ({
             className={`${ghostBtn} ${workbenchOpen ? "border-subtle bg-elevated text-ink-primary" : ""}`}
           >
             <PanelRight className="h-3.5 w-3.5" />
-          </button>
-          <button
-            type="button"
-            onClick={() => setPreference(nextMode)}
-            aria-label="Toggle dark / white theme"
-            title={nextMode === "light" ? "Switch to White mode" : "Switch to Dark mode"}
-            className={`${ghostBtn} klanker-press hidden sm:inline-flex`}
-          >
-            {resolvedMode === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
           </button>
           <button type="button" onClick={onOpenSettings} aria-label="Settings" title="Settings" className={ghostBtn}>
             <Settings className="h-3.5 w-3.5" />

@@ -87,7 +87,7 @@ describe("U18 power composer contracts", () => {
     assert.ok(pc.includes('aria-label="Steer turn"'));
     assert.ok(pc.includes('aria-label="Send message"'));
     assert.ok(pc.includes('aria-label="Stop current turn"'));
-    assert.ok(pc.includes("aria-label=\"ACP mode\""));
+    assert.ok(pc.includes('ariaLabel="ACP mode"'));
     const picker = readFileSync("src/components/ProviderModelPicker.tsx", "utf-8");
     assert.ok(picker.includes("onRefresh") && picker.includes("RefreshCw"), "provider refresh lives inside the picker");
     assert.ok(!pc.includes("refreshProviders"), "duplicate composer refresh button returned");

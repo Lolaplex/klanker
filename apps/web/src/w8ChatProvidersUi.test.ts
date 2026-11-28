@@ -103,8 +103,8 @@ describe("W8 provider filtering", () => {
     assert.deepEqual(filterVisibleProviders(rows, false).map((r) => r.name), ["openrouter", "acp.devin"]);
   });
 
-  it("show-test is an explicit operator override and persists", () => {
-    assert.equal(filterVisibleProviders(rows, true).length, rows.length);
+  it("the legacy show-test preference persists but never exposes fixtures", () => {
+    assert.deepEqual(filterVisibleProviders(rows, true).map((r) => r.name), ["openrouter", "acp.devin"]);
     writeShowTestProviders(true);
     assert.equal(readShowTestProviders(), true);
     writeShowTestProviders(false);
@@ -114,9 +114,9 @@ describe("W8 provider filtering", () => {
   it("uses one canonical filter in picker and providers panel", () => {
     const app = readFileSync("src/App.tsx", "utf8");
     const panel = readFileSync("src/components/ProvidersPanel.tsx", "utf8");
-    assert.ok(app.includes("filterVisibleProviders(r.rows, readShowTestProviders())"));
-    assert.ok(panel.includes("filterVisibleProviders(rows, showTestProviders)"));
-    assert.ok(panel.includes('writeShowTestProviders(value)'));
+    assert.ok(app.includes("filterVisibleProviders(r.rows)"));
+    assert.ok(panel.includes("filterVisibleProviders(rows, false)"));
+    assert.ok(!panel.includes('writeShowTestProviders(value)'), "fixture toggle write path remains");
   });
 });
 
@@ -166,6 +166,6 @@ describe("W8 curated provider and ACP catalog", () => {
     assert.ok(src.includes('kind: "acp-agent", command'));
     assert.ok(src.includes("await api.probeProvider(instance, name)"));
     assert.ok(src.includes("api.listProviderAgents(instance)"));
-    assert.ok(src.includes("Custom provider or ACP agent…"));
+    assert.ok(src.includes("+ Custom ACP agent…"));
   });
 });

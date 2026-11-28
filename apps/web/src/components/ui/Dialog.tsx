@@ -13,6 +13,7 @@ export function Dialog({
   title,
   children,
   wide = false,
+  fixedHeight = false,
 }: {
   open: boolean;
   onClose: () => void;
@@ -20,6 +21,8 @@ export function Dialog({
   children: React.ReactNode;
   /** max-w-md default; wide bumps to max-w-2xl. */
   wide?: boolean;
+  /** Stable tab-modal height — the tab bar never jumps between panes. */
+  fixedHeight?: boolean;
 }) {
   return (
     <BaseDialog.Root open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
@@ -27,7 +30,7 @@ export function Dialog({
         <BaseDialog.Backdrop className="fixed inset-0 z-[60] bg-black/70 klanker-backdrop-enter" />
         <BaseDialog.Viewport className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <BaseDialog.Popup
-            className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-surface border border-strong rounded-lg font-mono text-xs flex flex-col max-h-[90vh] outline-none klanker-modal-enter`}
+            className={`w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-surface border border-strong rounded-lg font-mono text-xs flex flex-col ${fixedHeight ? "h-[min(82vh,640px)] max-h-[90vh]" : "max-h-[90vh]"} outline-none klanker-modal-enter`}
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-subtle shrink-0">
               <BaseDialog.Title className="text-ink-primary tracking-wider uppercase truncate">

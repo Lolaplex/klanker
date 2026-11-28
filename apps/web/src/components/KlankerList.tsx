@@ -12,12 +12,9 @@ import {
   GitBranch,
   Globe,
   Lock,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pencil,
   Plus,
   Search,
-  Settings,
   Settings2,
   Share2,
   WifiOff,
@@ -118,7 +115,7 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
     width, collapsed, onResize, onToggleCollapse, onExpandWs, onExpandPersona, onSelectChat,
     onNewChat, onDeleteChat, onRenameChat, onPrefetchSession, onForkChat, onExportChat, onCopySessionId,
     onNewWorkspace, onDeleteWorkspace, onWorkspaceSettings, onWorkspaceShare, onNewPersona,
-    onDeletePersona, onEditPersona, onSelectWorkspace, onOpenPalette, onOpenSettings, focusSession,
+    onDeletePersona, onEditPersona, onSelectWorkspace, onOpenPalette, focusSession,
   } = props;
   const [openWs, setOpenWs] = useState<ReadonlySet<string>>(() => new Set(selWs ? [selWs] : []));
   const [openPersona, setOpenPersona] = useState<ReadonlySet<string>>(() => new Set(selWs && selPersona ? [`${selWs} ${selPersona}`] : []));
@@ -323,10 +320,9 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
       />
 
       <div className="sidebar-expanded-choreo flex h-full min-h-0 flex-col">
-        <div className="h-11 shrink-0 flex items-center justify-between px-3 border-b border-subtle font-mono text-xs font-semibold tracking-wider text-ink-primary">
-          <span className="flex items-center min-w-0"><KlankerMark size={18} className="mr-2 shrink-0" /><span className="sidebar-label-choreo">KLANKER</span></span>
-          <button type="button" onClick={onToggleCollapse} title="Collapse sidebar (Ctrl/⌘ B)" aria-label="Collapse sidebar" className="hidden md:inline-flex h-7 w-7 items-center justify-center rounded-md text-ink-dim hover:bg-hover hover:text-ink-primary">
-            <PanelLeftClose className="h-3.5 w-3.5" />
+        <div className="h-11 shrink-0 flex items-center px-3 border-b border-subtle font-mono text-xs font-semibold tracking-wider text-ink-primary">
+          <button type="button" onClick={onToggleCollapse} title="Collapse sidebar (Ctrl/⌘ B)" aria-label="Collapse sidebar" className="flex min-w-0 items-center rounded-md px-1.5 py-1 -ml-1.5 transition-colors hover:bg-hover hover:opacity-80">
+            <KlankerMark size={18} className="mr-2 shrink-0" /><span className="sidebar-label-choreo">KLANKER</span>
           </button>
         </div>
 
@@ -455,17 +451,19 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
       </div>
 
       <div className="sidebar-icon-rail absolute inset-0 z-10 hidden md:flex flex-col items-center bg-main py-2" data-testid="sidebar-icon-rail" aria-label="Collapsed workspace navigation">
-        <button type="button" onClick={onToggleCollapse} title="Expand sidebar (⌘B)" aria-label="Expand sidebar" className={`${railButton} mb-1`}>
-          <KlankerMark size={20} />
-        </button>
-        <button type="button" onClick={() => onOpenPalette?.()} title="Search (⌘K)" aria-label="Search" className={railButton}>
-          <Search className="h-4 w-4" />
-        </button>
-        <button type="button" onClick={() => firstWs && firstPersona && onNewChat(firstWs, firstPersona)} title="New chat (+)" aria-label="New chat" className={railButton}>
-          <Plus className="h-4 w-4" />
-        </button>
-        <div className="my-2 h-px w-6 bg-subtle" />
-        <div className="flex min-h-0 flex-1 flex-col items-center gap-1 overflow-y-auto no-scrollbar">
+        <div className="flex flex-col items-center gap-2">
+          <button type="button" onClick={onToggleCollapse} title="Expand sidebar (Ctrl/⌘ B)" aria-label="Expand sidebar" className={railButton}>
+            <KlankerMark size={20} />
+          </button>
+          <button type="button" onClick={() => onOpenPalette?.()} title="Search (⌘K)" aria-label="Search" className={railButton}>
+            <Search className="h-4 w-4" />
+          </button>
+          <button type="button" onClick={() => firstWs && firstPersona && onNewChat(firstWs, firstPersona)} title="New chat (+)" aria-label="New chat" className={railButton}>
+            <Plus className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="my-2.5 h-px w-6 bg-subtle" />
+        <div className="flex min-h-0 flex-1 flex-col items-center gap-2.5 overflow-y-auto no-scrollbar">
           {workspaces.map((w) => {
             const label = w.label || w.id;
             const active = selWs === w.id;
@@ -483,14 +481,6 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
               </button>
             );
           })}
-        </div>
-        <div className="flex flex-col items-center gap-1 border-t border-subtle pt-2">
-          <button type="button" onClick={onToggleCollapse} title="Expand sidebar (⌘B)" aria-label="Expand sidebar" className={railButton}>
-            <PanelLeftOpen className="h-4 w-4" />
-          </button>
-          <button type="button" onClick={() => onOpenSettings?.()} title="Settings" aria-label="Settings" className={railButton}>
-            <Settings className="h-4 w-4" />
-          </button>
         </div>
       </div>
     </aside>

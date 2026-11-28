@@ -108,19 +108,39 @@ export function mergeHiddenProviders(serverHidden?: string[]): string[] {
   return merged;
 }
 
-/** Central visibility rule for picker and settings: hidden built-ins stay
- * operator-controlled, and test fixtures/broken legacy ACP stubs are dev
- * scaffolding unless explicitly requested. */
-export function filterVisibleProviders(rows: ProviderRow[], showTest: boolean): ProviderRow[] {
+export function isAcpProviderRow(row: Pick<ProviderRow, "name" | "kind">): boolean {
+  return (row.kind || "").toLowerCase() === "acp-agent" || row.name.toLowerCase().startsWith("acp.");
+}
+
+function isTestProviderRow(row: ProviderRow): boolean {
+  const kind = (row.kind || "").toLowerCase();
+  const name = row.name.toLowerCase();
+  return (
+    kind === "echo" ||
+    kind === "scripted" ||
+    kind === "scripted.tool" ||
+    kind === "acp" ||
+    name === "echo" ||
+    name === "scripted.tool" ||
+    name.startsWith("scripted.")
+  );
+}
+
+function isEchoProviderRow(row: ProviderRow): boolean {
+  return (row.kind || "").toLowerCase() === "echo" || row.name.toLowerCase() === "echo";
+}
+
+/** Central visibility rule for picker and settings. Test fixtures are dev
+ * scaffolding, never end-user choices: a stale showTestProviders flag must not
+ * leak echo/scripted rows into the picker. `showTest` remains only as a legacy
+ * signature for older callers and is intentionally ignored. */
+export function filterVisibleProviders(rows: ProviderRow[], _showTest = false): ProviderRow[] {
+  void _showTest;
   const hidden = new Set(readHiddenProviders());
-  return rows.filter((row) => {
-    if (hidden.has(row.name)) return false;
-    if (showTest) return true;
-    const kind = (row.kind || "").toLowerCase();
-    if (kind === "echo" || kind === "scripted" || kind === "scripted.tool") return false;
-    if (kind === "acp") return false;
-    return true;
-  });
+  const visible = rows.filter((row) => !hidden.has(row.name));
+  const realRows = visible.filter((row) => !isTestProviderRow(row));
+  if (realRows.length > 0) return realRows;
+  return visible.filter(isEchoProviderRow);
 }
 
 export function readShowTestProviders(): boolean {
@@ -182,7 +202,71 @@ export function mergeAcpAgentCatalog(rows: unknown, endpointAvailable: boolean):
   });
 }
 
+export type CodingAgentEntry = AcpAgentInfo & {
+  providerName: string;
+  configured: boolean;
+  row?: ProviderRow;
+  custom?: boolean;
+};
+
+/** One unified coding-agent list: curated detection rows plus every configured
+ * acp.* manifest, including custom agents. This is the anti-duplication oracle
+ * for the settings surface — configured ACP rows must never also render in the
+ * model-provider list. */
+export function mergeCodingAgentCatalog(
+  rows: unknown,
+  endpointAvailable: boolean,
+  providers: ProviderRow[],
+): CodingAgentEntry[] {
+  const detected = new Map(normalizeAcpAgentRows(rows).map((row) => [(row.id || "").toLowerCase(), row]));
+  const acpRows = providers.filter(isAcpProviderRow);
+  const byProvider = new Map(acpRows.map((row) => [row.name.toLowerCase(), row]));
+  const byAgentId = new Map(acpRows.map((row) => [(row.name.replace(/^acp\./i, "") || row.name).toLowerCase(), row]));
+  const out: CodingAgentEntry[] = [];
+  const seen = new Set<string>();
+
+  for (const agent of mergeAcpAgentCatalog(rows, endpointAvailable)) {
+    const canonicalName = `acp.${agent.id}`;
+    const row = byProvider.get(canonicalName.toLowerCase()) || byAgentId.get(agent.id.toLowerCase());
+    const providerName = row?.name || canonicalName;
+    seen.add(canonicalName.toLowerCase());
+    if (row) seen.add(row.name.toLowerCase());
+    out.push({
+      ...agent,
+      label: row?.label?.trim() || agent.label,
+      command: row?.command?.trim() || agent.command,
+      error: row?.error || agent.error,
+      providerName,
+      configured: !!row,
+      row,
+    });
+  }
+
+  for (const row of acpRows) {
+    const key = row.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const id = row.name.replace(/^acp\./i, "") || row.name;
+    const live = detected.get(id.toLowerCase()) || {};
+    out.push({
+      id,
+      label: row.label?.trim() || live.label || id,
+      command: row.command?.trim() || live.command || "",
+      hint: "custom ACP agent",
+      installed: endpointAvailable ? !!live.installed : false,
+      path: live.path,
+      error: row.error || live.error,
+      detectionUnavailable: !endpointAvailable,
+      providerName: row.name,
+      configured: true,
+      row,
+      custom: true,
+    });
+  }
+  return out;
+}
+
 export function isAcpConfigured(rows: ProviderRow[], agentId: string): boolean {
   const name = `acp.${agentId}`;
-  return rows.some((row) => row.name === name && row.kind === "acp-agent");
+  return rows.some((row) => row.name === name && isAcpProviderRow(row));
 }

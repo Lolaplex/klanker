@@ -190,9 +190,10 @@ describe("W9A sidebar rail, row menus, rename and focus", () => {
       assert.ok(aside.className.includes("transition") || aside.style.transition.includes("0.34s"), "340ms width transition missing");
       const rail = document.querySelector('[data-testid="sidebar-icon-rail"]') as HTMLElement;
       assert.ok(rail, "icon rail missing");
-      for (const title of ["Expand sidebar (⌘B)", "Search (⌘K)", "New chat (+)", "Settings"]) {
+      for (const title of ["Expand sidebar (Ctrl/⌘ B)", "Search (⌘K)", "New chat (+)"]) {
         assert.ok(rail.querySelector(`[title="${title}"]`), `${title} rail action missing`);
       }
+      assert.equal(rail.querySelector('[title="Settings"]'), null, "bottom rail Settings duplicate remains");
       assert.ok(rail.querySelector('[aria-label="Workspace Alpha"]'), "workspace monogram missing");
     } finally {
       r.unmount();
@@ -288,8 +289,7 @@ describe("W9A sidebar rail, row menus, rename and focus", () => {
 });
 
 describe("W9A header declutter", () => {
-  it("uses a one-click Dark ↔ White icon toggle in Header and preserves the Settings three-way switcher", async () => {
-    setThemePreference("dark");
+  it("keeps theme control in Settings while the Header shell stays decluttered", async () => {
     const r = await renderInDom(React.createElement(Header, {
       activeInstance: inst,
       selWs: "alpha",
@@ -300,21 +300,16 @@ describe("W9A header declutter", () => {
       onToggleWorkbench: () => {},
     }));
     try {
-      const button = document.querySelector('button[aria-label="Toggle dark / white theme"]') as HTMLButtonElement;
-      assert.ok(button, "one-click header theme toggle missing");
-      assert.equal(button.title, "Switch to White mode");
-      assert.ok(!document.querySelector('[aria-label="Theme mode"]'), "three-way pill still rendered in Header");
-      await act(async () => button.click());
-      assert.equal(readThemePreference(), "light");
-      assert.equal(document.documentElement.dataset.theme, "light");
-      assert.equal(button.title, "Switch to Dark mode");
+      assert.equal(document.querySelector('button[aria-label="Toggle dark / white theme"]'), null, "header theme toggle duplicate remains");
+      assert.equal(document.querySelector('[aria-label="Theme mode"]'), null, "three-way pill rendered in Header");
+      assert.equal(document.querySelector('button[aria-label="Expand sidebar"]'), null, "header expand-sidebar duplicate remains");
     } finally {
       r.unmount();
-      setThemePreference("dark");
     }
     const headerSrc = src("src/components/Header.tsx");
     const settingsSrc = src("src/components/SettingsPanel.tsx");
     assert.ok(!headerSrc.includes("ThemeSwitcher compact"), "Header still owns the compact three-way pill");
+    assert.ok(!headerSrc.includes("useThemeMode"), "Header still owns theme state");
     assert.ok(settingsSrc.includes("<ThemeSwitcher />"), "Settings three-way ThemeSwitcher missing");
     assert.ok(src("src/App.tsx").includes('label: "Toggle dark / white theme"'), "palette theme command missing");
   });

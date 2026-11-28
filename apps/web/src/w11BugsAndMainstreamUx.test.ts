@@ -234,26 +234,19 @@ describe("W11 ProvidersPanel bug fixes", () => {
     }
   });
 
-  it("keeps the test-fixtures toggle mounted after turning it on so it can turn off again", async () => {
+  it("omits the test-fixtures toggle and never leaks echo behind a real provider", async () => {
     const rows: ProviderRow[] = [
       { name: "openrouter", kind: "openai_compat", source: "file" },
       { name: "echo", kind: "echo", source: "env" },
     ];
+    window.localStorage.setItem("klanker.showTestProviders", "1");
     const fx = stubProviderFetch(rows);
     const r = await renderInDom(React.createElement(ProvidersPanel, { instance: inst }));
     try {
       await flush(60);
-      const toggle = () => document.querySelector('[role="switch"][aria-label="show test providers"]');
-      assert.ok(toggle(), "initial test fixture toggle missing");
-      assert.equal(document.body.textContent?.includes("echo"), false);
-      click(toggle());
-      await flush(10);
-      assert.ok(toggle(), "toggle vanished after turning on");
-      assert.ok(document.body.textContent?.includes("echo"), "test fixture row did not appear");
-      click(toggle());
-      await flush(10);
-      assert.ok(toggle(), "toggle missing after turning off");
-      assert.equal(document.body.textContent?.includes("echo"), false);
+      assert.equal(document.querySelector('[role="switch"][aria-label="show test providers"]'), null, "test fixture toggle remains");
+      assert.equal(document.body.textContent?.includes("echo"), false, "echo leaked behind a real provider");
+      assert.ok(document.body.textContent?.includes("openrouter"), "real provider missing");
     } finally {
       r.unmount();
       fx.restore();
@@ -361,7 +354,7 @@ describe("W11 mainstream provider picker", () => {
       assert.ok(!trigger.textContent?.includes("openrouter.local"), "trigger wastes space on raw provider slug");
       click(trigger);
       await flush(15);
-      assert.ok(document.querySelector('input[placeholder="Search models or type provider:model…"]'), "search input missing");
+      assert.ok(document.querySelector('input[placeholder="Search models or agents…"]'), "search input missing");
       const row = document.querySelector('[role="dialog"] button[title="openrouter.local:anthropic/claude-sonnet-5.5"]');
       assert.ok(row, "flat model row missing");
       assert.ok(row.textContent?.includes("claude-sonnet-5.5"), "primary model missing");

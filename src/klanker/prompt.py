@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
+import stat
+import sys
+import tempfile
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from agents_workspace import Workspace
@@ -47,20 +53,27 @@ def _memory_text_has_content(path: Path) -> bool:
     return False
 
 
-def _probe_user_memory_empty(workspace_dir: Path | None) -> bool | None:
-    """Fast local memory-state probe; None means the filesystem answer is uncertain."""
+def _user_memory_paths(workspace_dir: Path | None) -> tuple[list[Path], Path]:
+    """Return USER.md candidates plus the workspace memory root."""
     if workspace_dir is None:
-        return None
+        return [], Path()
     ws = Path(workspace_dir)
     if ws.name == "work":
         ws = ws.parent
     memory = ws / "memory"
     host_memory = ws.parent.parent / "memory" if ws.parent.name == "workspaces" else ws.parent / "memory"
-    candidates = [
+    return [
         memory / "USER.md",
         memory / "user" / "USER.md",
         host_memory / "USER.md",
-    ]
+    ], memory
+
+
+def _probe_user_memory_empty(workspace_dir: Path | None) -> bool | None:
+    """Fast local memory-state probe; None means the filesystem answer is uncertain."""
+    if workspace_dir is None:
+        return None
+    candidates, memory = _user_memory_paths(workspace_dir)
     try:
         if any(path.is_file() and path.stat().st_size > 0 and _memory_text_has_content(path) for path in candidates):
             return False
@@ -169,6 +182,166 @@ def build_system_prompt(caps: HostCapabilities) -> str:
     return "\n".join(lines).strip()
 
 
+PROMPT_CACHE_TTL_S = 300.0
+
+
+def _prompt_paths(ws: Workspace) -> tuple[Path, Path]:
+    name = f"klanker_prompt_{ws.id}" if ws.id else "klanker_prompt"
+    return ws.host.run / f"{name}.txt", ws.host.run / f"{name}.meta.json"
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Atomic file write: concurrent turns never read a half-written file."""
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _user_memory_cache_state(workspace_dir: Path | None) -> tuple[bool | None, list[dict[str, object]]]:
+    """One-pass USER-memory probe plus exact file fingerprint for cache keys.
+
+    This preserves ``_probe_user_memory_empty`` semantics without repeating the
+    same Windows stat calls twice on every turn-start cache hit.
+    """
+    if workspace_dir is None:
+        return None, []
+    candidates, memory = _user_memory_paths(workspace_dir)
+    fingerprint: list[dict[str, object]] = []
+    try:
+        has_content = False
+        for path in candidates:
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            fingerprint.append({
+                "path": path.as_posix(),
+                "mtime_ns": info.st_mtime_ns,
+                "size": info.st_size,
+            })
+            if info.st_size > 0 and not has_content and _memory_text_has_content(path):
+                has_content = True
+        if has_content:
+            return False, fingerprint
+        if not memory.exists():
+            return True, fingerprint
+
+        empty = True
+        scanned = 0
+        stop = False
+        for root, _dirs, files in os.walk(memory):
+            for name in files:
+                if scanned >= 100 or stop:
+                    stop = True
+                    break
+                if not name.lower().endswith(".md"):
+                    continue
+                scanned += 1
+                if name.lower() in _MEMORY_CONFIG_NAMES or name.startswith("_"):
+                    continue
+                path = Path(root) / name
+                try:
+                    if path.stat().st_size > 0 and _memory_text_has_content(path):
+                        empty = False
+                        stop = True
+                        break
+                except OSError:
+                    continue
+            if stop:
+                break
+        return empty, fingerprint
+    except OSError:
+        return None, fingerprint
+
+
+def _cache_workspace_path(workspace: Workspace) -> Path:
+    """``workspace_path()`` for an already-resolved workspace, without a second env lookup."""
+    raw = (
+        os.environ.get("AGENTS_WORKDIR", "").strip()
+        or os.environ.get("AGENTS_WORKSPACE_DIR", "").strip()
+    )
+    if raw:
+        return Path(raw).expanduser()
+    return workspace.workdir
+
+
+def system_prompt_cache_key(workspace: Workspace) -> dict[str, object]:
+    """Inputs that make a rendered per-workspace system prompt stale."""
+    work = _cache_workspace_path(workspace)
+    memory_empty, memory_files = _user_memory_cache_state(workspace.dir)
+    return {
+        "klanker_version": __version__,
+        "python_executable": sys.executable,
+        "workspace_id": workspace.id or "",
+        "workspace_path": work.as_posix(),
+        "workspace_has_git": (work / ".git").exists(),
+        "deploy_webhook": os.environ.get("KLANKER_DEPLOY_WEBHOOK", ""),
+        "user_memory_empty": memory_empty,
+        "user_memory_files": memory_files,
+    }
+
+
+def cached_system_prompt(
+    workspace: "Workspace | None" = None,
+    *,
+    now: float | None = None,
+) -> Path | None:
+    """Return the existing rendered prompt when its short-lived key is exact.
+
+    The check deliberately performs no host probing. Its only filesystem work is
+    the small memory-state scan that is itself part of the cache key.
+    """
+    if os.environ.get("KLANKER_NO_PROMPT_CACHE") == "1":
+        return None
+    ws = workspace or Workspace.from_env()
+    prompt_file, meta_file = _prompt_paths(ws)
+    if not prompt_file.is_file() or not meta_file.is_file():
+        return None
+    try:
+        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(meta, dict):
+        return None
+    try:
+        saved_at = float(meta.get("saved_at", 0))
+    except (TypeError, ValueError):
+        return None
+    tick = time.time() if now is None else now
+    if saved_at <= 0 or saved_at > tick + 1 or tick - saved_at >= PROMPT_CACHE_TTL_S:
+        return None
+    if meta.get("key") != system_prompt_cache_key(ws):
+        return None
+    return prompt_file
+
+
+def system_prompt_file(
+    workspace: "Workspace | None" = None,
+    *,
+    probe: Callable[[], HostCapabilities] | None = None,
+) -> Path:
+    """Return a fresh cached prompt path, probing the host only on a cache miss."""
+    ws = workspace or Workspace.from_env()
+    cached = cached_system_prompt(ws)
+    if cached is not None:
+        return cached
+    if probe is None:
+        from .sensing import probe_host
+
+        probe = probe_host
+    return save_system_prompt(probe(), workspace=ws)
+
+
 def save_system_prompt(
     caps: HostCapabilities, workspace: "Workspace | None" = None
 ) -> Path:
@@ -176,24 +349,15 @@ def save_system_prompt(
     ws = workspace or Workspace.from_env()
     run_dir = ws.host.run
     run_dir.mkdir(parents=True, exist_ok=True)
-    name = f"klanker_prompt_{ws.id}.txt" if ws.id else "klanker_prompt.txt"
-    prompt_file = run_dir / name
+    prompt_file, meta_file = _prompt_paths(ws)
     prompt_text = build_system_prompt(caps)
-    # Atomic: concurrent turns in one workspace never read a half-written file.
-    import os
-    import tempfile
-
-    fd, tmp = tempfile.mkstemp(
-        prefix=f".{prompt_file.name}.", dir=str(run_dir), suffix=".tmp"
+    _atomic_write_text(prompt_file, prompt_text)
+    _atomic_write_text(
+        meta_file,
+        json.dumps(
+            {"saved_at": time.time(), "key": system_prompt_cache_key(ws)},
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
     )
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(prompt_text)
-        os.replace(tmp, prompt_file)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
     return prompt_file
