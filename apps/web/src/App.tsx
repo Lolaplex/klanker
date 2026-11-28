@@ -71,7 +71,7 @@ import { chatToJson, chatToMarkdown, downloadText, exportStem } from "./chatExpo
 import { forkSession } from "./services/workbenchApi";
 import { fetchSWR, invalidateSWRDomain, mutateSWR, peekSWR, removeSWR, wireSwrInvalidations } from "./services/swrCache";
 import { providerRowsKey, sessionEventsKey, sessionListKey, type SidebarSession } from "./services/sessionCache";
-import { readTurnMode } from "./services/turnMode";
+import { readAcpPref, readReasoningLevel, readTurnMode } from "./services/turnMode";
 import { readThemePreference, resolveMode, setThemePreference } from "./theme";
 
 const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false, hub_mode: false };
@@ -999,6 +999,11 @@ export function App() {
       const instProvider = inst0.provider.trim();
       const provider = pick?.provider.trim() || (instProvider !== "inherit" ? instProvider : "");
       const model = (pick && (pick.provider || pick.model) ? pick.model : inst0.model).trim();
+      const providerIsAcp = provider.toLowerCase().startsWith("acp.");
+      const acpPref = providerIsAcp ? readAcpPref(provider) : {};
+      const acpProviderRow = providerIsAcp ? chatProviders.find((row) => row.name === provider) : undefined;
+      const reasoning = readReasoningLevel();
+      const acpMode = acpPref.mode || selectedAcpMode || undefined;
       const sendBody = {
         text,
         run: busy.run,
@@ -1007,7 +1012,11 @@ export function App() {
         persona: selPersona || undefined,
         provider: provider || undefined,
         model: model || undefined,
-        mode: selectedAcpMode || undefined,
+        mode: acpMode,
+        acp_mode: providerIsAcp ? acpMode : undefined,
+        thought_level: providerIsAcp ? acpPref.thought_level || acpProviderRow?.thought_level || acpProviderRow?.thought_levels?.[0] || undefined : undefined,
+        speed: providerIsAcp ? acpPref.speed || acpProviderRow?.speed || acpProviderRow?.speeds?.[0] || undefined : undefined,
+        reasoning: !providerIsAcp && reasoning !== "auto" ? reasoning : undefined,
         turn_mode: readTurnMode(),
         attachments: attachments && attachments.length ? attachments : undefined,
       };

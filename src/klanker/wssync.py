@@ -1211,6 +1211,19 @@ def _execution_lease_sec(ws_id: str) -> float:
         return 0.0
 
 
+def _own_hub_device_ids() -> set[str]:
+    """Channel device ids this host owns across paired hubs."""
+    try:
+        from agents_workspace import Host
+
+        p = Host.from_env().clients / "hubs.json"
+        rows = (json.loads(p.read_text(encoding="utf-8")) or {}).get("hubs") or {}
+        return {str(r.get("device_id") or "") for r in rows.values()
+                if r.get("device_id")}
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
 def ws_invite_auth(device_id: str, ws_id: str) -> bool:
     """`/v1/ws/invite` gate (klanker#145): only the ws owner may mint
     invites. Owner is recorded in workspace.json execution.owner by
@@ -1236,7 +1249,8 @@ def ws_invite_auth(device_id: str, ws_id: str) -> bool:
             # admin/cookie callers carry no device id — their identity
             # is the host itself (klanker#155)
             if owner:
-                return owner in ("__admin__", host.host_id())
+                return owner in ("__admin__", host.host_id()) \
+                    or owner in _own_hub_device_ids()
             claim = str(host.host_id() or "")
         else:
             if owner:

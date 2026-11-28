@@ -2,7 +2,16 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, Mic, Paperclip, Square, X } from "lucide-react";
 import type { KlankerInstance, ModelPick, ProviderRow } from "../types/klanker";
 import { api } from "../services/api";
-import { readTurnMode, writeTurnMode, type TurnMode } from "../services/turnMode";
+import {
+  readAcpPref,
+  readReasoningLevel,
+  readTurnMode,
+  writeAcpPref,
+  writeReasoningLevel,
+  writeTurnMode,
+  type ReasoningLevel,
+  type TurnMode,
+} from "../services/turnMode";
 import { listWorkspaceFiles, transcribeVoice } from "../services/streamExtrasApi";
 import type { OutAttachment } from "./ChatConsole";
 import type { UsageStats } from "./ToolTimeline";
@@ -93,8 +102,22 @@ export function PowerComposer(props: {
   const mquery = useMemo(() => mentionQuery(input), [input]);
   const activeProvider = pick?.provider || pickProvider || "";
   const isAcp = activeProvider.toLowerCase().startsWith("acp.");
-  const modes = useMemo(() => providers.find((p) => p.name === activeProvider)?.modes || [], [providers, activeProvider]);
+  const providerRow = useMemo(() => providers.find((p) => p.name === activeProvider), [providers, activeProvider]);
+  const modes = useMemo(() => providerRow?.modes || [], [providerRow]);
+  const thoughtLevels = useMemo(() => providerRow?.thought_levels || [], [providerRow]);
+  const speeds = useMemo(() => providerRow?.speeds || [], [providerRow]);
   const [turnMode, setTurnMode] = useState<TurnMode>(() => readTurnMode());
+  const [reasoning, setReasoning] = useState<ReasoningLevel>(() => readReasoningLevel());
+  const [acpPrefTick, setAcpPrefTick] = useState(0);
+  void acpPrefTick;
+  const acpPref = isAcp ? readAcpPref(activeProvider) : {};
+  const setAcpField = (field: "mode" | "thought_level" | "speed", value: string) => {
+    writeAcpPref(activeProvider, { [field]: value });
+    setAcpPrefTick((v) => v + 1);
+    if (field === "mode") {
+      window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode: value, provider: activeProvider } }));
+    }
+  };
 
   useEffect(() => {
     if (!note) return;
@@ -350,6 +373,7 @@ export function PowerComposer(props: {
               <Paperclip className="h-3.5 w-3.5" />
             </button>
             {!isAcp ? (
+              <>
               <div role="radiogroup" aria-label="Turn mode" data-testid="turn-mode-selector" className="inline-flex shrink-0 items-center rounded-full border border-subtle bg-surface p-0.5 font-mono leading-none">
                 {([
                   ["auto", "Auto", "Auto — fast-path smalltalk, full tools for tasks"],
@@ -370,16 +394,55 @@ export function PowerComposer(props: {
                   </button>
                 ))}
               </div>
+              <Select
+                ariaLabel="Thinking effort"
+                testId="reasoning-selector"
+                value={reasoning}
+                className="h-7 min-h-7 w-24 shrink-0 border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                options={[
+                  { value: "auto", label: "Think: Auto" },
+                  { value: "off", label: "Think: Off" },
+                  { value: "low", label: "Think: Low" },
+                  { value: "medium", label: "Think: Med" },
+                  { value: "high", label: "Think: High" },
+                ]}
+                onChange={(level) => {
+                  const next = level as ReasoningLevel;
+                  writeReasoningLevel(next);
+                  setReasoning(next);
+                }}
+              />
+              </>
             ) : (
               <div className="flex shrink-0 items-center gap-1" data-testid="acp-mode-controls">
                 <span className="inline-flex h-7 items-center rounded-full border border-subtle bg-surface px-2 text-[9px] uppercase tracking-wide text-ink-muted">ACP</span>
                 {modes.length ? (
                   <Select
                     ariaLabel="ACP mode"
-                    value={acpMode || modes[0] || ""}
+                    value={acpPref.mode || acpMode || modes[0] || ""}
                     className="h-7 min-h-7 w-28 border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary"
                     options={modes.map((m) => ({ value: m, label: m }))}
-                    onChange={(mode) => window.dispatchEvent(new CustomEvent("klanker:acp-mode", { detail: { mode, provider: activeProvider } }))}
+                    onChange={(mode) => setAcpField("mode", mode)}
+                  />
+                ) : null}
+                {thoughtLevels.length ? (
+                  <Select
+                    ariaLabel="ACP thinking"
+                    testId="acp-thought-select"
+                    value={acpPref.thought_level || providerRow?.thought_level || thoughtLevels[0] || ""}
+                    className="h-7 min-h-7 w-24 border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                    options={thoughtLevels.map((m) => ({ value: m, label: m }))}
+                    onChange={(level) => setAcpField("thought_level", level)}
+                  />
+                ) : null}
+                {speeds.length ? (
+                  <Select
+                    ariaLabel="ACP speed"
+                    testId="acp-speed-select"
+                    value={acpPref.speed || providerRow?.speed || speeds[0] || ""}
+                    className="h-7 min-h-7 w-24 border-subtle bg-surface px-1.5 py-0.5 text-[10px] text-ink-secondary"
+                    options={speeds.map((m) => ({ value: m, label: m }))}
+                    onChange={(speed) => setAcpField("speed", speed)}
                   />
                 ) : null}
               </div>

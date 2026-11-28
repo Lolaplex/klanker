@@ -1457,6 +1457,10 @@ export const api = {
       provider?: string;
       model?: string;
       mode?: string;
+      acp_mode?: string;
+      thought_level?: string;
+      speed?: string;
+      reasoning?: "off" | "low" | "medium" | "high";
       new_session?: boolean;
       attachments?: { data: string; mime?: string; name?: string }[];
       turn_mode?: "auto" | "fast" | "agent" | "deep";
@@ -2058,6 +2062,7 @@ export const api = {
     code?: string;
     token?: string;
     label?: string;
+    hub_label?: string;
   }): Promise<HubConnectResult> {
     return localRelayJson<HubConnectResult>("/v1/hub/connect", "POST", {
       ...params,

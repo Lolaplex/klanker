@@ -21,6 +21,7 @@ import type {
   WsRepoPatch,
 } from "./types/klanker.ts";
 import { isLoopbackOrigin, resolveInviteUrl } from "./pairLink.ts";
+import { canonicalWorkspaceHostRows } from "./hostPicker.ts";
 
 // --- policy draft -> patch ---------------------------------------------------
 
@@ -142,7 +143,7 @@ export function mergeDeviceRows(
       member: false,
     });
   }
-  for (const h of wsHosts?.hosts || []) {
+  for (const h of canonicalWorkspaceHostRows(wsHosts)) {
     const prev = rows.get(h.device_id);
     rows.set(h.device_id, {
       device_id: h.device_id,

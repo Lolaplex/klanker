@@ -3,7 +3,7 @@ import { RefreshCw } from "lucide-react";
 import type { KlankerInstance, PairCreateResult } from "../types/klanker";
 import { api } from "../services/api";
 import { encodeQrMatrix, qrSvgPath } from "../qr";
-import { pairLinkView } from "../pairLink";
+import { isLoopbackOrigin, pairLinkView } from "../pairLink";
 import { Dialog } from "./ui/Dialog";
 
 interface PairModalProps {
@@ -22,10 +22,17 @@ interface PairMintedBlockProps {
   mode: PairMode;
 }
 
-/** The redeemable pairing surface: QR of the full url, dashed code row,
- *  copyable link row, loopback reachability warning, cli hint, countdown.
- *  Extracted so tests can render the minted state without a live relay
- *  (klanker#159 U04 oracle). */
+function hostPart(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
+/** Minted single-use link surface. Phone/browser is QR-first; desktop/host
+ *  is code-first because scanning a host invite with a phone camera is the
+ *  wrong mental model. Loopback links are dev-only behind an explicit toggle. */
 export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
   pair,
   linkUrl,
@@ -36,9 +43,15 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showLocal, setShowLocal] = useState(false);
 
+  const pct = Math.max(0, Math.min(100, Math.round((secondsLeft / Math.max(1, totalTtl)) * 100)));
+  const showLoopbackWarning = Boolean(
+    linkUrl && (pair.loopback_warning === true || (pair.loopback_warning === undefined && linkLoopback))
+  );
+  const guarded = showLoopbackWarning && !showLocal;
   const qrData = useMemo(() => {
-    if (secondsLeft <= 0) return null;
+    if (secondsLeft <= 0 || mode !== "web" || guarded) return null;
     const payload = linkUrl || pair.code;
     if (!payload) return null;
     try {
@@ -48,17 +61,33 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
     } catch {
       return null;
     }
-  }, [pair, secondsLeft, linkUrl]);
+  }, [pair, secondsLeft, linkUrl, mode, guarded]);
 
-  const pct = Math.max(0, Math.min(100, Math.round((secondsLeft / Math.max(1, totalTtl)) * 100)));
-  const showLoopbackWarning = Boolean(
-    linkUrl && (pair.loopback_warning === true || (pair.loopback_warning === undefined && linkLoopback))
-  );
+  const copy = (text: string, done: (v: boolean) => void) => {
+    void navigator.clipboard?.writeText(text).then(() => done(true)).catch(() => {});
+  };
 
   return (
     <>
+      {guarded ? (
+        <div className="border border-strong rounded-md bg-elevated px-3 py-3 space-y-2" data-testid="loopback-warning">
+          <div className="text-ink-primary font-semibold">Local-only link</div>
+          <p className="text-[11px] leading-relaxed text-ink-secondary">
+            This machine only listens locally (127.0.0.1). Other devices can't reach it directly — click Join a hub to
+            connect to your VPS/hub, or bind to LAN/Tailscale in Settings.
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowLocal(true)}
+            className="text-[10px] text-ink-dim hover:text-ink-primary underline underline-offset-2"
+          >
+            Show local link anyway
+          </button>
+        </div>
+      ) : null}
+
       {qrData && (
-        <div className="self-center p-2 bg-accent rounded-md">
+        <div className="self-center p-2 bg-accent rounded-md" data-testid="pair-qr">
           <svg
             xmlns="http://www.w3.org/2000/svg"
             viewBox={`0 0 ${qrData.total} ${qrData.total}`}
@@ -72,28 +101,46 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
           </svg>
         </div>
       )}
+      {mode === "web" && !guarded ? (
+        <p className="text-center text-[11px] text-ink-muted">Scan with your phone camera to open Klanker signed in.</p>
+      ) : null}
 
-      <div className="flex items-center justify-between gap-2 bg-elevated border border-strong rounded-md px-3 py-2">
-        <span className="text-ink-primary tracking-widest text-sm">{pair.code}</span>
-        <button
-          type="button"
-          onClick={() => {
-            void navigator.clipboard?.writeText(pair.code).then(() => setCopied(true)).catch(() => {});
-          }}
-          className="px-2 py-1 border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary"
-        >
-          {copied ? "copied" : "copy"}
-        </button>
-      </div>
+      {!guarded && (mode === "remote" ? (
+        <div className="border border-strong rounded-md bg-elevated px-3 py-3 space-y-2" data-testid="desktop-code-card">
+          <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-wider text-ink-muted">
+            <span>Hub host</span>
+            <span className="normal-case tracking-normal text-ink-secondary">{hostPart(linkUrl) || "this hub"}</span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-xl font-semibold tracking-[0.22em] text-ink-primary">{pair.code}</span>
+            <button
+              type="button"
+              onClick={() => copy(pair.code, setCopied)}
+              className="px-2 py-1 border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary"
+            >
+              {copied ? "copied" : "copy"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2 bg-elevated border border-strong rounded-md px-3 py-2">
+          <span className="text-ink-primary tracking-widest text-sm">{pair.code}</span>
+          <button
+            type="button"
+            onClick={() => copy(pair.code, setCopied)}
+            className="px-2 py-1 border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary"
+          >
+            {copied ? "copied" : "copy"}
+          </button>
+        </div>
+      ))}
 
-      {linkUrl && (
+      {linkUrl && !guarded && (
         <div className="flex items-center justify-between gap-2 bg-elevated border border-strong rounded-md px-3 py-2">
           <span className="text-ink-muted truncate text-[11px]">{linkUrl}</span>
           <button
             type="button"
-            onClick={() => {
-              void navigator.clipboard?.writeText(linkUrl).then(() => setCopiedLink(true)).catch(() => {});
-            }}
+            onClick={() => copy(linkUrl, setCopiedLink)}
             className="px-2 py-1 border border-strong rounded-md text-[11px] text-ink-secondary hover:text-ink-primary shrink-0"
           >
             {copiedLink ? "copied" : "copy link"}
@@ -105,15 +152,8 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
           Reachable network address selected automatically
         </p>
       )}
-      {showLoopbackWarning && (
-        <p className="text-[10px] text-ink-secondary" data-testid="loopback-warning">
-          link points at this device — pairing another device needs a reachable URL (tailnet/LAN), not loopback.
-        </p>
-      )}
-      {linkUrl && mode === "remote" && (
-        <p className="text-[10px] text-ink-dim select-text">
-          cli: klanker workspace join "{linkUrl}"
-        </p>
+      {linkUrl && mode === "remote" && !guarded && (
+        <p className="text-[10px] text-ink-dim select-text">cli: klanker workspace join "{linkUrl}"</p>
       )}
 
       <div className="flex flex-col gap-1">
@@ -129,11 +169,10 @@ export const PairMintedBlock: React.FC<PairMintedBlockProps> = ({
   );
 };
 
-/** Layer-1 device pairing mint surface (klanker#159 U04): exactly two
- *  modes — Device/Desktop and Browser/PWA. Workspace-share invites are
- *  layer 2 and live in workspace settings only. */
+/** Layer-1 device pairing mint surface: Phone/Browser QR or Desktop/Host code. */
 export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
-  const [mode, setMode] = useState<PairMode>("remote");
+  const baseUrl = instance.endpoint?.base_url || instance.base_url || "";
+  const [mode, setMode] = useState<PairMode>(() => (isLoopbackOrigin(baseUrl) ? "remote" : "web"));
   const [pair, setPair] = useState<PairCreateResult | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -168,10 +207,6 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
     return () => window.clearInterval(t);
   }, [pair, secondsLeft]);
 
-  // A pair code is single-use and short-lived; while the modal is open,
-  // mint the next one as soon as the countdown hits zero so the QR/link
-  // on screen is always redeemable. Errors stop the chain — the manual
-  // refresh button stays as the recovery path.
   useEffect(() => {
     if (pair && secondsLeft === 0 && !busy) void mint(mode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -180,15 +215,12 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
   const resolvedUrl = useMemo(() => {
     if (!pair?.pair_url) return "";
     if (pair.pair_url.startsWith("/")) {
-      const origin = (instance.endpoint?.base_url || instance.base_url || window.location.origin).replace(/\/+$/, "");
+      const origin = (baseUrl || window.location.origin).replace(/\/+$/, "");
       return `${origin}${pair.pair_url}`;
     }
     return pair.pair_url;
-  }, [pair, instance.endpoint?.base_url, instance.base_url]);
+  }, [pair, baseUrl]);
 
-  // Key-only match — `#kind=remote&pair=…` never contains the literal
-  // `#pair=` substring, so hash-prefix matching hid the link/QR/warning
-  // for device pairing exactly (klanker#159 U04).
   const { linkUrl, loopback: linkLoopback } = pairLinkView(resolvedUrl);
   const totalTtl = Math.max(1, pair?.expires_in || 60);
 
@@ -203,40 +235,40 @@ export const PairModal: React.FC<PairModalProps> = ({ instance, onClose }) => {
   );
 
   return (
-    <Dialog open onClose={onClose} title="Pair device">
-        <div className="p-4 flex flex-col gap-3">
-          <div className="grid grid-cols-2 gap-1 p-1 bg-elevated border border-strong rounded-md">
-            {modeBtn("remote", "Device / Desktop")}
-            {modeBtn("web", "Browser / PWA")}
-          </div>
-
-          {error && <div className="text-red-500">{error}</div>}
-
-          {pair && secondsLeft > 0 ? (
-            <PairMintedBlock
-              pair={pair}
-              linkUrl={linkUrl}
-              linkLoopback={linkLoopback}
-              secondsLeft={secondsLeft}
-              totalTtl={totalTtl}
-              mode={mode}
-            />
-          ) : (
-            <div className="py-6 text-center text-ink-muted">
-              {busy ? "creating single-use code…" : pair ? "renewing…" : "pairing code expired"}
-            </div>
-          )}
-
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void mint(mode)}
-            className="inline-flex items-center justify-center gap-1.5 py-2 border border-strong rounded-md bg-elevated hover:bg-hover text-ink-primary disabled:opacity-50"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            new single-use code
-          </button>
+    <Dialog open onClose={onClose} title="LINK A DEVICE">
+      <div className="p-4 flex flex-col gap-3">
+        <div className="grid grid-cols-2 gap-1 p-1 bg-elevated border border-strong rounded-md">
+          {modeBtn("web", "Phone / Browser")}
+          {modeBtn("remote", "Desktop / Host")}
         </div>
+
+        {error && <div className="text-red-500">{error}</div>}
+
+        {pair && secondsLeft > 0 ? (
+          <PairMintedBlock
+            pair={pair}
+            linkUrl={linkUrl}
+            linkLoopback={linkLoopback}
+            secondsLeft={secondsLeft}
+            totalTtl={totalTtl}
+            mode={mode}
+          />
+        ) : (
+          <div className="py-6 text-center text-ink-muted">
+            {busy ? "creating single-use code…" : pair ? "renewing…" : "pairing code expired"}
+          </div>
+        )}
+
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void mint(mode)}
+          className="inline-flex items-center justify-center gap-1.5 py-2 border border-strong rounded-md bg-elevated hover:bg-hover text-ink-primary disabled:opacity-50"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          new single-use code
+        </button>
+      </div>
     </Dialog>
   );
 };

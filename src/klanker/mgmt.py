@@ -15,10 +15,14 @@ Wired by ``klanker serve`` into ``agents_relay.http_adapter``:
 """
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import re
+import time
+import urllib.error
 import urllib.parse
+import urllib.request
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +49,225 @@ def _hub_rows() -> dict:
             .get("hubs") or {})
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+def _http_json(url: str, *, token: str = "", device_id: str = "",
+               method: str = "GET", body: dict | None = None,
+               timeout: float = 5.0) -> tuple[int, dict]:
+    """Authenticated JSON fetch; status 0 means transport failure."""
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if device_id:
+        headers["X-Device-Id"] = device_id
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=headers,
+                                 method=method)
+    resp = None
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        raw = resp.read()
+        status = int(getattr(resp, "status", 200) or 200)
+    except urllib.error.HTTPError as exc:
+        resp = exc
+        raw = exc.read()
+        status = int(exc.code)
+    except Exception:  # noqa: BLE001 - refused/dns/timeout
+        return 0, {}
+    finally:
+        if resp is not None:
+            try:
+                resp.close()
+            except Exception:  # noqa: BLE001
+                pass
+    try:
+        out = json.loads(raw.decode("utf-8") or "{}")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        out = {}
+    return status, out if isinstance(out, dict) else {}
+
+
+def _connected_hub_row() -> tuple[str, dict] | tuple[None, None]:
+    rows = _hub_rows()
+    if not rows:
+        return None, None
+    rt = _runtime()
+    if rt is not None:
+        for hub_id, row in rows.items():
+            try:
+                if rt.client_connected(hub_id):
+                    return hub_id, row
+            except Exception:  # noqa: BLE001
+                pass
+    hub_id = next(iter(rows))
+    return hub_id, rows[hub_id]
+
+
+def _host_row_clean(raw: dict, *, default_role: str = "host") -> dict:
+    row = dict(raw or {})
+    device_id = str(row.get("device_id") or row.get("id")
+                    or row.get("host_id") or "")
+    host_id = str(row.get("host_id") or "")
+    online = bool(row.get("online") or row.get("connected"))
+    row.update({
+        "device_id": device_id,
+        "host_id": host_id,
+        "label": str(row.get("label") or row.get("host_label")
+                    or row.get("name") or device_id or host_id),
+        "role": str(row.get("role") or default_role),
+        "online": online,
+        "via": str(row.get("via") or "hub"),
+        "last_seen": row.get("last_seen") or row.get("ts") or 0,
+        "status": str(row.get("status")
+                      or ("online" if online else "offline")),
+        "leases": list(row.get("leases") or []),
+    })
+    return row
+
+
+def _merge_host_row(hosts: list[dict], raw: dict) -> None:
+    row = _host_row_clean(raw)
+    key = row["device_id"] or row["host_id"]
+    if not key:
+        return
+    for idx, prev in enumerate(hosts):
+        if key not in (prev.get("device_id"), prev.get("host_id")):
+            continue
+        merged = dict(prev)
+        for k, v in row.items():
+            if k in ("online", "self"):
+                merged[k] = bool(prev.get(k)) or bool(v)
+            elif k == "leases":
+                merged[k] = v or prev.get(k) or []
+            elif v not in ("", None, [], {}) and (
+                    k in ("status", "leases") or not prev.get(k)):
+                merged[k] = v
+        hosts[idx] = merged
+        return
+    hosts.append(row)
+
+
+def spoke_hosts(ws_id: str) -> dict | None:
+    """Spoke-side hosts map relayed from the paired hub.
+
+    None means transport failure. Workspace 403/404 rows are admission or
+    provisioning states, never hub-offline evidence.
+    """
+    rows = _hub_rows()
+    if not rows:
+        return None
+    hub_id, row = _connected_hub_row()
+    if not hub_id or not row:
+        return None
+    from agents_relay.channel_client import hub_token
+    from agents_workspace import Host
+
+    token = hub_token(hub_id)
+    own_device_id = str(row.get("device_id") or "")
+    hub_url = str(row.get("hub_url") or "").rstrip("/")
+    if not hub_url:
+        return None
+    status, peers_payload = _http_json(
+        f"{hub_url}/v1/hub/peers", token=token,
+        device_id=own_device_id, timeout=5.0)
+    if status == 0:
+        return None
+    synthesized = False
+    if status == 404:
+        health, _ = _http_json(
+            f"{hub_url}/health", token=token,
+            device_id=own_device_id, timeout=5.0)
+        if health != 200:
+            return None
+        peers_payload = {}
+        synthesized = True
+    elif status != 200:
+        return None
+
+    host = Host.from_env()
+    local_host_id = str(host.host_id() or "")
+    label_fn = getattr(host, "host_label", None)
+    local_label = str(label_fn() if callable(label_fn) else "") \
+        or local_host_id or own_device_id
+
+    raw_rows: list[dict] = []
+    for key in ("peers", "hosts", "devices"):
+        val = peers_payload.get(key)
+        if isinstance(val, list):
+            raw_rows.extend(r for r in val if isinstance(r, dict))
+    if isinstance(peers_payload.get("self"), dict):
+        raw_rows.append(peers_payload["self"])
+
+    hosts: list[dict] = []
+    _merge_host_row(hosts, {
+        "device_id": hub_id, "host_id": hub_id,
+        "label": str(row.get("hub_label") or row.get("label") or hub_id), "role": "hub",
+        "online": True, "via": "hub", "status": "online"})
+    for raw in raw_rows:
+        role = str(raw.get("role") or "host").lower()
+        if role in ("host", "hub", "owner", "default", ""):
+            _merge_host_row(hosts, raw)
+
+    sync_policy = "local"
+    owner = ""
+    default_host = ""
+    try:
+        ws = host.workspace(ws_id) if ws_id else host.select_workspace()
+        sync_policy = str(getattr(ws, "sync_policy", "local")
+                          or "local").strip().lower()
+        owner = str((getattr(ws, "execution", None) or {}).get("owner") or "")
+        default_host = str(getattr(ws, "default_host", "") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    if ws_id and sync_policy != "local":
+        st, ws_payload = _http_json(
+            f"{hub_url}/v1/workspaces/{urllib.parse.quote(ws_id)}/hosts",
+            token=token, device_id=own_device_id, timeout=5.0)
+        if st == 200:
+            sync_policy = str(ws_payload.get("sync_policy") or sync_policy)
+            owner = str(ws_payload.get("owner") or owner)
+            default_host = str(ws_payload.get("default_host") or default_host)
+            for raw in ws_payload.get("hosts") or []:
+                if isinstance(raw, dict):
+                    _merge_host_row(hosts, raw)
+
+    self_row = None
+    rest: list[dict] = []
+    for h in hosts:
+        is_self = bool(
+            (own_device_id and h.get("device_id") == own_device_id)
+            or (local_host_id and h.get("host_id") == local_host_id)
+            or (local_host_id and h.get("device_id") == local_host_id))
+        if not is_self:
+            rest.append(h)
+        elif self_row is None:
+            self_row = dict(h)
+        else:
+            for k, v in h.items():
+                if k in ("online", "self"):
+                    self_row[k] = bool(self_row.get(k)) or bool(v)
+                elif v not in ("", None, [], {}) and not self_row.get(k):
+                    self_row[k] = v
+    if self_row is None:
+        self_row = {"device_id": own_device_id or local_host_id,
+                    "host_id": local_host_id, "label": local_label,
+                    "role": "host", "leases": []}
+    self_row.update({
+        "device_id": str(self_row.get("device_id") or own_device_id
+                         or local_host_id),
+        "host_id": str(self_row.get("host_id") or local_host_id),
+        "label": str(self_row.get("label") or local_label),
+        "role": str(self_row.get("role") or "host"),
+        "self": True, "online": True, "via": "local",
+        "status": "online"})
+    return {"ok": True, "workspace": ws_id, "sync_policy": sync_policy,
+            "owner": owner, "default_host": default_host,
+            "hub_offline": False, "self_device_id": own_device_id,
+            "hosts": [self_row, *rest],
+            "peers_synthesized": synthesized}
 
 
 def hub_links() -> dict:
@@ -100,8 +323,27 @@ def hub_connect(body: dict) -> dict:
         return {"ok": False, "error": "need url + pair code",
                 "status": 400}
     label = str(body.get("label") or "")
+    hub_label = str(body.get("hub_label") or "")
     try:
-        row = connect_hub(url, code, label=label)
+        kwargs = {"label": label}
+        try:
+            if "hub_label" in inspect.signature(connect_hub).parameters:
+                kwargs["hub_label"] = hub_label
+        except (TypeError, ValueError):
+            pass
+        row = connect_hub(url, code, **kwargs)
+        if hub_label and "hub_label" not in kwargs:
+            # Older agents-relay conflated the device label with the stored
+            # hub-row label. Correct the local display row after redeem; the
+            # device label already crossed the wire in `label`.
+            try:
+                rows = _hub_rows()
+                hub_id = str(row.get("hub_id") or "")
+                if hub_id in rows:
+                    rows[hub_id]["label"] = hub_label
+                    _hubs_path().write_text(json.dumps({"hubs": rows}, indent=1))
+            except Exception:  # noqa: BLE001
+                pass
     except Exception as exc:  # noqa: BLE001
         return {"ok": False,
                 "error": f"redeem failed: {exc}", "status": 502}
@@ -174,8 +416,39 @@ def session_host_switch(ws_id: str, session_id: str, new_host: str,
 
 
 def ws_policy_changed(ws_id: str) -> None:
-    """PATCH /v1/workspaces policy write -> reconcile immediately,
-    not at the next tick (agents-relay#43)."""
+    """PATCH /v1/workspaces policy write -> reconcile immediately.
+
+    On a spoke, flipping a workspace out of local mode must also stamp the
+    channel owner/member identity in the same management turn — otherwise
+    reconciliation emits an ownerless announce the hub correctly refuses.
+    """
+    try:
+        rows = _hub_rows()
+        if rows:
+            from agents_workspace import Host
+
+            host = Host.from_env()
+            ws = host.workspace(ws_id)
+            policy = str(getattr(ws, "sync_policy", "local")
+                         or "local").strip().lower()
+            if policy != "local":
+                _hid, hub_row = _connected_hub_row()
+                own = str((hub_row or {}).get("device_id") or "")
+                ex = dict(getattr(ws, "execution", None) or {})
+                owner = str(ex.get("owner") or "")
+                members = set(getattr(ws, "sync_hosts", None) or ())
+                changed = False
+                if own and owner in ("", str(host.host_id() or "")):
+                    ex["owner"] = own
+                    changed = True
+                if own and own not in members:
+                    members.add(own)
+                    changed = True
+                if changed:
+                    host.update_workspace(
+                        ws_id, sync_hosts=sorted(members), execution=ex)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ws %s ownership normalize failed: %s", ws_id, exc)
     rt = _runtime()
     if rt is None:
         return
@@ -184,6 +457,102 @@ def ws_policy_changed(ws_id: str) -> None:
     except Exception as exc:  # noqa: BLE001
         log.warning("share reconcile after policy change failed: %s",
                     exc)
+
+
+def ws_invite_proxy(ws_id: str, ttl_sec: int = 60) -> dict | None:
+    """Mint a workspace guest invite through the paired hub.
+
+    ``None`` means this process is itself a hub (the local relay route can
+    mint directly). On a spoke the local relay must never invent a loopback
+    invite URL: ownership is announced upstream first, then the hub mints a
+    reachable pair URL under the spoke's device credential.
+    """
+    rows = _hub_rows()
+    if not rows:
+        return None
+    hub_id, row = _connected_hub_row()
+    if not hub_id or not row:
+        return None
+    own = str(row.get("device_id") or "")
+    if not own:
+        return {"ok": False, "error": "hub link has no device_id",
+                "status": 502}
+    try:
+        from agents_workspace import Host
+
+        host = Host.from_env()
+        if not host.workspace_exists(ws_id):
+            return {"ok": False, "error": "unknown workspace", "status": 404}
+        ws = host.workspace(ws_id)
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "error": "unknown workspace", "status": 404}
+    ex = dict(getattr(ws, "execution", None) or {})
+    prev_exec = dict(ex)
+    owner = str(ex.get("owner") or "")
+    prev_owner = owner
+    local_host = str(host.host_id() or "")
+    if owner not in ("", local_host, own):
+        return {"ok": False, "error": "not the workspace owner",
+                "status": 403}
+    members = set(getattr(ws, "sync_hosts", None) or ()) | {own}
+    ex["owner"] = own
+    try:
+        policy = str(getattr(ws, "sync_policy", "local")
+                     or "local").strip().lower()
+        host.update_workspace(
+            ws_id,
+            sync_policy=policy if policy in ("synced", "shared") else "synced",
+            sync_hosts=sorted(members), execution=ex)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False,
+                "error": f"workspace policy update failed: {exc}",
+                "status": 500}
+    from agents_relay.channel_client import hub_token
+
+    token = hub_token(hub_id)
+    if not token:
+        return {"ok": False, "error": "no device token for hub",
+                "status": 502}
+    try:
+        from .wshare import _post_ws_announce
+
+        _post_ws_announce(row, own, token, {
+            "ws": ws_id,
+            "label": str(getattr(ws, "label", "") or ""),
+            "owner": own,
+            "sync_hosts": sorted(members),
+            "seq": int(time.time() * 1000),
+        })
+    except Exception as exc:  # noqa: BLE001
+        try:
+            from .wshare import _restore_preinvite_owner
+            _restore_preinvite_owner(host, ws_id, prev_exec, prev_owner)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": False,
+                "error": f"ownership announce failed: {exc}",
+                "status": 502}
+    status, payload = _http_json(
+        str(row["hub_url"]).rstrip("/") + "/v1/ws/invite",
+        token=token, device_id=own, method="POST",
+        body={"ws": ws_id, "ttl_sec": ttl_sec}, timeout=15.0)
+    if status == 0:
+        try:
+            from .wshare import _restore_preinvite_owner
+            _restore_preinvite_owner(host, ws_id, prev_exec, prev_owner)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"ok": False, "error": "hub unreachable", "status": 502}
+    if 200 <= status < 300:
+        return payload
+    try:
+        from .wshare import _restore_preinvite_owner
+        _restore_preinvite_owner(host, ws_id, prev_exec, prev_owner)
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": False,
+            "error": str(payload.get("error") or f"hub invite http {status}"),
+            "status": status}
 
 
 # --- ``/v1/klanker/*`` dashboard surface -------------------------------------
@@ -1006,6 +1375,50 @@ def _repo_paths(h: Any, method: str, path: str,
     h.send_error(405)
 
 
+def _ws_invite_proxy_route(h: Any) -> bool:
+    """Spoke compatibility route for relays predating ws_invite_proxy_fn.
+
+    Klanker's mgmt graft runs inside the spoke relay, so it can intercept the
+    local mint request before the legacy in-process pairing implementation
+    would mint an unreachable loopback code. Authorization mirrors the relay
+    route: operator/admin or the owner device itself; foreign device tokens
+    never ride the spoke's stored owner credential.
+    """
+    ctx = h._auth_ctx() if hasattr(h, "_auth_ctx") else {}
+    kind = str(ctx.get("kind") or "")
+    caller = str(ctx.get("device_id") or "")
+    if kind in ("admin", "cookie"):
+        caller = "__admin__"
+    elif kind != "device":
+        h.send_error(401, "unauthorized")
+        return True
+    rows = _hub_rows()
+    own = ""
+    if rows:
+        _hid, row = _connected_hub_row()
+        own = str((row or {}).get("device_id") or "")
+    if kind == "device" and caller != own:
+        h.send_error(403, "not the workspace owner")
+        return True
+    body = h._read_json()
+    if body is None:
+        return True
+    ws_id = str(body.get("ws") or "").strip()
+    if not ws_id:
+        h.send_error(400, "missing workspace id")
+        return True
+    try:
+        ttl = int(body.get("ttl_sec") or 60)
+    except (TypeError, ValueError):
+        ttl = 60
+    out = ws_invite_proxy(ws_id, ttl_sec=ttl)
+    if out is None:
+        return False
+    status = int(out.get("status") or (200 if out.get("ok") else 502))
+    h._write_json(out, status)
+    return True
+
+
 def _dispatch(h: Any, method: str) -> bool:
     """Handle ``/v1/klanker/*`` + ``/v1/workspaces/<ws>/repo-paths``;
     returns True when the request was consumed.
@@ -1019,6 +1432,8 @@ def _dispatch(h: Any, method: str) -> bool:
         _check_secret, _parse_query, _ws_member_gate)
 
     path, query = _parse_query(h.path)
+    if method == "POST" and path == "/v1/ws/invite" and _hub_rows():
+        return _ws_invite_proxy_route(h)
     if path.startswith("/v1/workspaces/") \
             and path.rstrip("/").endswith("/repo-paths"):
         _repo_paths(h, method, path.rstrip("/"), query)

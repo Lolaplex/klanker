@@ -55,17 +55,44 @@ export function friendlyHostName(id: string, label?: string | null): string {
  *  switch to — the chip is pure noise there (klanker#158 U03). */
 export function hostPickerVisible(hosts: WorkspaceHosts | null | undefined): boolean {
   if (!hosts) return false;
-  const count = (hosts.hosts || []).length;
+  const count = canonicalWorkspaceHostRows(hosts).length;
   const policy = String(hosts.sync_policy || "local").toLowerCase();
   if (policy === "synced" || policy === "shared") return count > 0;
   return count > 1;
+}
+
+/** Fold relayed spoke self aliases into the channel device row. Older
+ *  relay builds key the appended local self row by host id even though
+ *  workspace membership and remote mounts key the same machine by hub
+ *  device id; `self_device_id` is the canonical wire key. */
+export function canonicalWorkspaceHostRows(payload: WorkspaceHosts | null | undefined): WorkspaceHost[] {
+  const selfId = String(payload?.self_device_id || "");
+  const rows = new Map<string, WorkspaceHost>();
+  for (const raw of payload?.hosts || []) {
+    const h = { ...raw };
+    const key = selfId && h.self && h.device_id !== selfId ? selfId : h.device_id;
+    const prev = rows.get(key);
+    if (!prev) {
+      rows.set(key, { ...h, device_id: key });
+      continue;
+    }
+    rows.set(key, {
+      ...prev,
+      ...Object.fromEntries(Object.entries(h).filter(([, v]) => v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0))),
+      device_id: key,
+      self: !!prev.self || !!h.self,
+      online: !!prev.online || !!h.online,
+      leases: [...(prev.leases || []), ...(h.leases || [])],
+    });
+  }
+  return [...rows.values()];
 }
 
 /** Picker rows: strictly the payload's member set (self included).
  *  Display order: self, then online members, then offline — alphabetical
  *  inside each tier. */
 export function hostPickerRows(payload: WorkspaceHosts | null | undefined): HostRow[] {
-  const hosts = payload?.hosts || [];
+  const hosts = canonicalWorkspaceHostRows(payload);
   const rows: HostRow[] = hosts.map((h: WorkspaceHost) => ({
     deviceId: h.device_id,
     label: friendlyHostName(h.device_id, h.label),
@@ -111,7 +138,7 @@ function hostOnline(
 
 /** Own device id inside the hosts payload ("" when unknown). */
 export function selfDeviceId(hosts: WorkspaceHosts | null | undefined): string {
-  return hosts?.hosts?.find((h) => h.self)?.device_id || "";
+  return hosts?.self_device_id || hosts?.hosts?.find((h) => h.self)?.device_id || "";
 }
 
 export type HostBinding =
