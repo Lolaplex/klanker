@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { AtSign, Copy, ExternalLink, FileText, Folder, GitBranch, Play, RefreshCw, Save, Search, Skull, Trash2 } from "lucide-react";
-import type { KlankerInstance, StoreItem } from "../../types/klanker";
+import type { KlankerInstance } from "../../types/klanker";
 import { api } from "../../services/api";
+import { fetchSWR, prefetchSWR, swrKey, useSWR } from "../../services/swrCache";
 import {
   deleteApprovalAllowlistPattern,
   deleteMemoryFile,
@@ -35,7 +36,7 @@ import { inputClass } from "../ui/inputClass";
 import type { WorkbenchTabProps } from "./types";
 import { useContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 
-type Props = WorkbenchTabProps & { instance: KlankerInstance; workspace: string; session: string };
+type Props = WorkbenchTabProps & { instance: KlankerInstance; workspace: string; session: string; active?: boolean };
 
 const btn = "inline-flex h-7 items-center gap-1 rounded-md border border-subtle bg-elevated px-2 text-[10px] text-ink-secondary hover:border-strong hover:bg-hover hover:text-ink-primary disabled:opacity-40";
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -52,18 +53,9 @@ function workbenchRowItems(path: string, open: () => void, notify: (message: str
   ];
 }
 
-function useAsync<T>(fn: () => Promise<T>, deps: readonly unknown[]) {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const reload = useCallback(() => {
-    setLoading(true);
-    setError("");
-    fn().then(setData).catch((e) => setError(errText(e))).finally(() => setLoading(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-  useEffect(() => reload(), [reload]);
-  return { data, error, loading, reload };
+function RevalidatingPulse({ show }: { show: boolean }) {
+  if (!show) return null;
+  return <span data-testid="swr-revalidating" className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-dim" aria-label="refreshing" />;
 }
 
 function StateLine({ loading, error, empty }: { loading: boolean; error: string; empty?: boolean }) {
@@ -73,15 +65,34 @@ function StateLine({ loading, error, empty }: { loading: boolean; error: string;
   return null;
 }
 
-export function ChangesTab({ instance, workspace, session, openDetail, notify }: Props) {
+export function ChangesTab({ instance, workspace, session, openDetail, notify, active = true }: Props) {
   const { openMenu } = useContextMenu();
   const gitStatus = useCallback(
     (file = "") => session ? getSessionGit(instance, workspace, session, file) : getWorkspaceGit(instance, workspace, file),
     [instance, workspace, session]
   );
+  const cacheKey = swrKey(instance.id, workspace, `git:${session || "workspace"}`);
   const load = useCallback(() => gitStatus(), [gitStatus]);
-  const { data, error, loading, reload } = useAsync<SessionGitStatus>(load, [load]);
-  if (!data) return <StateLine loading={loading} error={error} />;
+  const swr = useSWR<SessionGitStatus>(cacheKey, load, {
+    ttlMs: 5_000,
+    persist: "session",
+    enabled: active,
+    revalidateOnFocus: true,
+    refreshIntervalMs: 5_000,
+  });
+  const data = swr.data;
+  const error = swr.error;
+  const reload = swr.refresh;
+  const diffKey = useCallback((file: string) => swrKey(instance.id, workspace, `git:diff:${session || "workspace"}:${file}`), [instance.id, workspace, session]);
+  const openFileDiff = useCallback((file: string) => {
+    void fetchSWR(diffKey(file), () => gitStatus(file), { ttlMs: 5_000, persist: "session" })
+      .then((d) => openDetail({ title: file, body: d.diff, diff: d.diff, truncated: d.diff_truncated }))
+      .catch((e) => notify(`diff: ${errText(e)}`, "error"));
+  }, [diffKey, gitStatus, notify, openDetail]);
+  const warmFileDiff = useCallback((file: string) => {
+    prefetchSWR(diffKey(file), () => gitStatus(file), { ttlMs: 5_000, persist: "session" });
+  }, [diffKey, gitStatus]);
+  if (!data) return <StateLine loading={swr.isLoading} error={error} />;
   if (!data.is_git) return <div className="p-4 text-ink-dim">{session ? "session worktree" : "workspace"} is not a git repository</div>;
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -89,7 +100,8 @@ export function ChangesTab({ instance, workspace, session, openDetail, notify }:
         <GitBranch className="h-3.5 w-3.5 text-ink-dim" />
         <span className="min-w-0 flex-1 truncate text-ink-primary">{data.branch || "detached"}</span>
         {data.wip_unpushed && <span className="rounded-full bg-accent px-1.5 py-0.5 text-[9px] uppercase text-accent-ink">wip unpushed</span>}
-        <button type="button" className={btn} onClick={reload}><RefreshCw className="h-3 w-3" />refresh</button>
+        <RevalidatingPulse show={swr.isRevalidating} />
+        <button type="button" className={btn} onClick={() => void reload()}><RefreshCw className="h-3 w-3" />refresh</button>
       </div>
       <StateLine loading={false} error={error} empty={data.dirty_files.length === 0} />
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -97,16 +109,10 @@ export function ChangesTab({ instance, workspace, session, openDetail, notify }:
           <button
             key={`${f.status}:${f.path}`}
             type="button"
-            onClick={() => {
-              void gitStatus(f.path)
-                .then((d) => openDetail({ title: f.path, body: d.diff, diff: d.diff, truncated: d.diff_truncated }))
-                .catch((e) => notify(`diff: ${errText(e)}`, "error"));
-            }}
-            onContextMenu={(e) => openMenu(e, workbenchRowItems(f.path, () => {
-              void gitStatus(f.path)
-                .then((d) => openDetail({ title: f.path, body: d.diff, diff: d.diff, truncated: d.diff_truncated }))
-                .catch((err) => notify(`diff: ${errText(err)}`, "error"));
-            }, notify))}
+            onClick={() => openFileDiff(f.path)}
+            onPointerEnter={() => warmFileDiff(f.path)}
+            onFocus={() => warmFileDiff(f.path)}
+            onContextMenu={(e) => openMenu(e, workbenchRowItems(f.path, () => openFileDiff(f.path), notify))}
             className="flex w-full items-center gap-2 border-b border-subtle px-3 py-2 text-left hover:bg-hover"
           >
             <span className="w-7 shrink-0 rounded border border-subtle px-1 text-center text-[9px] uppercase text-ink-muted">{f.status}</span>
@@ -123,68 +129,84 @@ export function ChangesTab({ instance, workspace, session, openDetail, notify }:
   );
 }
 
-export function FilesTab({ instance, workspace, openDetail, notify }: Props) {
+export function FilesTab({ instance, workspace, openDetail, notify, active = true }: Props) {
   const { openMenu } = useContextMenu();
   const [path, setPath] = useState(".");
-  const [entries, setEntries] = useState<WorkbenchFileEntry[]>([]);
   const [q, setQ] = useState("");
   const [matches, setMatches] = useState<{ path: string; line: number; text: string }[] | null>(null);
-  const [error, setError] = useState("");
-  const load = useCallback((p = path) => {
-    setError("");
-    void listWorkbenchFiles(instance, workspace, p)
-      .then((r) => { setPath(r.path); setEntries(r.entries); setMatches(null); })
-      .catch((e) => setError(errText(e)));
-  }, [instance, workspace, path]);
-  useEffect(() => load("."), []); // eslint-disable-line react-hooks/exhaustive-deps
-  const entryPath = (name: string) => path === "." ? name : `${path.replace(/\/+$/, "")}/${name}`;
-  const openFile = (name: string) => {
+  const [grepError, setGrepError] = useState("");
+  const treeKey = swrKey(instance.id, workspace, `files:tree:${path}`);
+  const tree = useSWR(treeKey, () => listWorkbenchFiles(instance, workspace, path), {
+    ttlMs: 15_000,
+    persist: "session",
+    enabled: active,
+    revalidateOnFocus: true,
+  });
+  const entries: WorkbenchFileEntry[] = tree.data?.entries ?? [];
+  const shownPath = tree.data?.path || path;
+  const error = grepError || tree.error;
+  const navigate = useCallback((next: string) => {
+    setGrepError("");
+    setMatches(null);
+    setPath(next || ".");
+  }, []);
+  const entryPath = useCallback((name: string) => shownPath === "." ? name : `${shownPath.replace(/\/+$/, "")}/${name}`, [shownPath]);
+  const fileKey = useCallback((file: string) => swrKey(instance.id, workspace, `files:content:${file}`), [instance.id, workspace]);
+  const readFile = useCallback((file: string) => fetchSWR(fileKey(file), () => readWorkbenchFile(instance, workspace, file), { ttlMs: 15_000, persist: "session" }), [fileKey, instance, workspace]);
+  const openFile = useCallback((name: string) => {
     const p = entryPath(name);
-    void readWorkbenchFile(instance, workspace, p)
+    void readFile(p)
       .then((r) => openDetail({ title: r.path, body: r.content, truncated: r.truncated }))
       .catch((e) => notify(`read: ${errText(e)}`, "error"));
-  };
-  const parent = path.includes("/") ? path.split("/").slice(0, -1).join("/") || "." : ".";
+  }, [entryPath, notify, openDetail, readFile]);
+  const warmEntry = useCallback((entry: WorkbenchFileEntry) => {
+    const p = entryPath(entry.name);
+    if (entry.type === "dir") prefetchSWR(swrKey(instance.id, workspace, `files:tree:${p}`), () => listWorkbenchFiles(instance, workspace, p), { ttlMs: 15_000, persist: "session" });
+    else prefetchSWR(fileKey(p), () => readWorkbenchFile(instance, workspace, p), { ttlMs: 15_000, persist: "session" });
+  }, [entryPath, fileKey, instance, workspace]);
+  const openMatch = useCallback((m: { path: string; line: number; text: string }) => {
+    void readFile(m.path)
+      .then((r) => openDetail({ title: `${m.path}:${m.line}`, body: r.content, truncated: r.truncated }))
+      .catch((e) => notify(`read: ${errText(e)}`, "error"));
+  }, [notify, openDetail, readFile]);
+  const parent = shownPath.includes("/") ? shownPath.split("/").slice(0, -1).join("/") || "." : ".";
   return (
     <div className="flex h-full min-h-0 flex-col">
       <form className="flex gap-1 border-b border-subtle p-2" onSubmit={(e) => {
         e.preventDefault();
         if (!q.trim()) return;
-        void grepWorkbenchFiles(instance, workspace, q.trim(), path)
+        void grepWorkbenchFiles(instance, workspace, q.trim(), shownPath)
           .then((r) => setMatches(r.matches))
-          .catch((e2) => setError(errText(e2)));
+          .catch((e2) => setGrepError(errText(e2)));
       }}>
         <div className="relative min-w-0 flex-1">
           <Search className="absolute left-2 top-1/2 h-3 w-3 -translate-y-1/2 text-ink-dim" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`grep ${path}`} className={`${inputClass} pl-7 text-[11px]`} aria-label="Search files" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`grep ${shownPath}`} className={`${inputClass} pl-7 text-[11px]`} aria-label="Search files" />
         </div>
         <button className={btn} type="submit">grep</button>
       </form>
       <div className="flex items-center gap-1 border-b border-subtle px-3 py-1.5 text-[10px] text-ink-dim">
-        <button type="button" onClick={() => load(".")} className="hover:text-ink-primary">root</button>
-        <span>/</span><span className="truncate">{path}</span>
-        <button type="button" className={`${btn} ml-auto`} onClick={() => load(path)}><RefreshCw className="h-3 w-3" /></button>
+        <button type="button" onClick={() => navigate(".")} className="hover:text-ink-primary">root</button>
+        <span>/</span><span className="truncate">{shownPath}</span>
+        <RevalidatingPulse show={tree.isRevalidating} />
+        <button type="button" className={`${btn} ml-auto`} onClick={() => void tree.refresh()}><RefreshCw className="h-3 w-3" /></button>
       </div>
       {error && <div className="border-b border-subtle px-3 py-2 text-red-500">{error}</div>}
+      {!tree.data && <StateLine loading={tree.isLoading} error="" />}
       <div className="min-h-0 flex-1 overflow-y-auto">
         {matches ? (
           matches.map((m) => (
-            <button key={`${m.path}:${m.line}`} type="button" className="block w-full border-b border-subtle px-3 py-2 text-left hover:bg-hover" onClick={() => {
-              const file = m.path;
-              void readWorkbenchFile(instance, workspace, file).then((r) => openDetail({ title: `${file}:${m.line}`, body: r.content, truncated: r.truncated })).catch((e) => notify(`read: ${errText(e)}`, "error"));
-            }} onContextMenu={(e) => openMenu(e, workbenchRowItems(m.path, () => {
-              void readWorkbenchFile(instance, workspace, m.path).then((r) => openDetail({ title: `${m.path}:${m.line}`, body: r.content, truncated: r.truncated })).catch((err) => notify(`read: ${errText(err)}`, "error"));
-            }, notify))}>
+            <button key={`${m.path}:${m.line}`} type="button" className="block w-full border-b border-subtle px-3 py-2 text-left hover:bg-hover" onClick={() => openMatch(m)} onPointerEnter={() => prefetchSWR(fileKey(m.path), () => readWorkbenchFile(instance, workspace, m.path), { ttlMs: 15_000, persist: "session" })} onContextMenu={(e) => openMenu(e, workbenchRowItems(m.path, () => openMatch(m), notify))}>
               <span className="text-ink-primary">{m.path}:{m.line}</span>
               <span className="block truncate text-[10px] text-ink-dim">{m.text}</span>
             </button>
           ))
         ) : (
           <>
-            {path !== "." && <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-ink-secondary hover:bg-hover" onClick={() => load(parent)}><Folder className="h-3.5 w-3.5" />..</button>}
+            {shownPath !== "." && <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-ink-secondary hover:bg-hover" onClick={() => navigate(parent)}><Folder className="h-3.5 w-3.5" />..</button>}
             {entries.map((e) => (
-              <button key={e.name} type="button" className="flex w-full items-center gap-2 border-b border-subtle px-3 py-2 text-left hover:bg-hover" onClick={() => e.type === "dir" ? load(path === "." ? e.name : `${path}/${e.name}`) : openFile(e.name)} onContextMenu={(ev) => openMenu(ev, workbenchRowItems(entryPath(e.name), () => {
-                if (e.type === "dir") load(entryPath(e.name));
+              <button key={e.name} type="button" className="flex w-full items-center gap-2 border-b border-subtle px-3 py-2 text-left hover:bg-hover" onClick={() => e.type === "dir" ? navigate(entryPath(e.name)) : openFile(e.name)} onPointerEnter={() => warmEntry(e)} onFocus={() => warmEntry(e)} onContextMenu={(ev) => openMenu(ev, workbenchRowItems(entryPath(e.name), () => {
+                if (e.type === "dir") navigate(entryPath(e.name));
                 else openFile(e.name);
               }, notify))}>
                 {e.type === "dir" ? <Folder className="h-3.5 w-3.5 text-ink-dim" /> : <FileText className="h-3.5 w-3.5 text-ink-dim" />}
@@ -199,17 +221,33 @@ export function FilesTab({ instance, workspace, openDetail, notify }: Props) {
   );
 }
 
-export function TracesTab({ instance, workspace, session }: Props) {
-  const load = useCallback(async () => {
-    const [stats, doctor] = await Promise.all([getUsageStats(instance, workspace, session, 7), getDoctorReport(instance)]);
-    return { stats, doctor };
-  }, [instance, workspace, session]);
-  const { data, error, loading, reload } = useAsync<{ stats: UsageStats; doctor: { checks: DoctorCheck[]; failed: number; warned: number } }>(load, [load]);
-  if (!data) return <StateLine loading={loading} error={error} />;
-  const s = data.stats;
+export function TracesTab({ instance, workspace, session, active = true }: Props) {
+  const statsKey = swrKey(instance.id, workspace, `traces:usage:${session || "workspace"}`);
+  const doctorKey = swrKey(instance.id, workspace, "doctor");
+  const statsSwr = useSWR<UsageStats>(statsKey, () => getUsageStats(instance, workspace, session, 7), {
+    ttlMs: 30_000,
+    persist: "session",
+    enabled: active,
+    revalidateOnFocus: true,
+  });
+  const doctorSwr = useSWR<{ checks: DoctorCheck[]; failed: number; warned: number }>(doctorKey, () => getDoctorReport(instance), {
+    ttlMs: 60_000,
+    persist: "session",
+    enabled: active,
+    revalidateOnFocus: true,
+  });
+  const s = statsSwr.data;
+  const doctor = doctorSwr.data;
+  const error = statsSwr.error || doctorSwr.error;
+  const reload = () => {
+    void statsSwr.refresh().catch(() => {});
+    void doctorSwr.refresh().catch(() => {});
+  };
+  if (!s || !doctor) return <StateLine loading={statsSwr.isLoading || doctorSwr.isLoading} error={error} />;
   return (
     <div className="h-full overflow-y-auto p-3">
-      <div className="mb-2 flex justify-end"><button type="button" className={btn} onClick={reload}><RefreshCw className="h-3 w-3" />refresh</button></div>
+      <div className="mb-2 flex items-center justify-end gap-2"><RevalidatingPulse show={statsSwr.isRevalidating || doctorSwr.isRevalidating} /><button type="button" className={btn} onClick={reload}><RefreshCw className="h-3 w-3" />refresh</button></div>
+      {error && <div className="mb-2 rounded border border-subtle px-2 py-1 text-red-500">{error}</div>}
       <div className="grid grid-cols-2 gap-2">
         <Metric label="tokens" value={String(s.total_tokens)} detail={`in ${s.tokens_in} · out ${s.tokens_out}`} />
         <Metric label="cost" value={`$${s.est_cost_usd.toFixed(4)}`} detail={`${s.sessions_count} sessions`} />
@@ -220,8 +258,8 @@ export function TracesTab({ instance, workspace, session }: Props) {
         {s.top_tools.slice(0, 8).map((t) => <div key={t.tool} className="flex justify-between border-b border-subtle py-1"><span className="truncate text-ink-primary">{t.tool}</span><span className="text-ink-dim">{t.count} · {t.errors} err</span></div>)}
         {s.top_tools.length === 0 && <div className="text-ink-dim">no tool calls</div>}
       </Section>
-      <Section title={`doctor · ${data.doctor.failed} fail · ${data.doctor.warned} warn`}>
-        {data.doctor.checks.map((c) => (
+      <Section title={`doctor · ${doctor.failed} fail · ${doctor.warned} warn`}>
+        {doctor.checks.map((c) => (
           <div key={c.name} className="border-b border-subtle py-1.5">
             <div className="flex items-center justify-between"><span className="text-ink-primary">{c.name}</span><span className={c.status === "fail" ? "text-red-500" : c.status === "warn" ? "text-amber-500" : "text-ink-dim"}>{c.status}</span></div>
             {c.detail && <div className="text-[10px] text-ink-dim">{c.detail}</div>}
@@ -244,24 +282,38 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return <section className="mt-3 rounded-md border border-subtle bg-main p-2"><h3 className="mb-1 text-[10px] uppercase tracking-wider text-ink-dim">{title}</h3>{children}</section>;
 }
 
-export function BgTab({ instance, workspace, openDetail, notify }: Props) {
-  const load = useCallback(() => listBgSessions(instance, workspace), [instance, workspace]);
-  const { data, error, loading, reload } = useAsync<BgSession[]>(load, [load]);
-  if (!data) return <StateLine loading={loading} error={error} />;
+export function BgTab({ instance, workspace, openDetail, notify, active = true }: Props) {
+  const key = swrKey(instance.id, workspace, "bg");
+  const swr = useSWR<BgSession[]>(key, () => listBgSessions(instance, workspace), {
+    ttlMs: 5_000,
+    persist: "session",
+    enabled: active,
+    revalidateOnFocus: true,
+    refreshIntervalMs: 5_000,
+  });
+  const data = swr.data;
+  const error = swr.error;
+  const reload = swr.refresh;
+  const openLogs = useCallback((id: string) => {
+    void fetchSWR(swrKey(instance.id, workspace, `bg:logs:${id}`), () => getBgLogs(instance, id), { ttlMs: 5_000, persist: "session" })
+      .then((r) => openDetail({ title: `${id} · ${r.status}`, body: r.logs }))
+      .catch((e) => notify(`logs: ${errText(e)}`, "error"));
+  }, [instance, workspace, notify, openDetail]);
+  if (!data) return <StateLine loading={swr.isLoading} error={error} />;
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex justify-end border-b border-subtle px-3 py-2"><button type="button" className={btn} onClick={reload}><RefreshCw className="h-3 w-3" />refresh</button></div>
+      <div className="flex items-center justify-end gap-2 border-b border-subtle px-3 py-2"><RevalidatingPulse show={swr.isRevalidating} /><button type="button" className={btn} onClick={() => void reload()}><RefreshCw className="h-3 w-3" />refresh</button></div>
       <StateLine loading={false} error={error} empty={data.length === 0} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {data.map((b) => (
           <div key={b.id} className="border-b border-subtle px-3 py-2">
             <div className="flex items-center gap-2">
-              <button type="button" className="min-w-0 flex-1 text-left hover:text-ink-primary" onClick={() => void getBgLogs(instance, b.id).then((r) => openDetail({ title: `${b.id} · ${r.status}`, body: r.logs })).catch((e) => notify(`logs: ${errText(e)}`, "error"))}>
+              <button type="button" className="min-w-0 flex-1 text-left hover:text-ink-primary" onClick={() => openLogs(b.id)} onPointerEnter={() => prefetchSWR(swrKey(instance.id, workspace, `bg:logs:${b.id}`), () => getBgLogs(instance, b.id), { ttlMs: 5_000, persist: "session" })}>
                 <div className="truncate text-ink-primary">{b.task || b.id}</div>
                 <div className="truncate text-[10px] text-ink-dim">{b.id} · {b.status} · pid {b.pid}</div>
               </button>
-              <button type="button" className={btn} onClick={() => void getBgLogs(instance, b.id).then((r) => openDetail({ title: `${b.id} · ${r.status}`, body: r.logs }))}><Play className="h-3 w-3" />logs</button>
-              {(b.status === "running" || b.status === "started") && <button type="button" className={btn} onClick={() => void killBgSession(instance, b.id).then(() => { notify(`killed ${b.id}`, "success"); reload(); }).catch((e) => notify(`kill: ${errText(e)}`, "error"))}><Skull className="h-3 w-3" />kill</button>}
+              <button type="button" className={btn} onClick={() => openLogs(b.id)}><Play className="h-3 w-3" />logs</button>
+              {(b.status === "running" || b.status === "started") && <button type="button" className={btn} onClick={() => void killBgSession(instance, b.id).then(() => { notify(`killed ${b.id}`, "success"); void reload(); }).catch((e) => notify(`kill: ${errText(e)}`, "error"))}><Skull className="h-3 w-3" />kill</button>}
             </div>
           </div>
         ))}
@@ -270,29 +322,52 @@ export function BgTab({ instance, workspace, openDetail, notify }: Props) {
   );
 }
 
-export function DataTab({ instance, workspace, openDetail, notify }: Props) {
-  const [memory, setMemory] = useState<MemoryFileRow[]>([]);
-  const [skills, setSkills] = useState<SkillRow[]>([]);
-  const [allowlist, setAllowlist] = useState<string[]>([]);
+export function DataTab({ instance, workspace, openDetail, notify, active = true }: Props) {
   const [storeKind, setStoreKind] = useState<"event" | "task" | "note" | "decision">("task");
-  const [storeItems, setStoreItems] = useState<StoreItem[]>([]);
   const [storeTitle, setStoreTitle] = useState("");
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [edit, setEdit] = useState<{ kind: "memory" | "skill"; path: string; content: string } | null>(null);
-  const [error, setError] = useState("");
-  const reload = useCallback(() => {
-    setError("");
-    void Promise.all([
-      listMemoryFiles(instance, workspace, q).then(setMemory),
-      listSkills(instance, workspace).then(setSkills),
-      listApprovalAllowlist(instance, workspace).then(setAllowlist),
-      api.listStoreItems(instance, workspace, storeKind).then((r) => setStoreItems(r.supported ? r.items : [])),
-    ]).catch((e) => setError(errText(e)));
-  }, [instance, workspace, q, storeKind]);
   useEffect(() => {
-    const t = window.setTimeout(reload, q ? 250 : 0);
+    const t = window.setTimeout(() => setDebouncedQ(q.trim()), q.trim() ? 250 : 0);
     return () => window.clearTimeout(t);
-  }, [reload, q]);
+  }, [q]);
+  const memorySwr = useSWR<MemoryFileRow[]>(
+    swrKey(instance.id, workspace, `memory:${debouncedQ}`),
+    () => listMemoryFiles(instance, workspace, debouncedQ),
+    { ttlMs: 30_000, persist: "session", enabled: active, revalidateOnFocus: true }
+  );
+  const skillsSwr = useSWR<SkillRow[]>(
+    swrKey(instance.id, workspace, "skills"),
+    () => listSkills(instance, workspace),
+    { ttlMs: 30_000, persist: "session", enabled: active, revalidateOnFocus: true }
+  );
+  const allowlistSwr = useSWR<string[]>(
+    swrKey(instance.id, workspace, "approval-allowlist"),
+    () => listApprovalAllowlist(instance, workspace),
+    { ttlMs: 30_000, persist: "session", enabled: active, revalidateOnFocus: true }
+  );
+  const storeSwr = useSWR(
+    swrKey(instance.id, workspace, `store:${storeKind}`),
+    async () => {
+      const r = await api.listStoreItems(instance, workspace, storeKind);
+      return r.supported ? r.items : [];
+    },
+    { ttlMs: 30_000, persist: "session", enabled: active, revalidateOnFocus: true }
+  );
+  const memory = memorySwr.data ?? [];
+  const skills = skillsSwr.data ?? [];
+  const allowlist = allowlistSwr.data ?? [];
+  const storeItems = storeSwr.data ?? [];
+  const error = memorySwr.error || skillsSwr.error || allowlistSwr.error || storeSwr.error;
+  const reload = useCallback(() => {
+    void memorySwr.refresh().catch(() => {});
+    void skillsSwr.refresh().catch(() => {});
+    void allowlistSwr.refresh().catch(() => {});
+    void storeSwr.refresh().catch(() => {});
+  }, [memorySwr, skillsSwr, allowlistSwr, storeSwr]);
+  const memoryContentKey = useCallback((path: string) => swrKey(instance.id, workspace, `memory:content:${path}`), [instance.id, workspace]);
+  const skillContentKey = useCallback((name: string) => swrKey(instance.id, workspace, `skills:content:${name}`), [instance.id, workspace]);
   const saveEdit = () => {
     if (!edit) return;
     const run = edit.kind === "memory" ? writeMemoryFile(instance, workspace, edit.path, edit.content) : writeSkill(instance, workspace, edit.path, edit.content);
@@ -302,6 +377,7 @@ export function DataTab({ instance, workspace, openDetail, notify }: Props) {
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex gap-1 border-b border-subtle p-2">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="filter memory" aria-label="Filter memory" className={`${inputClass} text-[11px]`} />
+        <RevalidatingPulse show={memorySwr.isRevalidating || skillsSwr.isRevalidating || allowlistSwr.isRevalidating || storeSwr.isRevalidating} />
         <button type="button" className={btn} onClick={reload}><RefreshCw className="h-3 w-3" /></button>
       </div>
       {error && <div className="border-b border-subtle px-3 py-2 text-red-500">{error}</div>}
@@ -350,9 +426,9 @@ export function DataTab({ instance, workspace, openDetail, notify }: Props) {
         <Section title="memory">
           <div className="mb-1 flex justify-end"><button type="button" className={btn} onClick={() => setEdit({ kind: "memory", path: `notes/${new Date().toISOString().slice(0, 10)}.md`, content: "" })}>new memory</button></div>
           {memory.map((m) => (
-            <div key={m.path} className="flex items-center gap-1 border-b border-subtle py-1">
-              <button type="button" className="min-w-0 flex-1 truncate text-left text-ink-primary hover:underline" onClick={() => void readMemoryFile(instance, workspace, m.path).then((content) => setEdit({ kind: "memory", path: m.path, content })).catch((e) => notify(`memory: ${errText(e)}`, "error"))}>{m.path}</button>
-              <button type="button" aria-label={`Preview ${m.path}`} className={btn} onClick={() => void readMemoryFile(instance, workspace, m.path).then((content) => openDetail({ title: m.path, body: content }))}>view</button>
+            <div key={m.path} className="flex items-center gap-1 border-b border-subtle py-1" onPointerEnter={() => prefetchSWR(memoryContentKey(m.path), () => readMemoryFile(instance, workspace, m.path), { ttlMs: 30_000, persist: "session" })}>
+              <button type="button" className="min-w-0 flex-1 truncate text-left text-ink-primary hover:underline" onClick={() => void fetchSWR(memoryContentKey(m.path), () => readMemoryFile(instance, workspace, m.path), { ttlMs: 30_000, persist: "session" }).then((content) => setEdit({ kind: "memory", path: m.path, content })).catch((e) => notify(`memory: ${errText(e)}`, "error"))}>{m.path}</button>
+              <button type="button" aria-label={`Preview ${m.path}`} className={btn} onClick={() => void fetchSWR(memoryContentKey(m.path), () => readMemoryFile(instance, workspace, m.path), { ttlMs: 30_000, persist: "session" }).then((content) => openDetail({ title: m.path, body: content }))}>view</button>
               <button type="button" aria-label={`Delete ${m.path}`} className={btn} onClick={() => void deleteMemoryFile(instance, workspace, m.path).then(reload).catch((e) => notify(`delete: ${errText(e)}`, "error"))}><Trash2 className="h-3 w-3" /></button>
             </div>
           ))}
@@ -361,8 +437,8 @@ export function DataTab({ instance, workspace, openDetail, notify }: Props) {
         <Section title="skills">
           <div className="mb-1 flex justify-end"><button type="button" className={btn} onClick={() => setEdit({ kind: "skill", path: "new-skill", content: "# Skill" + String.fromCharCode(10, 10) })}>new skill</button></div>
           {skills.map((s) => (
-            <div key={s.name} className="flex items-center gap-1 border-b border-subtle py-1">
-              <button type="button" className="min-w-0 flex-1 truncate text-left text-ink-primary hover:underline" onClick={() => void readSkill(instance, workspace, s.name).then((content) => setEdit({ kind: "skill", path: s.name, content })).catch((e) => notify(`skill: ${errText(e)}`, "error"))}>{s.name}</button>
+            <div key={s.name} className="flex items-center gap-1 border-b border-subtle py-1" onPointerEnter={() => prefetchSWR(skillContentKey(s.name), () => readSkill(instance, workspace, s.name), { ttlMs: 30_000, persist: "session" })}>
+              <button type="button" className="min-w-0 flex-1 truncate text-left text-ink-primary hover:underline" onClick={() => void fetchSWR(skillContentKey(s.name), () => readSkill(instance, workspace, s.name), { ttlMs: 30_000, persist: "session" }).then((content) => setEdit({ kind: "skill", path: s.name, content })).catch((e) => notify(`skill: ${errText(e)}`, "error"))}>{s.name}</button>
               <span className="text-[9px] text-ink-dim">{s.files} files</span>
               <button type="button" aria-label={`Delete skill ${s.name}`} className={btn} onClick={() => void deleteSkill(instance, workspace, s.name).then(reload).catch((e) => notify(`delete skill: ${errText(e)}`, "error"))}><Trash2 className="h-3 w-3" /></button>
             </div>
@@ -373,7 +449,7 @@ export function DataTab({ instance, workspace, openDetail, notify }: Props) {
           {allowlist.map((p) => (
             <div key={p} className="flex items-center gap-1 border-b border-subtle py-1">
               <code className="min-w-0 flex-1 truncate text-ink-primary">{p}</code>
-              <button type="button" className={btn} onClick={() => void deleteApprovalAllowlistPattern(instance, workspace, p).then(setAllowlist).catch((e) => notify(`allowlist: ${errText(e)}`, "error"))}>remove</button>
+              <button type="button" className={btn} onClick={() => void deleteApprovalAllowlistPattern(instance, workspace, p).then(() => { void allowlistSwr.refresh().catch(() => {}); }).catch((e) => notify(`allowlist: ${errText(e)}`, "error"))}>remove</button>
             </div>
           ))}
           {allowlist.length === 0 && <div className="text-ink-dim">no remembered approvals</div>}

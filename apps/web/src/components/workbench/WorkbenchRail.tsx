@@ -72,6 +72,20 @@ export function WorkbenchRail({
   };
   const tabProps = { instance, workspace, session, openDetail, notify };
   const sessionLabel = session ? (sessionTitle?.trim() && sessionTitle.trim() !== session ? sessionTitle.trim() : shortId(session)) : "";
+  const [visitedTabs, setVisitedTabs] = useState<Set<WorkbenchTabId>>(() => new Set([tab]));
+
+  useEffect(() => {
+    setVisitedTabs(new Set([tab]));
+  }, [instance.id, workspace]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    setVisitedTabs((prev) => {
+      if (prev.has(tab)) return prev;
+      const next = new Set(prev);
+      next.add(tab);
+      return next;
+    });
+  }, [tab]);
 
   useEffect(() => {
     const move = (e: PointerEvent) => {
@@ -115,12 +129,36 @@ export function WorkbenchRail({
       </div>
       <Tabs value={tab} onValueChange={(v) => setTab(v as WorkbenchTabId)} ariaLabel="Workbench sections" tabs={TABS} tabClassName="px-2.5 py-2 text-[11px] shrink-0 whitespace-nowrap text-ink-muted hover:text-ink-primary data-[selected]:text-ink-primary border-b-2 border-transparent data-[selected]:border-accent cursor-pointer outline-none focus-visible:text-ink-primary -mb-px" />
       <div key={`${instance.id}:${workspace}`} className="min-h-0 flex-1 overflow-hidden">
-        {tab === "changes" && <ChangesTab {...tabProps} openDetail={openDetail} notify={notify} />}
-        {tab === "files" && <FilesTab {...tabProps} openDetail={openDetail} notify={notify} />}
-        {tab === "traces" && <TracesTab {...tabProps} openDetail={openDetail} notify={notify} />}
-        {tab === "bg" && <BgTab {...tabProps} openDetail={openDetail} notify={notify} />}
-        {tab === "data" && <DataTab {...tabProps} openDetail={openDetail} notify={notify} />}
-        {tab === "detail" && <DetailTab detail={detail} />}
+        {(visitedTabs.has("changes") || tab === "changes") && (
+          <div hidden={tab !== "changes"} className="h-full min-h-0 overflow-hidden" data-testid="workbench-pane-changes">
+            <ChangesTab {...tabProps} active={tab === "changes"} openDetail={openDetail} notify={notify} />
+          </div>
+        )}
+        {(visitedTabs.has("files") || tab === "files") && (
+          <div hidden={tab !== "files"} className="h-full min-h-0 overflow-hidden" data-testid="workbench-pane-files">
+            <FilesTab {...tabProps} active={tab === "files"} openDetail={openDetail} notify={notify} />
+          </div>
+        )}
+        {(visitedTabs.has("traces") || tab === "traces") && (
+          <div hidden={tab !== "traces"} className="h-full min-h-0 overflow-hidden" data-testid="workbench-pane-traces">
+            <TracesTab {...tabProps} active={tab === "traces"} openDetail={openDetail} notify={notify} />
+          </div>
+        )}
+        {(visitedTabs.has("bg") || tab === "bg") && (
+          <div hidden={tab !== "bg"} className="h-full min-h-0 overflow-hidden" data-testid="workbench-pane-bg">
+            <BgTab {...tabProps} active={tab === "bg"} openDetail={openDetail} notify={notify} />
+          </div>
+        )}
+        {(visitedTabs.has("data") || tab === "data") && (
+          <div hidden={tab !== "data"} className="h-full min-h-0 overflow-hidden" data-testid="workbench-pane-data">
+            <DataTab {...tabProps} active={tab === "data"} openDetail={openDetail} notify={notify} />
+          </div>
+        )}
+        {(visitedTabs.has("detail") || tab === "detail") && (
+          <div hidden={tab !== "detail"} className="h-full min-h-0 overflow-hidden" data-testid="workbench-pane-detail">
+            <DetailTab detail={detail} />
+          </div>
+        )}
       </div>
     </aside>
   );

@@ -73,6 +73,7 @@ interface KlankerListProps {
   onNewChat: (ws: string, persona: string) => void;
   onDeleteChat: (ws: string, persona: string, row: SessionRow) => void;
   onRenameChat?: (ws: string, persona: string, row: SessionRow, title: string) => void;
+  onPrefetchSession?: (ws: string, persona: string, session: string) => void;
   onForkChat?: (ws: string, persona: string, row: SessionRow) => void;
   onExportChat?: (ws: string, persona: string, row: SessionRow, format: "md" | "json") => void;
   onCopySessionId?: (ws: string, persona: string, row: SessionRow) => void;
@@ -115,7 +116,7 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
   const {
     workspaces, wsHostsOf, personasOf, sessionRowsOf, selWs, selPersona, openChatId,
     width, collapsed, onResize, onToggleCollapse, onExpandWs, onExpandPersona, onSelectChat,
-    onNewChat, onDeleteChat, onRenameChat, onForkChat, onExportChat, onCopySessionId,
+    onNewChat, onDeleteChat, onRenameChat, onPrefetchSession, onForkChat, onExportChat, onCopySessionId,
     onNewWorkspace, onDeleteWorkspace, onWorkspaceSettings, onWorkspaceShare, onNewPersona,
     onDeletePersona, onEditPersona, onSelectWorkspace, onOpenPalette, onOpenSettings, focusSession,
   } = props;
@@ -247,6 +248,23 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
     if (!onRenameChat) return;
     setRenaming(`${ws}:${persona}:${row.chatId}`);
     setRenameText(row.label);
+  };
+
+  const prefetchTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (prefetchTimer.current !== null) window.clearTimeout(prefetchTimer.current);
+  }, []);
+  const schedulePrefetch = (ws: string, persona: string, row: SessionRow, immediate = false) => {
+    if (!onPrefetchSession || !row.session || row.chatId === openChatId) return;
+    if (prefetchTimer.current !== null) window.clearTimeout(prefetchTimer.current);
+    if (immediate) {
+      onPrefetchSession(ws, persona, row.session);
+      return;
+    }
+    prefetchTimer.current = window.setTimeout(() => {
+      prefetchTimer.current = null;
+      onPrefetchSession(ws, persona, row.session);
+    }, 120);
   };
 
   const workspaceMenuItems = (w: WorkspaceRow): ContextMenuItem[] => [
@@ -387,12 +405,15 @@ export const KlankerList: React.FC<KlankerListProps> = (props) => {
                                     data-session={s.session}
                                     data-chat={s.chatId}
                                     onContextMenu={(e) => openMenu(e, sessionMenuItems(w.id, p.id, s))}
+                                    onPointerEnter={() => schedulePrefetch(w.id, p.id, s)}
+                                    onPointerDown={() => schedulePrefetch(w.id, p.id, s, true)}
+                                    onFocus={() => schedulePrefetch(w.id, p.id, s)}
                                     className={`group/session relative flex items-center transition-shadow ${chatSelected ? "bg-elevated" : "hover:bg-hover"} ${highlighted ? "ring-1 ring-accent/60" : ""}`}
                                   >
                                     {renaming === rowKey ? (
-                                      <form className="flex flex-1 items-center gap-1 py-1 pl-9 pr-1" onSubmit={(e) => { e.preventDefault(); onRenameChat?.(w.id, p.id, s, renameText.trim()); setRenaming(""); }}>
-                                        <input autoFocus value={renameText} onChange={(e) => setRenameText(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") setRenaming(""); }} aria-label="Rename chat" className="min-w-0 flex-1 rounded border border-subtle hover:border-strong focus:border-strong bg-elevated px-1 py-0.5 font-mono text-[11px] text-ink-primary outline-none" />
-                                        <button type="submit" aria-label="Save chat title" className="text-ink-dim hover:text-ink-primary"><Check className="h-3 w-3" /></button>
+                                      <form className="flex min-h-11 flex-1 items-center gap-1 py-1.5 pl-9 pr-1 font-mono text-[11px] leading-normal md:min-h-8" data-testid="rename-session-form" onSubmit={(e) => { e.preventDefault(); onRenameChat?.(w.id, p.id, s, renameText.trim()); setRenaming(""); }}>
+                                        <input autoFocus value={renameText} onChange={(e) => setRenameText(e.target.value)} onKeyDown={(e) => { if (e.key === "Escape") { setRenameText(s.label); setRenaming(""); } }} aria-label="Rename chat" className="min-w-0 flex-1 appearance-none border-0 border-b border-strong bg-transparent px-0 py-0 font-mono text-[11px] leading-normal text-ink-primary outline-none" />
+                                        <button type="submit" aria-label="Save chat title" className="inline-flex h-5 w-5 items-center justify-center text-ink-dim hover:text-ink-primary"><Check className="h-3 w-3" /></button>
                                       </form>
                                     ) : (
                                       <button

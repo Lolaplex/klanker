@@ -29,6 +29,8 @@ export type TurnEvent = {
   tokens_out?: number;
   est_cost_usd?: number;
   model?: string;
+  tier?: "fast" | "agent" | "deep" | string;
+  mode?: string;
 };
 
 export const TURN_EVENT_NAME = "klanker:turn-event";

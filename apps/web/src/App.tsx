@@ -71,6 +71,9 @@ import { ToastStack, type ToastItem } from "./components/ToastStack";
 import { OnboardingEmpty } from "./components/OnboardingEmpty";
 import { chatToJson, chatToMarkdown, downloadText, exportStem } from "./chatExport";
 import { forkSession } from "./services/workbenchApi";
+import { fetchSWR, invalidateSWRDomain, mutateSWR, peekSWR, removeSWR, wireSwrInvalidations } from "./services/swrCache";
+import { providerRowsKey, sessionEventsKey, sessionListKey, type SidebarSession } from "./services/sessionCache";
+import { readTurnMode } from "./services/turnMode";
 import { readThemePreference, resolveMode, setThemePreference } from "./theme";
 
 const DEFAULT_SETTINGS: DesktopSettings = { workspace: "", autostart: false, hub_mode: false };
@@ -450,6 +453,9 @@ export function App() {
   chatProviderScopeRef.current = chatProviderScope;
   approvalsSessionRef.current = openChat?.session || "";
   approvalsDeviceRef.current = chatHostBinding.host || "";
+  useEffect(() => {
+    wireSwrInvalidations();
+  }, []);
   // The remembered provider/model pick keys on ws + chat + effective host
   // — provider manifests differ per host, so a pick must never bleed into
   // a differently-hosted chat (klanker#152 R12).
@@ -493,8 +499,12 @@ export function App() {
     onHealth: setSseHealthy,
     onEvent: (ev) => {
       if (ev.kind === "workspace.changed") {
+        invalidateSWRDomain("workspaces");
+        invalidateSWRDomain("personas");
+        invalidateSWRDomain("sessions");
         tree.refreshWorkspaces();
       } else if (ev.kind === "provider.changed") {
+        invalidateSWRDomain("providers");
         // Manifest/secret edits on any host — provider rows + badges
         // update live instead of on the next manual refresh (klanker#169).
         refreshProviders();
@@ -504,8 +514,11 @@ export function App() {
         void inst.refreshInstances();
         tree.refreshHosts();
       } else if (ev.kind === "persona.changed") {
+        invalidateSWRDomain("personas");
+        invalidateSWRDomain("sessions");
         tree.refreshPersonas(ev.workspace || undefined);
       } else if (ev.kind === "session.changed") {
+        invalidateSWRDomain("sessions");
         tree.refreshSessions(
           ev.workspace || undefined,
           typeof ev.payload?.persona === "string" ? ev.payload.persona : undefined
@@ -604,10 +617,21 @@ export function App() {
     if (!inst0) return;
     if (!(await dialogs.confirm(`Delete chat "${row.label || row.session}"? This cannot be undone.`, { danger: true }))) return;
     const key = `${ws} ${persona}`;
+    const cacheKey = sessionListKey(inst0.id, ws, persona);
+    const rowsBefore = tree.serverSessions[key] ? [...tree.serverSessions[key]] : undefined;
+    const bucketBefore = chats[key];
+    const mutation = mutateSWR<SidebarSession[]>(
+      cacheKey,
+      (current) => (current ?? rowsBefore ?? []).filter((s) => s.id !== row.session),
+      async () => {
+        if (!row.pending) await api.deleteSession(inst0, ws, persona, row.session);
+      },
+      () => {}
+    );
     // Optimistic: drop the row from both stores before the server answers.
     tree.setServerSessions((prev) => ({
       ...prev,
-      [`${ws} ${persona}`]: (prev[`${ws} ${persona}`] || []).filter((s) => s.id !== row.session),
+      [key]: (prev[key] || []).filter((s) => s.id !== row.session),
     }));
     setChats((prev) => {
       const current = prev[key];
@@ -617,11 +641,14 @@ export function App() {
       const openId = items.some((i) => i.id === current.openId) ? current.openId : items[items.length - 1].id;
       return { ...prev, [key]: { openId, items } };
     });
-    if (!row.pending) {
-      void api.deleteSession(inst0, ws, persona, row.session).catch((e) => {
-        setWsNote(`delete: ${e instanceof Error ? e.message : e}`);
-        tree.expandPersona(ws, persona);
-      });
+    try {
+      await mutation;
+      removeSWR(sessionEventsKey(inst0.id, ws, persona, row.session));
+    } catch (e) {
+      tree.setServerSessions((prev) => (rowsBefore ? { ...prev, [key]: rowsBefore } : prev));
+      setChats((prev) => (bucketBefore ? { ...prev, [key]: bucketBefore } : prev));
+      setWsNote(`delete failed — restored: ${e instanceof Error ? e.message : e}`);
+      pushToast("delete failed — chat restored", "error");
     }
   };
 
@@ -715,25 +742,24 @@ export function App() {
     const inst = activeInstance;
     if (!inst) return;
     const scope = chatProviderScopeRef.current;
-    if (scope.kind === "remote") {
-      void api.listRemoteProviders(scope.deviceId).then((r) => {
-        setChatProviders(filterVisibleProviders(r.rows, readShowTestProviders()));
-        setProvidersStale(r.stale);
-      });
-    } else {
-      void api.listProviders(inst).then((r) => {
-        setChatProviders(filterVisibleProviders(r.rows, readShowTestProviders()));
-        setProvidersStale(r.stale);
-      });
-    }
+    const remoteDevice = scope.kind === "remote" ? scope.deviceId : "";
+    const cacheKey = providerRowsKey(inst.id, remoteDevice);
+    const applyRows = (r: { rows: ProviderRow[]; stale: boolean }) => {
+      setChatProviders(filterVisibleProviders(r.rows, readShowTestProviders()));
+      setProvidersStale(r.stale);
+    };
+    const cached = peekSWR<{ rows: ProviderRow[]; stale: boolean }>(cacheKey);
+    if (cached) applyRows(cached);
+    const fetcher = () => scope.kind === "remote" ? api.listRemoteProviders(scope.deviceId) : api.listProviders(inst);
+    void fetchSWR(cacheKey, fetcher, { ttlMs: 60_000, persist: "session", force: true })
+      .then(applyRows)
+      .catch(() => {});
     void api.listFavorites(inst).then(setChatFavorites);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInstance?.id]);
 
   useEffect(() => {
-    setChatProviders([]);
     setChatFavorites([]);
-    setProvidersStale(false);
     refreshProviders();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeInstance?.id, providerScopeKey]);
@@ -984,6 +1010,7 @@ export function App() {
         provider: provider || undefined,
         model: model || undefined,
         mode: selectedAcpMode || undefined,
+        turn_mode: readTurnMode(),
         attachments: attachments && attachments.length ? attachments : undefined,
       };
       // A dead client stream (iOS "Load failed", suspend, network switch) is
@@ -1009,7 +1036,16 @@ export function App() {
           reattach: () => api.attachRun(inst0, { run: busy.run, session, workspace: selWs || undefined }),
           onEvent: (ev) => {
             lastEventAt = Date.now();
-            if (ev.type === "delta" && ev.text) {
+            if (ev.type === "tier" && ev.tier) {
+              setChats((prev) =>
+                mapChat(prev, selKey, chatId, (item) => ({
+                  ...item,
+                  messages: item.messages.map((m) =>
+                    m.id === assistantId ? { ...m, tier: ev.tier, turn_mode: ev.mode } : m
+                  ),
+                }))
+              );
+            } else if (ev.type === "delta" && ev.text) {
               replyBuf += ev.text;
               deltas.push(ev.text);
             } else if (ev.type === "thought" && ev.text) {
@@ -1231,11 +1267,34 @@ export function App() {
   }, [activeInstance, pushToast, tree]);
 
   const renameChat = useCallback((ws: string, persona: string, row: SessionRow, title: string) => {
-    if (!title.trim()) return;
+    const inst0 = activeInstance;
     const clipped = title.trim();
-    tree.setSessionTitles((prev) => ({ ...prev, [`${ws} ${persona} ${row.session}`]: clipped }));
-    pushToast("chat title updated locally", "success");
-  }, [pushToast, tree]);
+    if (!inst0 || !clipped) return;
+    const ck = `${ws} ${persona} ${row.session}`;
+    const cacheKey = sessionListKey(inst0.id, ws, persona);
+    const previousTitle = tree.sessionTitles[ck];
+    let serverBacked = false;
+    const mutation = mutateSWR<SidebarSession[]>(
+      cacheKey,
+      (current) => (current ?? tree.serverSessions[`${ws} ${persona}`] ?? []).map((s) => (s.id === row.session ? { ...s, title: clipped } : s)),
+      async () => {
+        const result = await api.renameSession(inst0, ws, persona, row.session, clipped);
+        serverBacked = result.server;
+      }
+    );
+    tree.setSessionTitles((prev) => ({ ...prev, [ck]: clipped }));
+    void mutation
+      .then(() => pushToast(serverBacked ? "chat title updated" : "chat title updated locally", "success"))
+      .catch((e) => {
+        tree.setSessionTitles((prev) => {
+          const next = { ...prev };
+          if (previousTitle) next[ck] = previousTitle;
+          else delete next[ck];
+          return next;
+        });
+        pushToast(`rename failed — restored: ${e instanceof Error ? e.message : e}`, "error");
+      });
+  }, [activeInstance, pushToast, tree]);
 
 
   // U18 CustomEvent surface: slash commands and composer controls stay
@@ -1445,6 +1504,7 @@ export function App() {
           onNewChat={(ws, p) => { newChat(ws, p); setNavOpen(false); }}
           onDeleteChat={deleteChat}
           onRenameChat={renameChat}
+          onPrefetchSession={tree.prefetchSession}
           onForkChat={forkChat}
           onExportChat={exportSessionChat}
           onCopySessionId={copySessionId}

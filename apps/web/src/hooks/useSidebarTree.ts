@@ -12,6 +12,8 @@ import type { PersonaRow, SessionRow } from "../components/KlankerList";
 import { ChatBucket, LS_TITLES, clipTitle } from "../chatBuckets";
 import { eventsToMessages } from "../chatSync";
 import { dedupeWorkspaces, sessionHostPill } from "../wsTree";
+import { fetchSWR, peekSWR, subscribeSWR, swrKey } from "../services/swrCache";
+import { sessionEventsKey, sessionListKey, type SidebarSession } from "../services/sessionCache";
 
 /** Cached title key — `${ws} ${persona} ${session}` (klanker#150). */
 const titleKey = (ws: string, persona: string, session: string) => `${ws} ${persona} ${session}`;
@@ -61,6 +63,7 @@ export function useSidebarTree(args: {
   wsHostsOf: (ws: string) => WorkspaceHosts | undefined;
   personasOf: (ws: string) => PersonaRow[] | undefined;
   sessionRowsOf: (ws: string, persona: string) => SessionRow[] | undefined;
+  prefetchSession: (ws: string, persona: string, session: string) => void;
 } {
   const { activeInstance, status, chats, setSelWs, setWsNote, evCache, onResetApprovals, sseHealthy = false, selWs = "" } = args;
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[]>([]);
@@ -93,12 +96,24 @@ export function useSidebarTree(args: {
   sseHealthyRef.current = sseHealthy;
   const instId = activeInstance?.id;
 
+  const subscribeCache = <T,>(key: string, apply: (rows: T) => void) => {
+    if (!sessionSubscriptions.current.has(key)) {
+      sessionSubscriptions.current.set(key, subscribeSWR(key, () => {
+        const rows = peekSWR<T>(key);
+        if (rows !== undefined) apply(rows);
+      }));
+    }
+  };
+
   const expandWs = (ws: string) => {
     const inst = activeInstance;
     if (!inst) return;
     if (!treePersonas[ws]) {
-      void api
-        .listPersonas(inst, ws)
+      const personasKey = swrKey(inst.id, ws, "personas");
+      const cached = peekSWR<PersonaRow[]>(personasKey);
+      if (cached) setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: cached }));
+      subscribeCache<PersonaRow[]>(personasKey, (rows) => setTreePersonas((prev) => ({ ...prev, [ws]: rows })));
+      void fetchSWR(personasKey, () => api.listPersonas(inst, ws), { ttlMs: 30_000, persist: "session" })
         .then((rows) => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: rows })))
         .catch(() => setTreePersonas((prev) => (prev[ws] ? prev : { ...prev, [ws]: [] })));
     }
@@ -106,16 +121,22 @@ export function useSidebarTree(args: {
     // handoff counts — the local relay's operator surface fronts them for
     // every workspace it serves. Older relays 404 cleanly to "absent".
     if (!wsHosts[ws]) {
-      void api
-        .fetchWorkspaceHosts(ws)
+      const hostsKey = swrKey(inst.id, ws, "hosts");
+      subscribeCache<WorkspaceHosts>(hostsKey, (h) => setWsHosts((prev) => ({ ...prev, [ws]: h })));
+      const cachedHosts = peekSWR<WorkspaceHosts>(hostsKey);
+      if (cachedHosts) setWsHosts((prev) => (prev[ws] ? prev : { ...prev, [ws]: cachedHosts }));
+      void fetchSWR(hostsKey, () => api.fetchWorkspaceHosts(ws), { ttlMs: 15_000, persist: "session" })
         .then((h) => setWsHosts((prev) => (prev[ws] ? prev : { ...prev, [ws]: h })))
         .catch(() => {});
     }
     if (!personaCounts[ws]) {
-      void api
-        .wsInbox(inst, ws)
-        .then((r) => {
-          if (r) setPersonaCounts((prev) => ({ ...prev, [ws]: r.personas }));
+      const inboxKey = swrKey(inst.id, ws, "inbox");
+      subscribeCache<Record<string, WsInboxPersona> | null>(inboxKey, (rows) => {
+        if (rows) setPersonaCounts((prev) => ({ ...prev, [ws]: rows }));
+      });
+      void fetchSWR(inboxKey, async () => (await api.wsInbox(inst, ws))?.personas ?? null, { ttlMs: 15_000, persist: "session" })
+        .then((rows) => {
+          if (rows) setPersonaCounts((prev) => ({ ...prev, [ws]: rows }));
         })
         .catch(() => {});
     }
@@ -134,10 +155,17 @@ export function useSidebarTree(args: {
     let stop = false;
     void (async () => {
       try {
-        const rows = dedupeWorkspaces(await api.listWorkspaces(inst));
-        if (stop) return;
-        setWorkspaces(rows);
-        setSelWs((cur) => cur || rows[0]?.id || "");
+        const workspacesKey = swrKey(inst.id, "_root", "workspaces");
+        const applyRows = (rows: WorkspaceRow[]) => {
+          if (stop) return;
+          setWorkspaces(rows);
+          setSelWs((cur) => cur || rows[0]?.id || "");
+        };
+        subscribeCache<WorkspaceRow[]>(workspacesKey, applyRows);
+        const cached = peekSWR<WorkspaceRow[]>(workspacesKey);
+        if (cached) applyRows(cached);
+        const rows = await fetchSWR(workspacesKey, async () => dedupeWorkspaces(await api.listWorkspaces(inst)), { ttlMs: 30_000, persist: "session" });
+        applyRows(rows);
         // No eager expandWs for every row (klanker#169 U15): 3 requests
         // per workspace fired even for collapsed rows. Details lazy-load
         // via KlankerList expand/selection; the selected row is expanded
@@ -203,46 +231,79 @@ export function useSidebarTree(args: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instId, status?.state]);
 
+  const sessionSubscriptions = useRef(new Map<string, () => void>());
+  useEffect(() => {
+    const subs = sessionSubscriptions.current;
+    return () => {
+      for (const off of subs.values()) off();
+      subs.clear();
+    };
+  }, [instId]);
+
+  const applySessionList = (ws: string, persona: string, rows: SidebarSession[]) => {
+    const key = `${ws} ${persona}`;
+    const list = rows.filter((s) => s.id);
+    setServerSessions((prev) => ({ ...prev, [key]: list }));
+    // Seed titles delivered by the relay (list endpoint computes the
+    // first-user-message title server-side); only rows without one get
+    // the per-session events prefetch.
+    const seeded = list.filter((s) => s.title);
+    if (seeded.length) {
+      setSessionTitles((prev) => {
+        const next = { ...prev };
+        for (const s of seeded) {
+          const ck = titleKey(ws, persona, s.id);
+          if (!next[ck]) next[ck] = clipTitle(s.title!);
+        }
+        return next;
+      });
+    }
+    const inst = activeInstance;
+    if (!inst) return;
+    for (const s of list) {
+      const ck = titleKey(ws, persona, s.id);
+      if (s.title || sessionTitles[ck] || evCache.current.has(ck) || titleFetches.current.has(ck)) continue;
+      titleFetches.current.add(ck);
+      void fetchSWR(sessionEventsKey(inst.id, ws, persona, s.id), () => api.sessionEvents(inst, ws, persona, s.id), { ttlMs: 15_000, persist: "session" })
+        .then((events) => {
+          if (!events) return;
+          const msgs = eventsToMessages(events);
+          evCache.current.set(ck, msgs);
+          const first = msgs.find((m) => m.role === "user")?.content;
+          if (first) setSessionTitles((prev) => (prev[ck] ? prev : { ...prev, [ck]: clipTitle(first) }));
+        })
+        .catch(() => {})
+        .finally(() => titleFetches.current.delete(ck));
+    }
+  };
+
   const expandPersona = (ws: string, persona: string) => {
     const inst = activeInstance;
     if (!inst) return;
     const key = `${ws} ${persona}`;
-    void api
-      .listSessions(inst, ws, persona)
-      .then((rows) => {
-        const list = rows.filter((s) => s.id);
-        setServerSessions((prev) => ({ ...prev, [key]: list }));
-        // Seed titles delivered by the relay (list endpoint computes the
-        // first-user-message title server-side); only rows without one get
-        // the per-session events prefetch.
-        const seeded = list.filter((s) => s.title);
-        if (seeded.length) {
-          setSessionTitles((prev) => {
-            const next = { ...prev };
-            for (const s of seeded) {
-              const ck = titleKey(ws, persona, s.id);
-              if (!next[ck]) next[ck] = clipTitle(s.title!);
-            }
-            return next;
-          });
-        }
-        for (const s of list) {
-          const ck = titleKey(ws, persona, s.id);
-          if (s.title || sessionTitles[ck] || evCache.current.has(ck) || titleFetches.current.has(ck)) continue;
-          titleFetches.current.add(ck);
-          void api
-            .sessionEvents(inst, ws, persona, s.id)
-            .then((events) => {
-              if (!events) return;
-              const msgs = eventsToMessages(events);
-              evCache.current.set(ck, msgs);
-              const first = msgs.find((m) => m.role === "user")?.content;
-              if (first) setSessionTitles((prev) => (prev[ck] ? prev : { ...prev, [ck]: clipTitle(first) }));
-            })
-            .finally(() => titleFetches.current.delete(ck));
-        }
-      })
+    const cacheKey = sessionListKey(inst.id, ws, persona);
+    if (!sessionSubscriptions.current.has(cacheKey)) {
+      sessionSubscriptions.current.set(cacheKey, subscribeSWR(cacheKey, () => {
+        const rows = peekSWR<SidebarSession[]>(cacheKey);
+        if (rows) applySessionList(ws, persona, rows);
+      }));
+    }
+    const cached = peekSWR<SidebarSession[]>(cacheKey);
+    if (cached) applySessionList(ws, persona, cached);
+    void fetchSWR(cacheKey, () => api.listSessions(inst, ws, persona), { ttlMs: 15_000, persist: "session" })
+      .then((rows) => applySessionList(ws, persona, rows))
       .catch(() => setServerSessions((prev) => (prev[key] ? prev : { ...prev, [key]: [] })));
+  };
+
+  const prefetchSession = (ws: string, persona: string, session: string) => {
+    const inst = activeInstance;
+    if (!inst || !session) return;
+    const ck = titleKey(ws, persona, session);
+    void fetchSWR(sessionEventsKey(inst.id, ws, persona, session), () => api.sessionEvents(inst, ws, persona, session), { ttlMs: 15_000, persist: "session" })
+      .then((events) => {
+        if (events) evCache.current.set(ck, eventsToMessages(events));
+      })
+      .catch(() => {});
   };
 
   const wsHostsOf = (ws: string): WorkspaceHosts | undefined => wsHosts[ws];
@@ -276,9 +337,7 @@ export function useSidebarTree(args: {
         return {
           chatId: i.id,
           session: i.session,
-          label: first
-            ? clipTitle(first)
-            : sessionTitles[titleKey(ws, persona, i.session)] || remote?.title || remote?.goal || "new chat",
+          label: sessionTitles[titleKey(ws, persona, i.session)] || (first ? clipTitle(first) : remote?.title || remote?.goal || "new chat"),
           pending: !remote,
           host: sessionHostPill(remote?.host, i.session, hosts) || undefined,
           branch: remote?.branch,
@@ -307,10 +366,13 @@ export function useSidebarTree(args: {
   const refreshWorkspaces = () => {
     const inst = activeInstance;
     if (!inst || status?.state !== "running") return;
-    void api
-      .listWorkspaces(inst)
-      .then((raw) => {
-        const rows = dedupeWorkspaces(raw);
+    const workspacesKey = swrKey(inst.id, "_root", "workspaces");
+    subscribeCache<WorkspaceRow[]>(workspacesKey, (rows) => {
+      setWorkspaces(rows);
+      setSelWs((cur) => cur || rows[0]?.id || "");
+    });
+    void fetchSWR(workspacesKey, async () => dedupeWorkspaces(await api.listWorkspaces(inst)), { ttlMs: 30_000, persist: "session" })
+      .then((rows) => {
         setWorkspaces(rows);
         setSelWs((cur) => cur || rows[0]?.id || "");
         // No eager expandWs for every row (klanker#169 U15): 3 requests
@@ -326,8 +388,9 @@ export function useSidebarTree(args: {
     if (!inst || status?.state !== "running") return;
     const targets = wsId ? [{ id: wsId }] : workspacesRef.current;
     for (const w of targets) {
-      void api
-        .listPersonas(inst, w.id)
+      const personasKey = swrKey(inst.id, w.id, "personas");
+      subscribeCache<PersonaRow[]>(personasKey, (rows) => setTreePersonas((prev) => ({ ...prev, [w.id]: rows })));
+      void fetchSWR(personasKey, () => api.listPersonas(inst, w.id), { ttlMs: 30_000, persist: "session" })
         .then((rows) => setTreePersonas((prev) => ({ ...prev, [w.id]: rows })))
         .catch(() => {});
       void api
@@ -360,8 +423,11 @@ export function useSidebarTree(args: {
   const refreshHosts = (wsId?: string) => {
     const targets = wsId ? [wsId] : Object.keys(wsHostsRef.current);
     for (const ws of targets) {
-      void api
-        .fetchWorkspaceHosts(ws)
+      const inst = activeInstance;
+      if (!inst) continue;
+      const hostsKey = swrKey(inst.id, ws, "hosts");
+      subscribeCache<WorkspaceHosts>(hostsKey, (h) => setWsHosts((prev) => ({ ...prev, [ws]: h })));
+      void fetchSWR(hostsKey, () => api.fetchWorkspaceHosts(ws), { ttlMs: 15_000, persist: "session" })
         .then((h) => setWsHosts((prev) => ({ ...prev, [ws]: h })))
         .catch(() => {});
     }
@@ -388,5 +454,6 @@ export function useSidebarTree(args: {
     wsHostsOf,
     personasOf,
     sessionRowsOf,
+    prefetchSession,
   };
 }
